@@ -22,7 +22,7 @@
 
 services:
   pandaopds:
-    image: ghcr.io/niatsysor/pandaopds:latest
+    image: ghcr.io/n1atsys0r/pandaopds:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"   # bind to loopback; expose via reverse proxy

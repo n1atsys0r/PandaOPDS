@@ -114,7 +114,7 @@
 
 ## 3. publication（条目/Item）元数据
 
-任意采集文档（首页 Latest、gallery feed、toplist feed、详情文档）中的单个条目。字段分两层：**标准层**（通用客户端直接消费）与**扩展层 `metadata` 内 `x:*` 前缀字段**（EH 专属扩展）。前缀由文档顶层内联 JSON-LD context 声明：`"context": ["https://readium.org/webpub-manifest/context.jsonld", {"x": "https://github.com/niatsysor/PandaOPDS/vocab#"}]`——通用客户端忽略未知成员，无需感知。
+任意采集文档（首页 Latest、gallery feed、toplist feed、详情文档）中的单个条目。字段分两层：**标准层**（通用客户端直接消费）与**扩展层 `metadata` 内 `x:*` 前缀字段**（EH 专属扩展）。前缀由文档顶层内联 JSON-LD context 声明：`"context": ["https://readium.org/webpub-manifest/context.jsonld", {"x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"}]`——通用客户端忽略未知成员，无需感知。
 
 ### 3.1 标准层
 
@@ -209,7 +209,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 {
   "context": [
     "https://readium.org/webpub-manifest/context.jsonld",
-    { "x": "https://github.com/niatsysor/PandaOPDS/vocab#" }
+    { "x": "https://github.com/n1atsys0r/PandaOPDS/vocab#" }
   ],
   "metadata": {
     "title": "Nejire",
@@ -276,7 +276,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 {
   "context": [
     "https://readium.org/webpub-manifest/context.jsonld",
-    { "x": "https://github.com/niatsysor/PandaOPDS/vocab#" }
+    { "x": "https://github.com/n1atsys0r/PandaOPDS/vocab#" }
   ],
   "metadata": { "title": "…", "author": [{ "name": "…" }], "numberOfPages": 42, "x:rating": 4.5, "…": "…" },
   "links": [

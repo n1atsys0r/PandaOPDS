@@ -304,7 +304,7 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 - **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`modified`/`published`；`description` 预留、当前不输出），通用客户端直接消费。`subject` 为 RWPM collection of objects（每项 `{"name": "ns:key"}`，不含分类；`TAG_TRANSLATION_ENABLED=1` 且命中 EhTagTranslation 词典时 name 为 `中文命名空间:译名`，见「中文标签翻译」节）：详情文档含完整 taglist（经 status 过滤后的全部标签）；列表 feed 是子集（额外剔除 `language`/`artist`——language 已有独立字段，author 由客户端从文件名解析）。带高亮 style 的标签条目额外内联 `x:style` 成员（见扩展层）。
 - **语言码（BCP 47）**：`metadata.language` 输出 RFC 5646（BCP 47）语言码（`chinese`→`zh`、`chinese (simplified)`→`zh-Hans`、`chinese (traditional)`→`zh-Hant`…），由 `app/eh/languages.py` 映射表统一映射（列表/详情/gdata 三路共用）；未知语言与标记伪标签（`translated`/`rewrite`/`raw`）不输出——原始标签文本仍在详情文档 `subject` 中。搜索语法不受影响：`query=language:chinese` 仍用 EH 原生标签名。
 - **标签 status（社区可信度，全局过滤策略）**：EH 标签带 `gt`(confidence)/`gtl`(skepticism)/`gtw`(incorrect) class（列表页与详情页 `#taglist` 同构）。低于 `TAG_STATUS_FILTER` 等级（`balanced` 默认：confidence+skepticism；`strict`：仅 confidence；`off`：全部）的标签从 **subject 一并剔除**——拒绝模棱两可的标签进入目录。status **不传递给客户端**（服务端消费后即丢弃），客户端无法感知被过滤标签的存在。
-- **扩展层 `metadata` 内 `x:*` 前缀字段**：**所有** EH 专属/非标准字段拍平进 `metadata`，以中性前缀 `x:` 标记，由文档顶层内联 JSON-LD context 声明（`context = [RWPM_CONTEXT, {"x": "https://github.com/niatsysor/PandaOPDS/vocab#"}]`，JSON-LD 规范的扩展方式；通用客户端忽略未知成员）：`x:rating`、`x:uploader`、`x:titleJpn`、`x:sizeBytes`、`x:expunged`、`x:category`、`x:reviews`。`category` 刻意不进 `subject`（避免与标签混淆）；对通用客户端暴露分类已通过 OPDS 2.0 `facets` 落地（`category` 查询参数 + `FACETS` 掩码，见「首页排版」节），勿再塞回 `subject`。
+- **扩展层 `metadata` 内 `x:*` 前缀字段**：**所有** EH 专属/非标准字段拍平进 `metadata`，以中性前缀 `x:` 标记，由文档顶层内联 JSON-LD context 声明（`context = [RWPM_CONTEXT, {"x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"}]`，JSON-LD 规范的扩展方式；通用客户端忽略未知成员）：`x:rating`、`x:uploader`、`x:titleJpn`、`x:sizeBytes`、`x:expunged`、`x:category`、`x:reviews`。`category` 刻意不进 `subject`（避免与标签混淆）；对通用客户端暴露分类已通过 OPDS 2.0 `facets` 落地（`category` 查询参数 + `FACETS` 掩码，见「首页排版」节），勿再塞回 `subject`。
 - **高亮 style 内联于 subject（原 mytags 旁路桶已移除）**：带高亮 style 的标签（经 status 过滤后）在 subject 条目上内联 `"x:style": {color/borderColor/background}`（来自列表页 inline style，`!important` 已剥离），**无 status**。列表页解析出高亮样式；**详情页 `#taglist` 本无 style，详情 subject 的 `x:style` 来自 My Tags 静态映射表**（见下条）。客户端展开详情时**按 name 合并**：以详情 subject 为全集替换，回填列表条目带来的 `x:style`，勿整体丢弃样式。
 - **My Tags 静态映射表（详情 subject 着色源）**：登录态下抓取 `https://{host}/mytags`，解析 `div[id^=tagpreview_][title]` 得 `tag -> TagStyle` 表（`app/eh/parser.py::parse_mytags`）。**键归一化（线上页面与旧样本渲染不一致，需双向兼容）**：小写 + 空格收敛；缩写命名空间展开 `f:`/`m:`/`x:` → `female:`/`male:`/`mixed:`；完全省略命名空间的条目存为通配键 `*:key`（真实 namespace 上游不可知，回填时按 key 兑底匹配）。存取于 `app/eh/mytags.py::MyTagsMap`：内存 + **惰性 TTL 刷新**（`MYTAGS_TTL_SECONDS`，默认 21600=6h；过期后首个详情请求内联重取、单飞行）+ 磁盘持久化（`MYTAGS_STATE`，默认 `./mytags.json`，原子写；重启免冷启动）。无 IPB 登录态直接返回空表（零上游请求）；抓取失败告警并继续服务旧快照，绝不使详情请求失败。回填在 `opds2/router.py::_apply_mytags_styles`（status 过滤后、排序前；先精确匹配再 `*:` 通配兑底，已有 inline style 的标签不被覆盖），仅作用于 v2.0 详情文档——列表 feed 已自带 style，不回填。
 - **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`x:*` 只含列表页可得字段子集（`x:category`、`x:rating`）；`x:titleJpn`/`x:sizeBytes`/`x:expunged`/`x:uploader` 仅详情文档输出（详情页 HTML）。客户端必须按字段缺失容忍，完整元数据以详情文档为准（subject 亦以详情完整版为准）。
@@ -315,7 +315,7 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 {
   "context": [
     "https://readium.org/webpub-manifest/context.jsonld",
-    {"x": "https://github.com/niatsysor/PandaOPDS/vocab#"}
+    {"x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"}
   ],
   "metadata": {
     "title": "{title}",

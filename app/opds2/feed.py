@@ -32,7 +32,7 @@ RWPM_CONTEXT = "https://readium.org/webpub-manifest/context.jsonld"
 # `x:` prefix — the JSON-LD-sanctioned way to extend a manifest. The prefix
 # is declared per-document via this inline context term; the IRI is the
 # namespace identity only (it need not be dereferenceable).
-EH_VOCAB_IRI = "https://github.com/niatsysor/PandaOPDS/vocab#"
+EH_VOCAB_IRI = "https://github.com/n1atsys0r/PandaOPDS/vocab#"
 EH_VOCAB_CONTEXT = {"x": EH_VOCAB_IRI}
 
 REL_SELF = "self"

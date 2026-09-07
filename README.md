@@ -6,7 +6,7 @@
 
 ## 部署
 
-镜像由 GitHub Actions 自动构建发布至 `ghcr.io/niatsysor/pandaopds`（多架构 linux/amd64 + linux/arm64，树莓派/NAS 直接使用）。免构建启动：
+镜像由 GitHub Actions 自动构建发布至 `ghcr.io/n1atsys0r/pandaopds`（多架构 linux/amd64 + linux/arm64，树莓派/NAS 直接使用）。免构建启动：
 
 ### 方式一：一行命令（无需克隆仓库）
 
@@ -21,7 +21,7 @@ docker run -d --name pandaopds --restart unless-stopped \
   -e ARCHIVE_DIR=/data/archives \
   -v pandaopds-cache:/data/cache \
   -v pandaopds-archives:/data/archives \
-  ghcr.io/niatsysor/pandaopds:latest
+  ghcr.io/n1atsys0r/pandaopds:latest
 ```
 
 可选参数：`-e EH_SITE=exhentai`、`-e PUBLIC_BASE_URL=https://opds.example.com`（反代下输出绝对 URL）、`-e AUTH_USERNAME=xxx -e AUTH_PASSWORD=xxx`（两者都设置才启用 Basic Auth）、`-v ./config:/config`（自定义 OPDS 2.0 首页布局）。
@@ -41,7 +41,7 @@ cp .env.example .env     # 可选：按需填写 IPB_MEMBER_ID / IPB_PASS_HASH�
 
 docker compose up -d     # 直接拉取预构建镜像，不构建
 # 升级：docker compose pull && docker compose up -d
-# 固定版本：发布 tag（如 v0.2.0）存在后，把 image 改为 ghcr.io/niatsysor/pandaopds:v0.2.0
+# 固定版本：发布 tag（如 v0.2.0）存在后，把 image 改为 ghcr.io/n1atsys0r/pandaopds:v0.2.0
 ```
 
 ### 方式三：本地构建（开发者 / ghcr 拉取受限时）

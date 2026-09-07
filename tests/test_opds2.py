@@ -129,7 +129,7 @@ def test_publication_metadata_and_links():
     # context stacks the RWPM vocabulary with the project's `x:` prefix
     assert pub["context"] == [
         "https://readium.org/webpub-manifest/context.jsonld",
-        {"x": "https://github.com/niatsysor/PandaOPDS/vocab#"},
+        {"x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"},
     ]
 
     # Cover lives in the `images` collection (OPDS 2.0 §2.3), not in `links`:

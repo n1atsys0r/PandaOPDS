@@ -776,7 +776,7 @@ async def test_opds2_gallery_publication_rwpm_document(tmp_path, monkeypatch):
     assert "publications" not in pub
     assert pub["context"] == [
         "https://readium.org/webpub-manifest/context.jsonld",
-        {"x": "https://github.com/niatsysor/PandaOPDS/vocab#"},
+        {"x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"},
     ]
     md = pub["metadata"]
     assert md["title"] == "テスト"
