@@ -55,6 +55,7 @@ _ROOT_NAV: list[tuple[str, str]] = [
     ("Latest", "/opds/v1.2/gallery"),
     ("Watched", "/opds/v1.2/gallery?query=watched"),
     ("Favorites", "/opds/v1.2/gallery?query=favorites"),
+    ("Archives", "/opds/v1.2/archives"),  # local shelf; shown only when non-empty
     ("Popular", "/opds/v1.2/gallery?query=popular"),
     ("Toplist", "/opds/v1.2/toplist?period=yesterday"),
 ]
@@ -160,12 +161,17 @@ async def root_feed(request: Request):
     builder = _builder(request)
     settings = request.app.state.settings
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
+    service = _service(request)
+    archive = getattr(service, "archive", None)
+    has_archives = bool(archive is not None and archive.ready_count() > 0)
 
-    nav: list[tuple[str, str, str]] = [
-        (title, href, title)
-        for title, href in _ROOT_NAV
-        if title not in _AUTH_GATED or has_auth
-    ]
+    nav: list[tuple[str, str, str]] = []
+    for title, href in _ROOT_NAV:
+        if title in _AUTH_GATED and not has_auth:
+            continue
+        if title == "Archives" and not has_archives:
+            continue
+        nav.append((title, href, title))
     # Keep OpenSearch as the last nav entry (protocol-level, not a catalog
     # dimension).
     nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))
@@ -296,18 +302,51 @@ async def toplist_feed(
     )
 
 
-@router.get("/gallery/{gid}/{token}/chapters", response_class=Response)
-async def chapter_feed(request: Request, gid: int, token: str):
-    """Detail feed: rendered from the detail-page HTML (zero gdata).
+@router.get("/archives", response_class=Response)
+async def archives_feed(request: Request, page: int = 1):
+    """Local Archives shelf (ready zip masters), newest first — zero upstream.
 
-    Fetching the detail page here also pre-warms the page-URL mapping cache,
-    so the first /stream request after opening a gallery skips one upstream
-    round trip (fast reader entry).
+    The OPDS 1.2 entry point for purchased archives: entries keep their
+    stream/thumb/detail URLs working even after the upstream gallery is
+    deleted. Pagination mirrors toplist (`page` 1-based).
     """
     service = _service(request)
     builder = _builder(request)
 
-    detail = await service.get_detail_page(gid, token, 0)
+    info = await service.archived_galleries(page=page)
+    entries = [_gallery_entry(builder, item) for item in info.galleries]
+
+    next_href = None
+    if info.next_page:
+        next_href = builder.href(f"/opds/v1.2/archives?page={info.next_page}")
+
+    content = builder.gallery_feed(
+        query="archives",
+        entries=entries,
+        updated=_iso(),
+        next_href=next_href,
+        feed_id="archives",
+        title="E-Hentai: Archives",
+    )
+    return Response(
+        content=content,
+        media_type=MIME_ACQ,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@router.get("/gallery/{gid}/{token}/chapters", response_class=Response)
+async def chapter_feed(request: Request, gid: int, token: str):
+    """Detail feed: rendered from the local archive snapshot when the gallery
+    is archived (zero upstream), otherwise from the cached detail-page HTML.
+
+    Fetching the (non-archived) detail page also pre-warms the page-URL
+    mapping cache so the first /stream request skips one upstream round trip.
+    """
+    service = _service(request)
+    builder = _builder(request)
+
+    detail = await service.get_detail_doc(gid, token)
     clean_title, authors = parse_detail_title(
         detail.title, detail.title_jpn, detail.category
     )

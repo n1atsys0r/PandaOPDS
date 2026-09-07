@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 GDATA_BATCH_SIZE = 25
 THUMBS_PER_DETAIL_PAGE = 20
 
+# Local "Archives" shelf: ready zip masters paginated like the toplist
+# (page numbers, not lastGid) — an OPDS-visible, zero-upstream library of
+# purchased archives.
+ARCHIVES_PAGE_SIZE = 100
+
 # Ranklist periods -> `?tl=` value (day=15, month=13, year=12, allTime=11).
 TOPLIST_TL = {"yesterday": 15, "month": 13, "year": 12, "alltime": 11}
 
@@ -234,6 +239,26 @@ class EHService:
             params["p"] = str(page - 1)
         return await self._list_page(f"toplist:{period}:{page}", "https://e-hentai.org/toplist.php", params)
 
+    async def archived_galleries(self, page: int = 1) -> GalleryPageInfo:
+        """Local Archives shelf (ready zip masters), newest first — zero upstream.
+
+        Mirrors the toplist pagination contract (`page` 1-based → `next_page`)
+        so both OPDS versions can render it with their existing feed builders.
+        Empty when no archive manager is attached (never raises).
+        """
+        if self.archive is None:
+            return GalleryPageInfo()
+        page = max(1, int(page))
+        items = self.archive.list_ready_items()
+        start = (page - 1) * ARCHIVES_PAGE_SIZE
+        chunk = items[start : start + ARCHIVES_PAGE_SIZE]
+        next_page = page + 1 if start + ARCHIVES_PAGE_SIZE < len(items) else None
+        return GalleryPageInfo(
+            galleries=chunk,
+            next_page=next_page,
+            total_count=len(items),
+        )
+
     # -- favorites (write ops + categories) --------------------------------
 
     async def favorite_action(
@@ -408,6 +433,15 @@ class EHService:
             logger.info("mytags style map refreshed: %d styled tag(s)", len(styles))
             return styles
 
+    def get_mytags_cached(self) -> dict[str, TagStyle]:
+        """Current mytags style map WITHOUT the TTL-triggered upstream refresh.
+
+        Memory/disk only. Used by the offline detail path (ready archive) so
+        a fully-local render never issues an upstream request — the persisted
+        snapshot is served as-is until the operator refreshes metadata.
+        """
+        return self.mytags.get()
+
     # -- gdata metadata ----------------------------------------------------
 
     async def get_metadata(
@@ -512,6 +546,25 @@ class EHService:
         return await self.mem.get_or_set(
             key, _fetch, self.settings.page_url_ttl_seconds
         )
+
+    async def get_detail_doc(
+        self, gid: int, token: str, page_index: int = 0
+    ) -> DetailPageInfo:
+        """Detail-page info for the OPDS detail documents (v1.2 chapters /
+        v2.0 detail + publication).
+
+        A ready archive renders entirely from the local snapshot (zero
+        upstream, see ArchiveManager.build_detail_page) — its purchased zip
+        master + gdata snapshot are the long-term source of truth, so a
+        gallery deleted upstream keeps producing a full detail document.
+        Everything else keeps the cached upstream detail-page path (which
+        pre-warms the page-URL mapping for fast reader entry).
+        """
+        if self.archive is not None and self.archive.is_ready(gid, token):
+            local = self.archive.build_detail_page(gid, token)
+            if local is not None:
+                return local
+        return await self.get_detail_page(gid, token, page_index)
 
     async def resolve_image_page(
         self, gid: int, token: str, page_no: int
@@ -733,7 +786,16 @@ class EHService:
         return data, detect_image_type(data)
 
     async def get_thumb(self, gid: int, token: str) -> tuple[bytes, str]:
-        """Proxy the gallery thumbnail, disk-cached under page_no=-1."""
+        """Proxy the gallery thumbnail, disk-cached under page_no=-1.
+
+        Source order matches /stream: a ready archive's local cover.jpg first
+        (long-term master, zero upstream), then the disk LRU, then the
+        upstream cover (list-page memory cache → detail page HTML).
+        """
+        if self.archive is not None:
+            cover = self.archive.get_cover_bytes(gid, token)
+            if cover is not None:
+                return cover
         if self.disk.enabled:
             data = await self.disk.get(gid, token, -1)
             if data is not None:

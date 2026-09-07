@@ -305,6 +305,14 @@ class ArchiveStore:
         meta = self._entries.get(self.key(gid, token))
         return bool(meta) and meta.get("status") in _READY_STATES
 
+    def ready_count(self) -> int:
+        """Number of ready entries (in-memory index only; no disk IO)."""
+        return sum(
+            1
+            for meta in self._entries.values()
+            if meta.get("status") in _READY_STATES
+        )
+
     def _namelist(self, gid: int, token: str) -> list[str] | None:
         """Entry names in page order (zip internal order), cached by zip mtime."""
         path = self.zip_path(gid, token)

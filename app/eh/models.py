@@ -234,6 +234,10 @@ class DetailPageInfo:
     publish_time: str = ""   # #gdd Posted row
     language: str = ""       # #gdd Language row (mapped to BCP 47, RFC 5646)
     filesize_text: str = ""  # #gdd File Size row (e.g. "189.3 MiB")
+    # Exact byte count when known without a display string (archive metadata
+    # snapshot: gdata filesize). Preferred over filesize_text by the feed
+    # layer's x:sizeBytes derivation.
+    filesize_bytes: int | None = None
     torrent_count: int = 0   # #gd5 torrent link count
     expunged: bool = False   # any #gdd value contains "Expunged"
     # Comments from the #cdiv block (latest batch visible on this page).

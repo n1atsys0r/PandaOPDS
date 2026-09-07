@@ -551,3 +551,191 @@ async def test_refresh_metadata_requires_entry(tmp_path):
     manager.service = FakeMetaService(META)
     with pytest.raises(EHException):
         await manager.refresh_metadata(1, "t")
+
+
+# --------------------------------------------------------------------------
+# offline (source-independent) reading surface: ready archives render
+# thumbnails / detail documents / the Archives shelf with zero upstream.
+# --------------------------------------------------------------------------
+
+from app.eh.models import DetailPageInfo, GalleryListItem  # noqa: E402
+
+
+class _FakeState:
+    def __init__(self, service, settings):
+        self.service = service
+        self.settings = settings
+        self.archive = getattr(service, "archive", None)
+
+
+class _FakeApp:
+    def __init__(self, service, settings):
+        self.state = _FakeState(service, settings)
+
+
+class _FakeReq:
+    def __init__(self, service, settings):
+        self.app = _FakeApp(service, settings)
+
+
+META_LANG = GalleryMetadata(
+    gid=1, token="t", title="Test Gallery Title [Artist]", title_jpn="",
+    category="Doujinshi", thumb="https://ehgt.org/xx/1.jpg", rating=4.5,
+    tags={
+        "language": [GalleryTag("language", "chinese")],
+        "female": [GalleryTag("female", "foo")],
+    },
+    filecount=3, filesize=1234, posted=1700000000, uploader="artist",
+    torrentcount=0, expunged=False,
+)
+
+
+async def make_ready_service(tmp_path, meta=None):
+    """EHService (NoUpstreamClient) with one ready archive + snapshot + cover."""
+    meta = meta or META_LANG
+    settings, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    manager.service = FakeMetaService(meta)
+    await manager.start(1, "t")
+    await wait_done(manager, 1, "t")
+    assert manager.get_status(1, "t")["status"] == ST_READY
+
+    service = EHService(settings, client=NoUpstreamClient())
+    service.attach_archive(manager)
+    return service, manager
+
+
+@pytest.mark.asyncio
+async def test_build_detail_page_offline(tmp_path):
+    _, manager = await make_ready_service(tmp_path)
+    detail = manager.build_detail_page(1, "t")
+    assert isinstance(detail, DetailPageInfo)
+    assert detail.title == "Test Gallery Title [Artist]"
+    assert detail.category == "Doujinshi"
+    assert detail.language == "zh"            # BCP47 from snapshot language tag
+    assert detail.image_count == 3            # zip page count (authoritative)
+    assert detail.filesize_bytes == 1234
+    assert detail.expunged is False
+    assert [str(t) for t in detail.tags] == ["language:chinese", "female:foo"]
+
+
+@pytest.mark.asyncio
+async def test_list_ready_items_offline(tmp_path):
+    _, manager = await make_ready_service(tmp_path)
+    items = manager.list_ready_items()
+    assert isinstance(items[0], GalleryListItem)
+    assert items[0].gid == 1 and items[0].page_count == 3
+    assert manager.ready_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_get_detail_doc_offline_no_upstream(tmp_path):
+    service, _ = await make_ready_service(tmp_path)
+    detail = await service.get_detail_doc(1, "t")
+    assert detail.image_count == 3 and detail.language == "zh"
+
+
+@pytest.mark.asyncio
+async def test_get_thumb_serves_archive_cover(tmp_path):
+    service, _ = await make_ready_service(tmp_path)
+    data, mime = await service.get_thumb(1, "t")
+    assert data == b"JPEGDATA" and mime == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_archived_galleries_shelf(tmp_path):
+    service, _ = await make_ready_service(tmp_path)
+    info = await service.archived_galleries()
+    assert len(info.galleries) == 1
+    assert info.total_count == 1 and info.next_page is None
+
+
+@pytest.mark.asyncio
+async def test_v12_chapter_feed_offline(tmp_path):
+    from app.opds.router import chapter_feed as v12_chapters
+
+    service, _ = await make_ready_service(tmp_path)
+    req = _FakeReq(service, service.settings)
+    resp = await v12_chapters(req, 1, "t")
+    body = resp.body.decode()
+    assert "Chapter 1:" in body
+    assert 'pse:count="3"' in body
+
+
+@pytest.mark.asyncio
+async def test_v2_publication_offline(tmp_path):
+    from app.opds2.router import gallery_publication as v2_pub
+    import json
+
+    service, _ = await make_ready_service(tmp_path)
+    req = _FakeReq(service, service.settings)
+    resp = await v2_pub(req, 1, "t")
+    doc = json.loads(resp.body.decode())
+    assert doc["metadata"]["language"] == ["zh"]
+    assert doc["metadata"]["numberOfPages"] == 3
+    assert len(doc["readingOrder"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_v2_archives_feed_offline(tmp_path):
+    from app.opds2.router import archives_feed as v2_archives
+    import json
+
+    service, _ = await make_ready_service(tmp_path)
+    req = _FakeReq(service, service.settings)
+    resp = await v2_archives(req)
+    doc = json.loads(resp.body.decode())
+    assert doc["metadata"]["title"] == "E-Hentai: Archives"
+    pubs = doc["publications"]
+    assert len(pubs) == 1 and pubs[0]["metadata"]["numberOfPages"] == 3
+
+
+@pytest.mark.asyncio
+async def test_v12_root_nav_gates_archives(tmp_path):
+    from app.opds.router import root_feed as v12_root
+
+    # empty store -> no Archives entry
+    settings, client, manager = make_manager(tmp_path)
+    service = EHService(settings, client=NoUpstreamClient())
+    service.attach_archive(manager)
+    req = _FakeReq(service, settings)
+    xml = (await v12_root(req)).body.decode()
+    assert "Archives" not in xml
+
+    # ready store -> Archives entry present
+    _, manager = await make_ready_service(tmp_path)
+    service = EHService(settings, client=NoUpstreamClient())
+    service.attach_archive(manager)
+    req = _FakeReq(service, settings)
+    xml = (await v12_root(req)).body.decode()
+    assert "/opds/v1.2/archives" in xml
+
+
+@pytest.mark.asyncio
+async def test_v2_root_auto_injects_archives(tmp_path):
+    from app.opds2.router import root_feed as v2_root
+    import json
+
+    toml = tmp_path / "home.toml"
+    toml.write_text(
+        '[[section]]\nkind = "navigation"\ntitle = "Latest"\ntype = "preset"\nquery = "latest"\n',
+        encoding="utf-8",
+    )
+
+    # empty store -> no Archives group
+    s1 = make_manager(tmp_path, home_config_path=toml)[0]
+    svc1 = EHService(s1, client=NoUpstreamClient())
+    svc1.attach_archive(make_manager(tmp_path)[2])
+    doc = json.loads((await v2_root(_FakeReq(svc1, s1))).body.decode())
+    assert not any(g["metadata"]["title"] == "Archives" for g in doc.get("groups", []))
+
+    # ready store -> Archives group auto-appears (not declared in toml)
+    s2 = make_manager(tmp_path, home_config_path=toml)[0]
+    svc2, manager2 = await make_ready_service(tmp_path)
+    svc2 = EHService(s2, client=NoUpstreamClient())
+    svc2.attach_archive(manager2)
+    doc = json.loads((await v2_root(_FakeReq(svc2, s2))).body.decode())
+    groups = doc.get("groups", [])
+    arch = next((g for g in groups if g["metadata"]["title"] == "Archives"), None)
+    assert arch is not None
+    assert arch.get("publications")

@@ -21,6 +21,7 @@ import os
 import time
 import zipfile
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Settings
@@ -32,8 +33,16 @@ from ..eh.exceptions import (
     ExceedLimitError,
     InsufficientGPError,
 )
+from ..eh.languages import map_language
 from ..eh.parser import parse_archiver_page
-from ..eh.models import ArchiveOption
+from ..eh.models import (
+    TAG_STATUS_CONFIDENCE,
+    ArchiveOption,
+    DetailPageInfo,
+    GalleryListItem,
+    GalleryTag,
+    TagStyle,
+)
 from ..eh.service import EHService
 from ..throttle.limiter import KIND_HTML, Throttle
 from .store import ST_DOWNLOADING, ST_FAILED, ST_PENDING, ST_READY, ST_ZIPPING, ArchiveStore
@@ -59,6 +68,74 @@ _ZIP_MAGIC = b"PK\x03\x04"
 # to 2h before giving up (the page itself suggests checking back later).
 _PREPARE_POLL_SECONDS = 20.0
 _PREPARE_TIMEOUT_SECONDS = 2 * 3600.0
+
+
+# ---------------------------------------------------------------------------
+# Local (offline) snapshot → feed-model conversions
+# ---------------------------------------------------------------------------
+# A ready archive is the long-term source of truth for /stream, the thumbnail
+# proxy and the OPDS detail documents: everything a reader needs lives in the
+# entry directory, so a gallery deleted upstream keeps serving fully offline.
+# The gdata snapshot (metadata.json) is ``asdict(GalleryMetadata)`` JSON; the
+# conversion helpers below turn it back into the typed feed models without
+# touching the network.
+
+
+def _snapshot_style(raw) -> TagStyle | None:
+    """Rehydrate a serialized TagStyle (None when absent/empty)."""
+    if not isinstance(raw, dict):
+        return None
+    style = TagStyle(
+        color=str(raw.get("color") or ""),
+        border_color=str(raw.get("border_color") or ""),
+        background=str(raw.get("background") or ""),
+    )
+    return style if style.as_dict() else None
+
+
+def _flatten_snapshot_tags(grouped) -> list[GalleryTag]:
+    """Flatten the snapshot's ``{namespace: [GalleryTag-json, ...]}`` into a
+    flat ``list[GalleryTag]`` (the shape the feed layer filters/sorts)."""
+    out: list[GalleryTag] = []
+    for namespace, entries in (grouped or {}).items():
+        for raw in entries or []:
+            if not isinstance(raw, dict):
+                continue
+            key = str(raw.get("key") or "")
+            if not key:
+                continue
+            out.append(
+                GalleryTag(
+                    namespace=str(raw.get("namespace") or namespace),
+                    key=key,
+                    status=str(raw.get("status") or TAG_STATUS_CONFIDENCE),
+                    style=_snapshot_style(raw.get("style")),
+                )
+            )
+    return out
+
+
+def _snapshot_language(grouped) -> str:
+    """First `language:` tag key mapped to BCP 47 (mirrors
+    GalleryMetadata.language); "" when none maps."""
+    if not isinstance(grouped, dict):
+        return ""
+    for raw in grouped.get("language") or []:
+        if isinstance(raw, dict):
+            mapped = map_language(str(raw.get("key") or ""))
+            if mapped:
+                return mapped
+    return ""
+
+
+def _dt_text(unix_seconds: int) -> str:
+    """Snapshot posted ts → the publish-time display string the feed layer's
+    ISO parser understands ("%Y-%m-%d %H:%M", treated as UTC)."""
+    if not unix_seconds:
+        return ""
+    return datetime.fromtimestamp(
+        int(unix_seconds), tz=timezone.utc
+    ).strftime("%Y-%m-%d %H:%M")
 
 
 def _detect_archive_format(path: Path) -> str:
@@ -484,6 +561,92 @@ class ArchiveManager:
 
     def stats(self) -> dict:
         return self.store.stats()
+
+    # -- local (offline) read surface --------------------------------------
+
+    def is_ready(self, gid: int, token: str) -> bool:
+        """Whether a validated zip master exists for this gallery."""
+        return self.store.is_ready(gid, token)
+
+    def ready_count(self) -> int:
+        """Number of ready entries (drives the Archives shelf visibility)."""
+        return self.store.ready_count()
+
+    def build_detail_page(self, gid: int, token: str) -> DetailPageInfo | None:
+        """Detail-page info rendered purely from local files (zero upstream).
+
+        Only for ready archives. Sources: ``meta.json`` (state machine: title,
+        zip page count) + ``metadata.json`` (gdata snapshot: full tags,
+        rating, uploader, posted, filesize ...). The advertised page count
+        comes from the zip master itself — authoritative for what /stream can
+        actually serve once the upstream gallery is gone. Returns None when
+        the gallery has no ready archive.
+        """
+        if not self.store.is_ready(gid, token):
+            return None
+        meta = self.store.get(gid, token) or {}
+        snap = self.store.read_metadata_snapshot(gid, token) or {}
+        count = int(meta.get("page_count") or 0)
+        if not count:
+            count = int(snap.get("filecount") or 0)
+        grouped = snap.get("tags")
+        return DetailPageInfo(
+            image_no_from=0,
+            image_no_to=max(0, count - 1),
+            image_count=count,
+            current_page_no=0,
+            page_count=(count + 19) // 20 if count else 0,
+            thumbnails=[],
+            tags=_flatten_snapshot_tags(grouped),
+            title=str(snap.get("title") or meta.get("title") or ""),
+            title_jpn=str(snap.get("title_jpn") or ""),
+            category=str(snap.get("category") or ""),
+            cover_url="",
+            rating=float(snap.get("rating") or 0),
+            uploader=str(snap.get("uploader") or ""),
+            publish_time=_dt_text(int(snap.get("posted") or 0)),
+            language=_snapshot_language(grouped),
+            filesize_text="",
+            filesize_bytes=int(snap.get("filesize") or 0) or None,
+            torrent_count=int(snap.get("torrentcount") or 0),
+            expunged=bool(snap.get("expunged")),
+            comments=[],
+        )
+
+    def list_ready_items(self) -> list[GalleryListItem]:
+        """Archived galleries as list-page items (ready only, newest first).
+
+        Feeds the local "Archives" OPDS shelf — zero upstream. Page counts
+        come from the zip masters; titles/metadata from the gdata snapshot
+        when present (else the archiver-page title saved in meta.json).
+        """
+        out: list[GalleryListItem] = []
+        for meta in self.store.list_entries():
+            if meta.get("status") != ST_READY:
+                continue
+            gid = int(meta.get("gid", 0))
+            token = str(meta.get("token", ""))
+            snap = self.store.read_metadata_snapshot(gid, token) or {}
+            grouped = snap.get("tags")
+            count = int(meta.get("page_count") or 0)
+            if not count:
+                count = int(snap.get("filecount") or 0)
+            out.append(
+                GalleryListItem(
+                    gid=gid,
+                    token=token,
+                    title=str(snap.get("title") or meta.get("title") or ""),
+                    category=str(snap.get("category") or ""),
+                    cover_url="",
+                    page_count=count or None,
+                    rating=float(snap.get("rating") or 0),
+                    publish_time=_dt_text(int(snap.get("posted") or 0)),
+                    language=_snapshot_language(grouped),
+                    is_expunged=bool(snap.get("expunged")),
+                    tags=_flatten_snapshot_tags(grouped),
+                )
+            )
+        return out
 
     async def get_page_bytes(self, gid: int, token: str, page_no_1: int) -> bytes | None:
         """Page bytes from the archived zip (None when not archived/ready)."""

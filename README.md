@@ -74,6 +74,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 - **归档（Archiver）**：WebUI 的「归档」视图通过上述 API 管理 GP 购买的持久归档——输入图库 URL 查询报价 → 选画质确认 → 后台下载统一保存为 zip（cbz）母本于 `ARCHIVE_DIR`，`/stream` 对该图库直接读归档页（长效缓存，不受磁盘 LRU/7 天 TTL 约束）。需登录态与星会员；未解锁档消耗 GP，请确认后操作。
 
+- **源站删本存活（离线读面）**：ready 归档是阅读路径的长期真源——`/stream`（zip）、缩略图 `/image/.../thumb`（本地 `cover.jpg`）与 OPDS 详情文档（v1.2 `/chapters`、v2.0 详情/`publication`，本地快照渲染）全部离线优先，**只要归档存活即可完全脱离源站访问**（详情快照不含评论，可用 WebUI 的「刷新元数据」同步）。同时提供零上游的 **Archives 归档目录**：`/opds/v1.2/archives` 与 `/opds/v2.0/archives`（根导航在有归档时自动出现、为空隐藏），供删本后重新发现与阅读归档库。
+
 - 前端为单 HTML（内联 CSS/JS，无构建链、无 CDN 依赖），消费上述 JSON API；未来功能（离线项目管理、自动化工作流）扩展 API 层即可，页面契约不变。
 - **安全**：`IPB_PASS_HASH` / `IGNEOUS` 永不回传明文（页面与 API 均只显示占位符）。`IPB_MEMBER_ID` 为登录标识，会完整展示。
 - WebUI 不触达 E-Hentai，仅读取内存状态；服务配置异常时页面照常可访问并显示错误详情。

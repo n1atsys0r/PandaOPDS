@@ -26,6 +26,7 @@ from ..eh.parser import _parse_size_text, apply_status_filter, parse_publish_tim
 from ..eh.service import EHService
 from ..eh.title_parser import parse_detail_title, parse_title_authors
 from ..home_config import (
+    DEFAULT_PUBLICATION_PREVIEW_COUNT,
     Section,
     build_href,
     fetch_section,
@@ -356,7 +357,9 @@ def _detail_eh_fields(
         ext["x:titleJpn"] = detail.title_jpn
     if detail.uploader:
         ext["x:uploader"] = detail.uploader
-    if detail.filesize_text:
+    if detail.filesize_bytes:
+        ext["x:sizeBytes"] = detail.filesize_bytes
+    elif detail.filesize_text:
         size = _parse_size_text(detail.filesize_text)
         if size:
             ext["x:sizeBytes"] = size
@@ -448,6 +451,29 @@ async def root_feed(request: Request):
 
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
     home = load_home_config(settings.home_config_path)
+
+    # Archives shelf (local, zero upstream): auto-appears while the archive
+    # store holds ready entries and the layout does not already declare an
+    # archives section (dedupe — never render it twice). An empty store hides
+    # it again automatically.
+    archive = getattr(service, "archive", None)
+    if (
+        archive is not None
+        and archive.ready_count() > 0
+        and not any(
+            getattr(s, "query", "") == "archives" for s in home.sections
+        )
+    ):
+        home.sections.append(
+            Section(
+                kind="publication",
+                title="Archives",
+                type="preset",
+                query="archives",
+                count=DEFAULT_PUBLICATION_PREVIEW_COUNT,
+                group="",
+            )
+        )
 
     def _visible(s: Section) -> bool:
         if is_auth_required(s.type, s.query) and not has_auth:
@@ -716,23 +742,63 @@ async def toplist_feed(
     )
 
 
+@router.get("/archives", response_class=Response)
+async def archives_feed(request: Request, page: int = 1):
+    """Local Archives shelf (ready zip masters), newest first — zero upstream.
+
+    The OPDS entry point for purchased archives: entries keep their stream/
+    thumb/detail URLs working even after the upstream gallery is deleted.
+    Pagination mirrors toplist (`page` 1-based).
+    """
+    service = _service(request)
+    builder = _builder(request)
+
+    info = await service.archived_galleries(page=page)
+    publications = [_publication(builder, item) for item in info.galleries]
+
+    next_href = None
+    if info.next_page:
+        next_href = builder.href(f"/opds/v2.0/archives?page={info.next_page}")
+
+    content = builder.acquisition_document(
+        title="E-Hentai: Archives",
+        identifier="urn:ehentai:archives",
+        publications=publications,
+        self_href="/opds/v2.0/archives",
+        next_href=next_href,
+    )
+    return Response(
+        content=content,
+        media_type=MIME_ACQ,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
 async def _detail_publication(
     service: EHService, builder: Opds2Builder, gid: int, token: str
 ) -> dict:
-    """Fetch the detail page and render its single publication object.
+    """Render the single-publication object for the detail endpoints.
 
-    Shared by the acquisition detail document and the single-publication
-    endpoint: both render from the same cached detail-page HTML (1h) and
-    pre-warm the page-URL mapping, so the first /stream request after
-    opening a gallery skips one upstream round trip. Zero gdata.
+    A ready archive renders entirely from the local snapshot (zero upstream,
+    see EHService.get_detail_doc) — reading an archived gallery never touches
+    the source site, so a deleted gallery keeps serving a full document. The
+    local path uses the persisted My Tags map as-is (no TTL-triggered refresh)
+    and carries no comments (snapshot has none). Non-archived galleries keep
+    the cached upstream detail-page HTML (which also pre-warms the page-URL
+    mapping for fast reader entry). Zero gdata in both paths.
     """
-    detail = await service.get_detail_page(gid, token, 0)
+    detail = await service.get_detail_doc(gid, token)
     clean_title, authors = parse_detail_title(
         detail.title, detail.title_jpn, detail.category
     )
     modified = _detail_modified(detail.publish_time)
     tags = apply_status_filter(list(detail.tags), builder.settings.tag_status_filter)
-    tags = _apply_mytags_styles(tags, await service.get_mytags())
+    if service.archive is not None and service.archive.is_ready(gid, token):
+        # offline path: never trigger an upstream /mytags refresh
+        styles = service.get_mytags_cached()
+    else:
+        styles = await service.get_mytags()
+    tags = _apply_mytags_styles(tags, styles)
     tags = _sort_tags_detail(tags)
     subjects = _flatten_subjects(tags, frozenset(), builder.translator)
     return builder.publication(
@@ -758,11 +824,11 @@ async def _detail_publication(
 
 @router.get("/gallery/{gid}/{token}", response_class=Response)
 async def gallery_detail(request: Request, gid: int, token: str):
-    """Single-publication acquisition document rendered from the detail-page HTML.
+    """Single-publication acquisition document.
 
-    Fetching the detail page here pre-warms the page-URL mapping cache so the
-    first /stream request after opening a gallery skips one upstream round
-    trip (fast reader entry). Zero gdata.
+    Ready archives render from the local snapshot (zero upstream); otherwise
+    from the detail-page HTML (which also pre-warms the page-URL mapping cache
+    so the first /stream request skips one upstream round trip). Zero gdata.
     """
     service = _service(request)
     builder = _builder(request)
@@ -790,6 +856,7 @@ async def gallery_publication(request: Request, gid: int, token: str):
     like Stump follow `self` to open details and read through the embedded
     `readingOrder` (per-page image URLs); the response shape matches what
     their parser expects (a publication object, not an acquisition feed).
+    Ready archives render from the local snapshot (zero upstream).
     """
     service = _service(request)
     builder = _builder(request)

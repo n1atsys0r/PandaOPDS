@@ -130,6 +130,8 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 - **并发**：`ARCHIVE_DOWNLOAD_CONCURRENCY`（默认 5）个活跃任务（下载/7z 转换）共享信号量，其余排队；归档流量不受阅读限流池约束，但**仍过熔断检查**（banned/exceed 时暂停）。
 - **下载**：`?start=1` 流式写 `.part`（覆盖 6s 默认超时，长读超时 600s）；`stream_archive` 支持 `Range: bytes={offset}-` 断点续传（hath 服务 206）；状态 URL 过期/失败 → 重新 POST 重准备。
 - **删除**：仅删本地文件；E-Hentai 账户归档记录保留，可随时重下。
+- **离线读面（源站删本存活）**：ready 归档是阅读路径的长期真源——`/stream`（zip 母本）与缩略图 `/image/.../thumb`（本地 `cover.jpg`）**离线优先**；OPDS 详情文档（v1.2 `/chapters`、v2.0 `/gallery/{gid}/{token}` 与 `/publication`）对 ready 归档**一律本地渲染**（`metadata.json` 快照 + `meta.json` 页数，`image_count` 以 zip 实际 `page_count` 为准），零上游、不含评论（快照无评论）。**因此只要归档存活，该图库可完全脱离源站访问**。同步手段：WebUI `POST .../metadata/refresh`（force 拉取 gdata + 封面覆盖本地快照）；本地渲染详情用静态 mytags 表（不触发 TTL 刷新）。
+- **Archives OPDS shelf**：`/opds/v1.2/archives` 与 `/opds/v2.0/archives` 从本地 archive store 渲染 ready 条目（`page` 分页，`created_at` 倒序，零上游）；根导航/根文档在 store 非空时自动出现入口、为空时隐藏（v2.0 home.toml 已声明 `query="archives"` 则不重复注入）。源站删本后这是阅读器重新发现并进入归档库的入口。
 - **架构**：`app/archive/store.py`（持久目录：扫描重建索引/meta 原子写/zip 页读取）+ `app/archive/manager.py`（状态机/单飞行/并发/下载→格式检测→zip 化→校验）+ `app/archive/router.py`（`/api/archive/*`）；`EHService.get_image()` 在磁盘 LRU 前查 `archive.get_page_bytes()`；archiver 页面解析在 `app/eh/parser.py::parse_archiver_page`（真实结构：dltype 表单 + Download Cost/Estimated Size/unlocked 解析 + hath/start 链接提取 + 错误文案映射 `ArchiverUnavailableError`/`InsufficientGPError`）。
 
 ### 收藏夹（写操作代理 + 周期同步）
@@ -167,6 +169,7 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 | `GET /opds/v1.2/search.xml` | OpenSearchDescription 文档 |
 | `GET /opds/v1.2/gallery?query=&next=` | 图库采集 feed（`rel="next"` 分页复用 `next` + `lastGid`；`query` 支持浏览维度：空=主页、`watched`、`favorites`、`popular`） |
 | `GET /opds/v1.2/toplist?period=&page=` | Toplist 采集 feed（`period` ∈ yesterday/month/year/alltime；`rel="next"` 用 `page` 分页；纯标准 Atom，**不涉及 extensions**；内嵌 **OPDS 1.2 period facets**（`rel="http://opds-spec.org/facet"` + `opds:facetGroup="period"`，当前周期标 `opds:activeFacet="true"`），供客户端在榜单内切换周期） |
+| `GET /opds/v1.2/archives?page=` | **本地归档 shelf（零上游）**：ready zip 母本按 `created_at` 倒序（`page` 分页，对齐 toplist）。条目含 stream/thumb/chapters 链接——源站删本后仍可完整离线阅读；根导航在 store 非空时自动出现、为空时隐藏 |
 | `GET /opds/v1.2/gallery/{gid}/{token}/chapters` | 图库详情 feed（单章节条目 + PSE stream link） |
 | `GET /stream/{gid}/{token}/page/{n}` | 图片代理流（默认 1-based，`PSE_PAGE_BASE=0` 时 0-based，返回 image/jpeg；v1.2/v2.0 共用） |
 | `GET /image/{gid}/{token}/thumb` | 缩略图代理（共用） |
@@ -180,6 +183,7 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`）；`category` 可选参数按分类筛选（名称映射 `FACETS` 掩码，响应内嵌 Category facets 组） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页；内嵌 **OPDS 2.0 period facets**：`facets[0].metadata.title="Period"`，4 条 link 对应 4 周期，当前周期 link 带 `"active": true`） |
+| `GET /opds/v2.0/archives?page=` | **本地归档 shelf（零上游）**：ready zip 母本采集文档（`page` 分页，对齐 toplist）；根导航在 store 非空时自动注入（home.toml 已声明 `type="preset" query="archives"` 则不重复，避免去重），为空自动隐藏 |
 | `GET /opds/v2.0/gallery/{gid}/{token}` | 单 publication 采集文档（完整元数据入口，对应 v1.2 章节 feed；`detail` 模式下为列表 acquisition 落点，`direct` 模式下列表不暴露、客户端由 identifier 中的 gid/token 拼 URL；其 acquisition 恒指向图片流、不指向自身） |
 | `GET /opds/v2.0/gallery/{gid}/{token}/publication` | 单 publication 文档（**顶层 RWPM publication 对象**，非采集文档）：`context`/`metadata`/`links`/`images`/`readingOrder`；每个 publication 的 `rel="self"` 指向此端点，Stump 等客户端跟随 `self` 打开详情并通过内嵌 `readingOrder`（逐页 `/stream/.../page/{n}`）流式阅读 |
 

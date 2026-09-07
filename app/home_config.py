@@ -96,6 +96,9 @@ def _resolve_preset(query: str) -> tuple[str, str | None]:
         return ("watched", None)
     elif query == "favorites":
         return ("favorites", None)
+    elif query == "archives":
+        # Local Archives shelf (ready zip masters) — zero upstream.
+        return ("archives", None)
     elif query.startswith("toplist:"):
         period = query.split(":", 1)[1]
         if period not in ("yesterday", "month", "year", "alltime"):
@@ -119,6 +122,8 @@ async def fetch_section(service: EHService, section: Section) -> GalleryPageInfo
             return await service.favorites_galleries()
         elif method == "toplist":
             return await service.toplist_galleries(period=arg or "yesterday")
+        elif method == "archives":
+            return await service.archived_galleries()
         else:
             raise ValueError(f"Unknown preset method: {method!r}")
     elif section.type == "search":
@@ -142,6 +147,8 @@ def build_href(*, type: str, query: str, base: str = "/opds/v2.0") -> str:
             return f"{base}/gallery?query=favorites"
         elif method == "toplist":
             return f"{base}/toplist?period={arg}"
+        elif method == "archives":
+            return f"{base}/archives"
     elif type == "search":
         return f"{base}/gallery?query={quote(query)}"
     return f"{base}/gallery"
