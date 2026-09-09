@@ -194,9 +194,10 @@ def test_translate_query_supplemented_ns_aliases(tmp_path):
     t = _translator(tmp_path)
     assert t.translate_query("lang:中文") == "language:chinese"
     assert t.translate_query("series:原创") == "parody:original"
-    # fixture has no character/group entries; unknown key -> passthrough but
-    # the prefix itself must resolve (no crash, no false translation)
-    assert t.translate_query("circle:whatever") == "circle:whatever"
+    # fixture has no character/group entries; unknown key keeps the key
+    # verbatim but the prefix is still normalized to the canonical
+    # namespace upstream understands (circle is an alias of group).
+    assert t.translate_query("circle:whatever") == "group:whatever"
     assert t.translate_tag("character", "x") is None
 
 

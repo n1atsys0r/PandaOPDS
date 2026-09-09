@@ -176,6 +176,7 @@ class TagTranslator:
         self.tags: dict[str, str] = {}
         # --- derived lookup tables ---
         self._forward: dict[tuple[str, str], tuple[str, str]] = {}
+        self._display_ns: dict[str, str] = {}
         self._ns_lookup: dict[str, str] = {}
         self._reverse_prefixed: dict[tuple[str, str], tuple[str, str]] = {}
         self._reverse_bare: dict[str, list[tuple[str, str]]] = {}
@@ -187,6 +188,9 @@ class TagTranslator:
 
     def _rebuild(self) -> None:
         """Recompute all lookup tables from ``namespaces`` + ``tags``."""
+        self._display_ns = {}
+        for en, cn in self.namespaces.items():
+            self._display_ns[en.lower()] = cn or en
         self._ns_lookup = {}
         for en, cn in self.namespaces.items():
             self._ns_lookup[en.lower()] = en
@@ -360,6 +364,44 @@ class TagTranslator:
         interval = self.settings.tag_translation_interval_seconds
         return interval > 0 and (time.time() - self.saved_at) >= interval
 
+    def translate_namespace(self, namespace: str) -> str | None:
+        """Chinese display namespace for ``namespace``; None when unknown.
+
+        Lookup is case-insensitive and also accepts already-translated
+        (Chinese) names and search abbreviations / EH aliases (``f``,
+        ``circle:``...) via the shared ``_ns_lookup`` table, so an
+        already-Chinese prefix round-trips to itself instead of missing.
+        """
+        if not namespace:
+            return None
+        hit = self._display_ns.get(namespace.lower())
+        if hit is not None:
+            return hit
+        en = self._ns_lookup.get(namespace.lower())
+        if en is not None:
+            return self._display_ns.get(en.lower())
+        return None
+
+    def display_tag(self, namespace: str, key: str) -> str | None:
+        """Best-effort display string for a tag.
+
+        Full translation (``\u4e2d\u6587ns:\u8bd1\u540d``) when the ``(ns, key)``
+        pair is known; otherwise a namespace-only fallback
+        (``\u4e2d\u6587ns:\u539f\u6587key``) when the namespace is known
+        (the overwhelmingly common case for proper nouns such as
+        ``artist:<name>`` / ``group:<name>``); None only when even the
+        namespace is unknown. The original ``key`` casing is preserved
+        verbatim — matching stays case-insensitive downstream.
+        """
+        hit = self._forward.get((namespace.lower(), key.lower()))
+        if hit is not None:
+            display_ns, name = hit
+            return f"{display_ns}:{name}"
+        display_ns = self.translate_namespace(namespace)
+        if display_ns is None:
+            return None
+        return f"{display_ns}:{key}"
+
     def translate_tag(self, namespace: str, key: str) -> str | None:
         """Display string ``中文命名空间:译名`` for a tag; None when untranslatable.
 
@@ -380,6 +422,8 @@ class TagTranslator:
         - ``中文ns:译名`` / ``英文ns:译名`` -> ``english_ns:key`` (quoted when
           the key contains spaces);
         - bare 译名 -> rewritten ONLY on a unique cross-namespace match;
+        - known prefix + unknown key -> namespace-only normalization
+          (画师:shindol -> artist:shindol; circle:x -> group:x);
         - anything else (English keywords, unknown words, ambiguity) passes
           through untouched.
         """
@@ -403,6 +447,12 @@ class TagTranslator:
                         rep = self._translate_prefixed(prefix, rest.strip())
                         if rep is not None:
                             out.append(rep)
+                            changed = True
+                            i += 1
+                            continue
+                        norm = self._normalize_prefixed(prefix, rest.strip())
+                        if norm is not None:
+                            out.append(norm)
                             changed = True
                             i += 1
                             continue
@@ -444,6 +494,16 @@ class TagTranslator:
                             changed = True
                             i = best_end + 1
                             continue
+                    # Full translation missed (single token already tried,
+                    # multi-token merge found nothing): fall back to
+                    # namespace-only normalization so upstream sees a
+                    # namespace it understands (key stays verbatim).
+                    norm = self._normalize_prefixed(prefix, rest, original=tok)
+                    if norm is not None:
+                        out.append(norm)
+                        changed = True
+                        i += 1
+                        continue
             out.append(tok)
             i += 1
         return " ".join(out) if changed else query
@@ -469,6 +529,28 @@ class TagTranslator:
         if hit is None:
             return None
         return self._format(*hit)
+
+    def _normalize_prefixed(
+        self, prefix: str, rest: str, original: str | None = None
+    ) -> str | None:
+        """Namespace-only normalization: ``<known prefix>:<unknown key>``.
+
+        Returns ``english_ns:rest`` (quoting ``rest`` when it holds spaces)
+        so upstream receives a namespace it understands while the key
+        travels verbatim. None when the prefix is unknown or the result
+        would equal ``original`` (already-canonical native syntax stays a
+        passthrough instead of a no-op rewrite).
+        """
+        en = self._ns_lookup.get(prefix.lower())
+        if en is None:
+            return None
+        rest_clean = rest.strip().strip('"').strip()
+        if not rest_clean:
+            return None
+        normalized = self._format(en, rest_clean)
+        if original is not None and normalized == original:
+            return None
+        return normalized
 
     @staticmethod
     def _format(ns: str, key: str) -> str:

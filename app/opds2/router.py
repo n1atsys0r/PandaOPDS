@@ -207,8 +207,11 @@ def _flatten_subjects(
     highlight styles are backfilled from the My Tags map by the caller).
 
     When a tag translator (EhTagTranslation, opt-in) is supplied and knows the
-    tag, ``name`` becomes ``中文命名空间:译名`` (emoji stripped upstream); tags it
-    does not know keep their verbatim ``ns:key`` form. Translation happens
+    tag, ``name`` becomes Chinese-namespace plus translated name (emoji
+    stripped upstream); when only the namespace is known (proper nouns such
+    as ``artist:<name>`` almost never have a key translation), ``name``
+    becomes Chinese-namespace plus the verbatim original key; only
+    fully-unknown namespaces keep their verbatim ``ns:key`` form. Translation happens
     here — after status filtering / style backfill / sorting, all of which
     operate on raw ``ns:key`` — so those mechanisms are unaffected.
     """
@@ -219,7 +222,14 @@ def _flatten_subjects(
             continue
         s = str(t)
         if translator is not None:
-            s = translator.translate_tag(t.namespace, t.key) or s
+            display = None
+            display_fn = getattr(translator, "display_tag", None)
+            if callable(display_fn):
+                display = display_fn(t.namespace, t.key)
+            else:  # duck-typed translator without namespace fallback
+                display = translator.translate_tag(t.namespace, t.key)
+            if display:
+                s = display
         if s not in seen:
             seen.add(s)
             entry: dict = {"name": s}
