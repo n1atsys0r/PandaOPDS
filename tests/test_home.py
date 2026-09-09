@@ -228,19 +228,21 @@ async def test_opds2_home_no_auth(tmp_path, monkeypatch):
     assert r.status_code == 200
     doc = r.json()
 
-    # ungrouped navigation sections only; 我的收藏 (favorites) is auth-gated
+    # ungrouped navigation sections only; Watched / Favorites are auth-gated,
+    # Archives is store-gated (no archive attached here).
     nav_titles = [n["title"] for n in doc["navigation"]]
-    assert nav_titles == ["历史总榜", "日文原版"]
+    assert nav_titles == ["Toplist: All Time", "Japanese Original"]
     assert "Watched" not in nav_titles and "Favorites" not in nav_titles
+    assert "Archives" not in nav_titles
 
     # groups merge their sections into one slot (publications + navigation)
     groups = {g["metadata"]["title"]: g for g in doc["groups"]}
-    assert set(groups) == {"排行榜", "浏览", "中文同人"}
-    assert len(groups["排行榜"]["publications"]) == 1
-    assert [n["title"] for n in groups["排行榜"]["navigation"]] == ["月度精选", "年度佳作"]
-    assert [n["title"] for n in groups["浏览"]["navigation"]] == ["最新上传"]
-    assert len(groups["浏览"]["publications"]) == 1
-    assert len(groups["中文同人"]["publications"]) == 2
+    assert set(groups) == {"Rankings", "Browse", "Chinese Doujinshi"}
+    assert len(groups["Rankings"]["publications"]) == 1
+    assert [n["title"] for n in groups["Rankings"]["navigation"]] == ["Toplist: Month", "Toplist: Year"]
+    assert [n["title"] for n in groups["Browse"]["navigation"]] == ["Latest"]
+    assert len(groups["Browse"]["publications"]) == 1
+    assert len(groups["Chinese Doujinshi"]["publications"]) == 2
 
     # no top-level publications fallback (previews live in groups) / rel=next
     assert "publications" not in doc
@@ -275,7 +277,7 @@ async def test_opds2_home_with_auth(tmp_path, monkeypatch):
     r = await _get("/opds/v2.0")
     doc = r.json()
     nav_titles = [n["title"] for n in doc["navigation"]]
-    assert nav_titles == ["历史总榜", "我的收藏", "日文原版"]
+    assert nav_titles == ["Toplist: All Time", "Watched", "Favorites", "Japanese Original"]
 
 
 @pytest.mark.asyncio

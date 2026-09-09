@@ -712,30 +712,69 @@ async def test_v12_root_nav_gates_archives(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v2_root_auto_injects_archives(tmp_path):
+async def test_v2_root_archives_preset_store_gated(tmp_path):
+    """Archives is a plain preset: declared position, hidden when the store
+    is empty, never auto-injected when undeclared."""
     from app.opds2.router import root_feed as v2_root
     import json
 
-    toml = tmp_path / "home.toml"
-    toml.write_text(
+    async def _doc(service, settings):
+        resp = await v2_root(_FakeReq(service, settings))
+        return json.loads(resp.body.decode())
+
+    declared = tmp_path / "declared.toml"
+    declared.write_text(
+        '[[section]]\nkind = "navigation"\ntitle = "Latest"\ntype = "preset"\nquery = "latest"\n'
+        '[[section]]\nkind = "navigation"\ntitle = "Archives"\ntype = "preset"\nquery = "archives"\n',
+        encoding="utf-8",
+    )
+    undeclared = tmp_path / "undeclared.toml"
+    undeclared.write_text(
         '[[section]]\nkind = "navigation"\ntitle = "Latest"\ntype = "preset"\nquery = "latest"\n',
         encoding="utf-8",
     )
 
-    # empty store -> no Archives group
-    s1 = make_manager(tmp_path, home_config_path=toml)[0]
+    # declared + empty store -> hidden
+    s1 = make_manager(tmp_path, home_config_path=declared)[0]
     svc1 = EHService(s1, client=NoUpstreamClient())
     svc1.attach_archive(make_manager(tmp_path)[2])
-    doc = json.loads((await v2_root(_FakeReq(svc1, s1))).body.decode())
-    assert not any(g["metadata"]["title"] == "Archives" for g in doc.get("groups", []))
+    assert [n["title"] for n in (await _doc(svc1, s1))["navigation"]] == ["Latest"]
 
-    # ready store -> Archives group auto-appears (not declared in toml)
-    s2 = make_manager(tmp_path, home_config_path=toml)[0]
-    svc2, manager2 = await make_ready_service(tmp_path)
+    # declared + ready store -> shown at the declared position
+    s2 = make_manager(tmp_path, home_config_path=declared)[0]
+    _, manager2 = await make_ready_service(tmp_path)
     svc2 = EHService(s2, client=NoUpstreamClient())
     svc2.attach_archive(manager2)
-    doc = json.loads((await v2_root(_FakeReq(svc2, s2))).body.decode())
-    groups = doc.get("groups", [])
-    arch = next((g for g in groups if g["metadata"]["title"] == "Archives"), None)
-    assert arch is not None
-    assert arch.get("publications")
+    assert [n["title"] for n in (await _doc(svc2, s2))["navigation"]] == ["Latest", "Archives"]
+
+    # undeclared + ready store -> never auto-injected
+    s3 = make_manager(tmp_path, home_config_path=undeclared)[0]
+    svc3 = EHService(s3, client=NoUpstreamClient())
+    svc3.attach_archive(manager2)
+    doc = await _doc(svc3, s3)
+    assert [n["title"] for n in doc["navigation"]] == ["Latest"]
+    assert not any(g["metadata"]["title"] == "Archives" for g in doc.get("groups", []))
+
+
+@pytest.mark.asyncio
+async def test_archives_shelf_prefers_title_jpn(tmp_path):
+    """Shelf entries use the Japanese title when snapshotted, matching the
+    detail documents (parse_detail_title preference)."""
+    from dataclasses import replace
+    from app.opds2.router import archives_feed as v2_archives
+    from app.opds2.router import gallery_publication as v2_pub
+    import json
+
+    meta = replace(
+        META_LANG,
+        title="[Original Author] Original Title [Digital]",
+        title_jpn="[\u8457\u8005] \u65e5\u672c\u8a9e\u30bf\u30a4\u30c8\u30eb [\u4e2d\u56fd\u7ffb\u8a33]",
+    )
+    service, _ = await make_ready_service(tmp_path, meta=meta)
+    req = _FakeReq(service, service.settings)
+
+    shelf = json.loads((await v2_archives(req)).body.decode())["publications"][0]
+    detail = json.loads((await v2_pub(req, 1, "t")).body.decode())
+    assert shelf["metadata"]["title"] == detail["metadata"]["title"]
+    assert shelf["metadata"]["title"] == "\u65e5\u672c\u8a9e\u30bf\u30a4\u30c8\u30eb"
+    assert shelf["metadata"]["authors"] == [{"name": "\u8457\u8005"}]

@@ -211,19 +211,21 @@ def parse_home_toml(path: Path) -> HomeConfig:
 
 DEFAULT_CONFIG = HomeConfig(
     groups=[
-        GroupDef(id="rankings", title="排行榜"),
-        GroupDef(id="browse", title="浏览"),
+        GroupDef(id="rankings", title="Rankings"),
+        GroupDef(id="browse", title="Browse"),
     ],
     sections=[
-        Section(group="rankings", kind="publication", title="昨日最佳", type="preset", query="toplist:yesterday", count=20),
-        Section(group="rankings", kind="navigation",  title="月度精选", type="preset", query="toplist:month"),
-        Section(group="rankings", kind="navigation",  title="年度佳作", type="preset", query="toplist:year"),
-        Section(group="browse",   kind="publication", title="本周热门", type="preset", query="popular",          count=20),
-        Section(group="browse",   kind="navigation",  title="最新上传", type="preset", query="latest"),
-        Section(                  kind="publication", title="中文同人", type="search", query="language:chinese", count=20),
-        Section(                  kind="navigation",  title="历史总榜", type="preset", query="toplist:alltime"),
-        Section(                  kind="navigation",  title="我的收藏", type="preset", query="favorites"),
-        Section(                  kind="navigation",  title="日文原版", type="search", query="language:japanese"),
+        Section(group="rankings", kind="publication", title="Toplist: Yesterday", type="preset", query="toplist:yesterday", count=20),
+        Section(group="rankings", kind="navigation",  title="Toplist: Month", type="preset", query="toplist:month"),
+        Section(group="rankings", kind="navigation",  title="Toplist: Year", type="preset", query="toplist:year"),
+        Section(group="browse",   kind="publication", title="Popular", type="preset", query="popular",          count=20),
+        Section(group="browse",   kind="navigation",  title="Latest", type="preset", query="latest"),
+        Section(                  kind="publication", title="Chinese Doujinshi", type="search", query="language:chinese", count=20),
+        Section(                  kind="navigation",  title="Toplist: All Time", type="preset", query="toplist:alltime"),
+        Section(                  kind="navigation",  title="Watched", type="preset", query="watched"),
+        Section(                  kind="navigation",  title="Favorites", type="preset", query="favorites"),
+        Section(                  kind="navigation",  title="Japanese Original", type="search", query="language:japanese"),
+        Section(                  kind="navigation",  title="Archives", type="preset", query="archives"),
     ],
 )
 

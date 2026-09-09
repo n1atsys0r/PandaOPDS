@@ -9,6 +9,8 @@
 #   group           = 引用 [[group]] 的 id；不设 → 独立
 #   kind            = "publication"（含内嵌预览）| "navigation"（纯链接）
 #   type / query    = "preset" + 内置 key 或 "search" + 搜索表达式
+#   preset key      = latest / popular / watched / favorites / archives /
+#                     toplist:yesterday / toplist:month / toplist:year / toplist:alltime
 #   count           = publication 时生效，内嵌预览条数；缺省 = 10，显式 0 = 禁用
 #
 # 规则：
@@ -18,18 +20,18 @@
 
 [[group]]
 id = "rankings"
-title = "排行榜"
+title = "Rankings"
 
 [[group]]
 id = "browse"
-title = "浏览"
+title = "Browse"
 
 # ---- 排行榜组 ----
 
 [[section]]
 group = "rankings"
 kind = "publication"
-title = "昨日最佳"
+title = "Toplist: Yesterday"
 type = "preset"
 query = "toplist:yesterday"
 count = 5
@@ -37,14 +39,14 @@ count = 5
 [[section]]
 group = "rankings"
 kind = "navigation"
-title = "月度精选"
+title = "Toplist: Month"
 type = "preset"
 query = "toplist:month"
 
 [[section]]
 group = "rankings"
 kind = "navigation"
-title = "年度佳作"
+title = "Toplist: Year"
 type = "preset"
 query = "toplist:year"
 
@@ -53,7 +55,7 @@ query = "toplist:year"
 [[section]]
 group = "browse"
 kind = "publication"
-title = "本周热门"
+title = "Popular"
 type = "preset"
 query = "popular"
 count = 10
@@ -61,7 +63,7 @@ count = 10
 [[section]]
 group = "browse"
 kind = "navigation"
-title = "最新上传"
+title = "Latest"
 type = "preset"
 query = "latest"
 
@@ -69,7 +71,7 @@ query = "latest"
 
 [[section]]
 kind = "publication"
-title = "中文同人"
+title = "Chinese Doujinshi"
 type = "search"
 query = "language:chinese"
 count = 15
@@ -78,18 +80,30 @@ count = 15
 
 [[section]]
 kind = "navigation"
-title = "历史总榜"
+title = "Toplist: All Time"
 type = "preset"
 query = "toplist:alltime"
 
 [[section]]
 kind = "navigation"
-title = "我的收藏"
+title = "Watched"
+type = "preset"
+query = "watched"
+
+[[section]]
+kind = "navigation"
+title = "Favorites"
 type = "preset"
 query = "favorites"
 
 [[section]]
 kind = "navigation"
-title = "日文原版"
+title = "Japanese Original"
 type = "search"
 query = "language:japanese"
+
+[[section]]
+kind = "navigation"
+title = "Archives"
+type = "preset"
+query = "archives"

@@ -26,7 +26,6 @@ from ..eh.parser import _parse_size_text, apply_status_filter, parse_publish_tim
 from ..eh.service import EHService
 from ..eh.title_parser import parse_detail_title, parse_title_authors
 from ..home_config import (
-    DEFAULT_PUBLICATION_PREVIEW_COUNT,
     Section,
     build_href,
     fetch_section,
@@ -454,6 +453,8 @@ async def root_feed(request: Request):
     * ``kind="navigation"``  → root ``navigation[]`` entry
 
     Watched / Favorites are auth-gated: omitted when no IPB cookie is set.
+    The Archives preset (``query="archives"``) is store-gated: omitted
+    while the archive store holds no ready entries.
     """
     service = _service(request)
     builder = _builder(request)
@@ -462,32 +463,18 @@ async def root_feed(request: Request):
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
     home = load_home_config(settings.home_config_path)
 
-    # Archives shelf (local, zero upstream): auto-appears while the archive
-    # store holds ready entries and the layout does not already declare an
-    # archives section (dedupe — never render it twice). An empty store hides
-    # it again automatically.
+    # Archives shelf (local, zero upstream) is a plain preset section
+    # (``type="preset" query="archives"``), positioned by the layout like
+    # Watched / Favorites. It is hidden while the archive store holds no
+    # ready entries and appears automatically once the first archive lands.
     archive = getattr(service, "archive", None)
-    if (
-        archive is not None
-        and archive.ready_count() > 0
-        and not any(
-            getattr(s, "query", "") == "archives" for s in home.sections
-        )
-    ):
-        home.sections.append(
-            Section(
-                kind="publication",
-                title="Archives",
-                type="preset",
-                query="archives",
-                count=DEFAULT_PUBLICATION_PREVIEW_COUNT,
-                group="",
-            )
-        )
 
     def _visible(s: Section) -> bool:
         if is_auth_required(s.type, s.query) and not has_auth:
             return False
+        if s.type == "preset" and s.query == "archives":
+            if archive is None or archive.ready_count() == 0:
+                return False
         return True
 
     # Collect all visible sections; group definitions always visible.

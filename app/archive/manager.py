@@ -619,6 +619,8 @@ class ArchiveManager:
         Feeds the local "Archives" OPDS shelf — zero upstream. Page counts
         come from the zip masters; titles/metadata from the gdata snapshot
         when present (else the archiver-page title saved in meta.json).
+        The display title prefers the Japanese title, mirroring
+        ``parse_detail_title`` so shelf entries match the detail documents.
         """
         out: list[GalleryListItem] = []
         for meta in self.store.list_entries():
@@ -635,7 +637,7 @@ class ArchiveManager:
                 GalleryListItem(
                     gid=gid,
                     token=token,
-                    title=str(snap.get("title") or meta.get("title") or ""),
+                    title=str(snap.get("title_jpn") or snap.get("title") or meta.get("title") or ""),
                     category=str(snap.get("category") or ""),
                     cover_url="",
                     page_count=count or None,
