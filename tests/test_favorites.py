@@ -267,81 +267,22 @@ async def test_scan_favorites_composite_cursor_pagination(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scan_favorites_whitelist(tmp_path):
+async def test_scan_favorites_unscoped_returns_all(tmp_path):
+    # The scan always walks ALL favorites: FAVORITES_SYNC_CATEGORIES only
+    # gates auto-archiving in the syncer, never the scan itself. Every
+    # gallery counts toward new/seen regardless of its favcat.
     settings, client, service = make_service(tmp_path)
     client.pages["/favorites.php"] = _fav_page([
-        (100, "aaa", "New Common", "Common"),     # favcat 1 (in scope)
-        (200, "vvv", "Old Videos", "Videos"),     # favcat 2 (out of scope)
+        (100, "aaa", "New Common", "Common"),       # favcat 1
+        (200, "eee", "New Videos", "Videos"),       # favcat 2
+        (201, "ccc", "Excluded Zero", "All Favorites"),  # favcat 0
         (101, "bbb", "Known", "Common"),
     ])
     result = await service.scan_favorites(
-        {"101:bbb"}, favcat_whitelist=(1,), match_threshold=1, max_pages=5
+        {"101:bbb"}, match_threshold=1, max_pages=5
     )
-    # out-of-scope favcat-2 gallery never counts (neither new nor a match)
-    assert [g.gid for g in result["new"]] == [100]
-    assert result["seen"] == [(100, "aaa"), (101, "bbb")]
-
-
-@pytest.mark.asyncio
-async def test_scan_favorites_blacklist(tmp_path):
-    settings, client, service = make_service(tmp_path)
-    client.pages["/favorites.php"] = _fav_page([
-        (100, "aaa", "New Common", "Common"),          # favcat 1, in scope
-        (200, "ccc", "Excluded Zero", "All Favorites"),  # favcat 0, excluded
-        (101, "bbb", "New Videos", "Videos"),            # favcat 2, in scope
-    ])
-    result = await service.scan_favorites(
-        set(), favcat_blacklist=(0,), match_threshold=5, max_pages=5
-    )
-    assert [g.gid for g in result["new"]] == [100, 101]
-    assert result["seen"] == [(100, "aaa"), (101, "bbb")]
-
-
-@pytest.mark.asyncio
-async def test_scan_favorites_blacklist_keeps_unknown_favcat(tmp_path):
-    # favcat that fails to parse (None) is kept under blacklist-only scope
-    # (whitelist mode would drop it) — miss nothing on picker changes.
-    settings, client, service = make_service(tmp_path)
-    client.pages["/favorites.php"] = _fav_page([
-        (100, "aaa", "Known Folder", "Common"),
-        (200, "ddd", "Mystery Folder", "No Such Folder"),
-    ])
-    result = await service.scan_favorites(
-        set(), favcat_blacklist=(0,), match_threshold=5, max_pages=5
-    )
-    assert [g.gid for g in result["new"]] == [100, 200]
-
-
-@pytest.mark.asyncio
-async def test_scan_favorites_mixed_scope(tmp_path):
-    # whitelist ∩ blacklist: exclusion applies on top, redundantly here.
-    settings, client, service = make_service(tmp_path)
-    client.pages["/favorites.php"] = _fav_page([
-        (100, "aaa", "New Common", "Common"),
-        (200, "ccc", "Old Videos", "Videos"),
-    ])
-    result = await service.scan_favorites(
-        set(), favcat_whitelist=(1,), favcat_blacklist=(2,),
-        match_threshold=5, max_pages=5,
-    )
-    assert [g.gid for g in result["new"]] == [100]
-
-
-@pytest.mark.asyncio
-async def test_scan_favorites_empty_scope_warns(tmp_path, caplog):
-    # whitelist fully covered by blacklist -> scans nothing, warns loudly.
-    settings, client, service = make_service(tmp_path)
-    client.pages["/favorites.php"] = _fav_page([
-        (100, "aaa", "New Common", "Common"),
-    ])
-    with caplog.at_level("WARNING", logger="app.eh.service"):
-        result = await service.scan_favorites(
-            set(), favcat_whitelist=(1,), favcat_blacklist=(1,),
-            match_threshold=5, max_pages=5,
-        )
-    assert result["new"] == []
-    assert result["seen"] == []
-    assert "scope is empty" in caplog.text
+    assert [g.gid for g in result["new"]] == [100, 200, 201]
+    assert result["seen"] == [(100, "aaa"), (200, "eee"), (201, "ccc"), (101, "bbb")]
 
 
 @pytest.mark.asyncio
@@ -399,10 +340,10 @@ def _new_result(items, pages=1):
     }
 
 
-def _item(gid, token, title="T"):
+def _item(gid, token, title="T", favcat=None):
     from app.eh.models import GalleryListItem
 
-    return GalleryListItem(gid=gid, token=token, title=title, category="Manga", cover_url="")
+    return GalleryListItem(gid=gid, token=token, title=title, category="Manga", cover_url="", favcat=favcat)
 
 
 def make_syncer(tmp_path, **kw) -> FavoritesSyncer:
@@ -486,6 +427,66 @@ async def test_sync_archive_error_is_recorded_not_fatal(tmp_path):
     syncer.service.result = _new_result([])
     await syncer.run()
     assert archive.started == [(201, "ddd")]
+
+
+@pytest.mark.asyncio
+async def test_sync_archive_scope_whitelist_skips_out_of_scope(tmp_path):
+    """FAVORITES_SYNC_CATEGORIES gates archiving only: out-of-scope new
+    items are recorded as known (WebUI still shows favorited) but never
+    passed to ArchiveManager.start()."""
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, favorites_sync_categories=(1,)
+    )
+    syncer.archive = FakeArchive()
+    # baseline: everything recorded, nothing archived
+    syncer.service.result = _new_result([_item(100, "aaa", favcat=1)])
+    await syncer.run()
+    assert syncer.archive.started == []
+    # run 2: favcat-1 archived, favcat-2 skipped but still known
+    syncer.service.result = _new_result(
+        [_item(200, "ccc", favcat=1), _item(201, "ddd", favcat=2)]
+    )
+    out = await syncer.run()
+    assert syncer.archive.started == [(200, "ccc")]
+    assert out["auto_archived"] == ["200:ccc"]
+    assert "200:ccc" in syncer.state.known()
+    assert "201:ddd" in syncer.state.known()
+    assert "201:ddd" not in syncer.state.archived()
+
+
+@pytest.mark.asyncio
+async def test_sync_archive_scope_blacklist_excludes(tmp_path):
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, favorites_sync_excludes=(0,)
+    )
+    syncer.archive = FakeArchive()
+    syncer.service.result = _new_result([_item(100, "aaa", favcat=1)])
+    await syncer.run()
+    syncer.service.result = _new_result(
+        [_item(200, "ccc", favcat=0), _item(201, "ddd", favcat=1)]
+    )
+    out = await syncer.run()
+    assert syncer.archive.started == [(201, "ddd")]
+    assert out["auto_archived"] == ["201:ddd"]
+    assert "200:ccc" in syncer.state.known()
+    assert "200:ccc" not in syncer.state.archived()
+
+
+@pytest.mark.asyncio
+async def test_sync_archive_scope_whitelist_skips_unknown_favcat(tmp_path):
+    """Whitelist mode never spends GP on an unclassified (favcat=None)
+    gallery; blacklist-only/empty scope still archives it."""
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, favorites_sync_categories=(1,)
+    )
+    syncer.archive = FakeArchive()
+    syncer.service.result = _new_result([_item(100, "aaa", favcat=1)])
+    await syncer.run()
+    syncer.service.result = _new_result([_item(200, "ccc", favcat=None)])
+    out = await syncer.run()
+    assert syncer.archive.started == []
+    assert out["auto_archived"] == []
+    assert "200:ccc" in syncer.state.known()
 
 
 @pytest.mark.asyncio

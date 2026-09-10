@@ -159,10 +159,11 @@ class FavoritesSyncer:
 
         is_baseline = not self.state.baseline_established()
         try:
+            # The scan always walks ALL favorites (unscoped): the categories
+            # scope only gates auto-archiving below, never what counts as
+            # known/favorited (EH serves one fav-time-sorted list anyway).
             result = await self.service.scan_favorites(
                 self.state.known(),
-                favcat_whitelist=self.settings.favorites_sync_categories,
-                favcat_blacklist=self.settings.favorites_sync_excludes,
                 match_threshold=self.settings.favorites_sync_match_threshold,
                 max_pages=self.settings.favorites_sync_max_pages,
             )
@@ -196,13 +197,17 @@ class FavoritesSyncer:
         favcats = {k: v for k, v in favcats.items() if k in known}
 
         archived_now: list[str] = []
-        # The FIRST run establishes the baseline: it records every scoped
+        # The FIRST run establishes the baseline: it records every
         # favorite as known but never auto-archives (a fresh snapshot must not
         # treat all current favorites as "new" — that would mass-spend GP).
         # Auto-archive only applies from the second run onward.
         if not is_baseline and self.settings.favorites_sync_archive and self.archive is not None:
             for item in new_items:
                 key = f"{item.gid}:{item.token}"
+                # FAVORITES_SYNC_CATEGORIES is an auto-archive scope only:
+                # out-of-scope items stay known/favorited, just never archived.
+                if not self._in_archive_scope(getattr(item, "favcat", None)):
+                    continue
                 # never touch items already archived or already in the store
                 if key in archived:
                     continue
@@ -249,6 +254,19 @@ class FavoritesSyncer:
             "errors": errors,
             "pages": pages,
         }
+
+    def _in_archive_scope(self, favcat: int | None) -> bool:
+        """Whether a gallery may be auto-archived under FAVORITES_SYNC_CATEGORIES.
+
+        Scope = (whitelist or ALL) - excludes. A gallery whose favcat failed
+        to parse (None) is archived only when no whitelist is configured
+        (conservative: never spend GP on an unclassified gallery when the
+        operator asked for specific folders)."""
+        if favcat in self.settings.favorites_sync_excludes:
+            return False
+        if self.settings.favorites_sync_categories and favcat not in self.settings.favorites_sync_categories:
+            return False
+        return True
 
     # -- status ------------------------------------------------------------
 

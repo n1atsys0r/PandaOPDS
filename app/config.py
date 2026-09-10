@@ -36,9 +36,11 @@ def _split_favcat_scope(value: str | None) -> tuple[tuple[int, ...], tuple[int, 
 
     Comma-separated favcat IDs; a ``-`` prefix marks an exclusion
     (``-0`` = skip favcat 0, ``-0,-5`` = skip both). Effective scope is
-    ``(includes or ALL) - excludes``. Malformed tokens are ignored, matching
-    the previous leniency. ``-`` is used instead of ``!`` so the value stays
-    safe in shells (no history expansion) and in compose YAML (no tag mark).
+    ``(includes or ALL) - excludes`` and gates auto-archiving only — the
+    scan itself always walks all favorites. Malformed tokens are ignored,
+    matching the previous leniency. ``-`` is used instead of ``!`` so the
+    value stays safe in shells (no history expansion) and in compose YAML
+    (no tag mark).
     """
     includes: list[int] = []
     excludes: list[int] = []
@@ -218,11 +220,15 @@ class Settings:
     #                                    extra debounced background scan.
     #   favorites_sync_archive           auto-archive newly discovered items
     #                                    (GP cost! must be enabled manually)
-    #   favorites_sync_categories        favcat ID scope: plain IDs are a
-    #                                    whitelist (() = scan all); `-ID`
-    #                                    entries are exclusions. Effective
-    #                                    scope = (whitelist or ALL) - excludes
-    #                                    (e.g. `-0` = everything but favcat 0)
+    #   favorites_sync_categories        auto-archive scope only (the scan
+    #                                    itself always walks all favorites):
+    #                                    plain IDs are a whitelist
+    #                                    (() = archive all); `-ID` entries are
+    #                                    exclusions. Effective scope =
+    #                                    (whitelist or ALL) - excludes
+    #                                    (e.g. `-0` = archive everything but
+    #                                    favcat 0). Out-of-scope items stay
+    #                                    known/favorited, just never archived.
     #   favorites_sync_state             JSON file persisting scanned gids
     #   favorites_sync_match_threshold   consecutive known gids that stop an
     #                                    incremental scan

@@ -333,8 +333,6 @@ class EHService:
         self,
         known_gids: set[str],
         *,
-        favcat_whitelist: tuple[int, ...] = (),
-        favcat_blacklist: tuple[int, ...] = (),
         match_threshold: int = 5,
         max_pages: int = 50,
     ) -> dict:
@@ -342,19 +340,16 @@ class EHService:
 
         Walks pages newest-favorited-first (``inline_set=fs_f dm_e`` forces
         the fav-time sort and the extended layout). Stops after
-        ``match_threshold`` consecutive *scoped* galleries already present in
+        ``match_threshold`` consecutive galleries already present in
         ``known_gids`` (``gid:token`` strings) or after ``max_pages`` pages.
 
-        Scope = ``(whitelist or ALL) - blacklist``: empty whitelist scans
-        every gallery except blacklisted IDs (``-0`` style exclusions from
-        FAVORITES_SYNC_CATEGORIES). Out-of-scope galleries are skipped
-        entirely (they never count toward the stop condition). A gallery
-        whose favcat failed to parse (None) is kept under blacklist-only
-        scope but dropped under a non-empty whitelist.
+        ``FAVORITES_SYNC_CATEGORIES`` does NOT filter the scan: it only
+        gates auto-archiving in ``FavoritesSyncer`` (out-of-scope galleries
+        are still recorded as known/favorited, just never auto-archived).
 
         Returns ``{"new": [...], "seen": [...], "favcat_map": {...},
-        "pages": n}`` where ``new`` are scoped galleries not in ``known`` and
-        ``seen`` is every scoped ``(gid, token)`` encountered (for state
+        "pages": n}`` where ``new`` are galleries not in ``known`` and
+        ``seen`` is every ``(gid, token)`` encountered (for state
         persistence).
         """
         params = {"inline_set": "fs_f dm_e"}
@@ -363,12 +358,6 @@ class EHService:
         favcat_map: dict[int, str] = {}
         consecutive = 0
         pages = 0
-        if favcat_whitelist and set(favcat_whitelist) <= set(favcat_blacklist):
-            logger.warning(
-                "favorites scan scope is empty (whitelist %s fully excluded by %s); "
-                "nothing will be scanned or archived",
-                tuple(favcat_whitelist), tuple(favcat_blacklist),
-            )
         # Opaque cursor (plain gid or `gid-favoritedAt` composite for
         # favorited-time-sorted favorites). Passed straight to `next=`.
         next_gid: str | None = None
@@ -385,10 +374,6 @@ class EHService:
                 break
 
             for g in info.galleries:
-                if g.favcat in favcat_blacklist:
-                    continue
-                if favcat_whitelist and g.favcat not in favcat_whitelist:
-                    continue
                 key = f"{g.gid}:{g.token}"
                 seen.append((g.gid, g.token))
                 if key in known_gids:

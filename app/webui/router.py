@@ -271,9 +271,9 @@ def _settings_groups(s: Settings) -> list[dict]:
                     note="必须显式开启；对每次扫描发现的新增收藏项调用 archiver start（首次运行仅建档不归档，自第二次起生效）",
                 ),
                 _field(
-                    "favorites_sync_categories", "扫描范围",
+                    "favorites_sync_categories", "自动归档范围",
                     _fav_scope_text(s),
-                    note="FAVORITES_SYNC_CATEGORIES：逗号分隔的收藏夹 ID；留空 = 全扫；-ID = 排除该分区（如 -0）",
+                    note="FAVORITES_SYNC_CATEGORIES：只决定哪些新增收藏会被自动归档；扫描恒全量。逗号分隔的收藏夹 ID；留空 = 全归档；-ID = 排除该分区（如 -0）",
                 ),
                 _field(
                     "favorites_sync_state", "同步状态文件", str(s.favorites_sync_state),
