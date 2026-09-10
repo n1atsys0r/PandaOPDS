@@ -65,6 +65,18 @@ def _field(
     }
 
 
+def _fav_scope_text(s: Settings) -> str:
+    """Human-readable favorites sync scope: (whitelist or 全部) − excludes."""
+    base = (
+        ", ".join(str(c) for c in s.favorites_sync_categories)
+        if s.favorites_sync_categories else "全部"
+    )
+    if s.favorites_sync_excludes:
+        excl = ", ".join(f"-{c}" for c in s.favorites_sync_excludes)
+        return f"{base}（排除 {excl}）"
+    return base
+
+
 def _settings_groups(s: Settings) -> list[dict]:
     return [
         {
@@ -259,9 +271,9 @@ def _settings_groups(s: Settings) -> list[dict]:
                     note="必须显式开启；对每次扫描发现的新增收藏项调用 archiver start（首次运行仅建档不归档，自第二次起生效）",
                 ),
                 _field(
-                    "favorites_sync_categories", "扫描范围（favcat 白名单）",
-                    ", ".join(str(c) for c in s.favorites_sync_categories) if s.favorites_sync_categories else "全部",
-                    note="FAVORITES_SYNC_CATEGORIES：逗号分隔的收藏夹 ID；留空 = 全扫",
+                    "favorites_sync_categories", "扫描范围",
+                    _fav_scope_text(s),
+                    note="FAVORITES_SYNC_CATEGORIES：逗号分隔的收藏夹 ID；留空 = 全扫；-ID = 排除该分区（如 -0）",
                 ),
                 _field(
                     "favorites_sync_state", "同步状态文件", str(s.favorites_sync_state),
@@ -296,6 +308,7 @@ def _derived(s: Settings) -> dict:
         "favorites_sync_interval_seconds": s.favorites_sync_interval_seconds,
         "favorites_sync_archive": s.favorites_sync_archive,
         "favorites_sync_categories": list(s.favorites_sync_categories),
+        "favorites_sync_excludes": list(s.favorites_sync_excludes),
     }
 
 

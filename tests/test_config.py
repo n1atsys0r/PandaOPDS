@@ -102,7 +102,8 @@ def test_tag_translation_settings(monkeypatch, tmp_path):
     assert "EhTagTranslation" in s.tag_translation_url
     assert s.tag_translation_url.endswith("db.text.json")
     assert s.tag_translation_interval_seconds == 86400.0
-    assert str(s.tag_translation_state) == "tag_translation.json"
+    # default state path: /config/*.json in-container, ./ fallback locally
+    assert s.tag_translation_state.name == "tag_translation.json"
 
     monkeypatch.setenv("TAG_TRANSLATION_ENABLED", "1")
     monkeypatch.setenv(
@@ -115,3 +116,22 @@ def test_tag_translation_settings(monkeypatch, tmp_path):
     assert s.tag_translation_url == "https://mirror.example/db.text.json"
     assert s.tag_translation_interval_seconds == 3600.0
     assert s.tag_translation_state == tmp_path / "tt.json"
+
+
+def test_favcat_scope_env(monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.delenv("FAVORITES_SYNC_CATEGORIES", raising=False)
+    s = load_settings()
+    assert s.favorites_sync_categories == ()
+    assert s.favorites_sync_excludes == ()
+
+    monkeypatch.setenv("FAVORITES_SYNC_CATEGORIES", "-0")
+    s = load_settings()
+    assert s.favorites_sync_categories == ()
+    assert s.favorites_sync_excludes == (0,)
+
+    monkeypatch.setenv("FAVORITES_SYNC_CATEGORIES", "1,2,-0")
+    s = load_settings()
+    assert s.favorites_sync_categories == (1, 2)
+    assert s.favorites_sync_excludes == (0,)

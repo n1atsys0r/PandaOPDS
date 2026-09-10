@@ -14,6 +14,50 @@ from dotenv import load_dotenv
 # Allow a .env file at the project root for local development.
 load_dotenv()
 
+
+def _default_state_path(filename: str) -> Path:
+    """Default path for small JSON state snapshots.
+
+    The docker image creates ``/config`` and compose bind-mounts
+    ``./config:/config``, so prefer it when present: state survives
+    container recreation with zero configuration. Local runs without
+    ``/config`` fall back to ``./<filename>`` (previous behaviour).
+    """
+    try:
+        if Path("/config").is_dir():
+            return Path("/config") / filename
+    except OSError:
+        pass
+    return Path(f"./{filename}")
+
+
+def _split_favcat_scope(value: str | None) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Split FAVORITES_SYNC_CATEGORIES into (includes, excludes).
+
+    Comma-separated favcat IDs; a ``-`` prefix marks an exclusion
+    (``-0`` = skip favcat 0, ``-0,-5`` = skip both). Effective scope is
+    ``(includes or ALL) - excludes``. Malformed tokens are ignored, matching
+    the previous leniency. ``-`` is used instead of ``!`` so the value stays
+    safe in shells (no history expansion) and in compose YAML (no tag mark).
+    """
+    includes: list[int] = []
+    excludes: list[int] = []
+    for part in (value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("-"):
+            try:
+                excludes.append(abs(int(part)))
+            except ValueError:
+                pass
+        else:
+            try:
+                includes.append(int(part))
+            except ValueError:
+                pass
+    return tuple(sorted(set(includes))), tuple(sorted(set(excludes)))
+
 EH_SITE_EHENTAI = "e-hentai"
 EH_SITE_EXHENTAI = "exhentai"
 
@@ -174,7 +218,11 @@ class Settings:
     #                                    extra debounced background scan.
     #   favorites_sync_archive           auto-archive newly discovered items
     #                                    (GP cost! must be enabled manually)
-    #   favorites_sync_categories        favcat ID whitelist (() = scan all)
+    #   favorites_sync_categories        favcat ID scope: plain IDs are a
+    #                                    whitelist (() = scan all); `-ID`
+    #                                    entries are exclusions. Effective
+    #                                    scope = (whitelist or ALL) - excludes
+    #                                    (e.g. `-0` = everything but favcat 0)
     #   favorites_sync_state             JSON file persisting scanned gids
     #   favorites_sync_match_threshold   consecutive known gids that stop an
     #                                    incremental scan
@@ -182,7 +230,8 @@ class Settings:
     favorites_sync_interval_seconds: float = 3600.0
     favorites_sync_archive: bool = False
     favorites_sync_categories: tuple[int, ...] = ()
-    favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
+    favorites_sync_excludes: tuple[int, ...] = ()
+    favorites_sync_state: Path = field(default_factory=lambda: _default_state_path("favorites_sync.json"))
     favorites_sync_match_threshold: int = 5
     favorites_sync_max_pages: int = 50
 
@@ -202,7 +251,7 @@ class Settings:
         "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"
     )
     tag_translation_interval_seconds: float = 86400.0
-    tag_translation_state: Path = field(default_factory=lambda: Path("./tag_translation.json"))
+    tag_translation_state: Path = field(default_factory=lambda: _default_state_path("tag_translation.json"))
 
     # --- My Tags style map (detail-subject highlighting) ---
     # The detail-page #taglist carries no inline styles; highlight colours for
@@ -212,7 +261,7 @@ class Settings:
     # refresh on every detail request. mytags_state: JSON file persisting the
     # map so a restart doesn't immediately re-hit upstream.
     mytags_ttl_seconds: float = 21600.0
-    mytags_state: Path = field(default_factory=lambda: Path("./mytags.json"))
+    mytags_state: Path = field(default_factory=lambda: _default_state_path("mytags.json"))
 
     # --- Archive (E-Hentai archiver, GP-purchased) ---
     # Persistent data directory holding purchased archives as unified zip
@@ -358,20 +407,6 @@ def load_settings() -> Settings:
             return default
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
-    def _ints(value: str | None) -> tuple[int, ...]:
-        """Parse a comma-separated integer whitelist (marks ''/None -> ())."""
-        if value is None:
-            return ()
-        out: list[int] = []
-        for part in value.split(","):
-            part = part.strip()
-            if part:
-                try:
-                    out.append(int(part))
-                except ValueError:
-                    pass
-        return tuple(out)
-
     def _acq_detail(value: str | None, legacy: str | None) -> bool:
         """Parse OPDS_ACQ_DETAIL (bool): true -> acquisition targets the
         detail document (second-request flow); false (default) -> acquisition
@@ -426,6 +461,7 @@ def load_settings() -> Settings:
                     pass  # skip malformed entries
         return result or defaults
 
+    _fav_scope = _split_favcat_scope(os.getenv("FAVORITES_SYNC_CATEGORIES"))
     settings = Settings(
         auth_username=os.getenv("AUTH_USERNAME", "").strip(),
         auth_password=os.getenv("AUTH_PASSWORD", "").strip(),
@@ -480,16 +516,17 @@ def load_settings() -> Settings:
             os.getenv("FAVORITES_SYNC_INTERVAL_SECONDS"), 3600.0
         ),
         favorites_sync_archive=_bool(os.getenv("FAVORITES_SYNC_ARCHIVE"), False),
-        favorites_sync_categories=_ints(os.getenv("FAVORITES_SYNC_CATEGORIES")),
+        favorites_sync_categories=_fav_scope[0],
+        favorites_sync_excludes=_fav_scope[1],
         favorites_sync_state=Path(
-            os.getenv("FAVORITES_SYNC_STATE", "./favorites_sync.json")
+            os.getenv("FAVORITES_SYNC_STATE") or str(_default_state_path("favorites_sync.json"))
         ),
         favorites_sync_match_threshold=_int(
             os.getenv("FAVORITES_SYNC_MATCH_THRESHOLD"), 5
         ),
         favorites_sync_max_pages=_int(os.getenv("FAVORITES_SYNC_MAX_PAGES"), 50),
         mytags_ttl_seconds=_float(os.getenv("MYTAGS_TTL_SECONDS"), 21600.0),
-        mytags_state=Path(os.getenv("MYTAGS_STATE", "./mytags.json")),
+        mytags_state=Path(os.getenv("MYTAGS_STATE") or str(_default_state_path("mytags.json"))),
         tag_translation_enabled=_bool(os.getenv("TAG_TRANSLATION_ENABLED"), False),
         tag_translation_url=(
             os.getenv(
@@ -501,7 +538,7 @@ def load_settings() -> Settings:
             os.getenv("TAG_TRANSLATION_INTERVAL_SECONDS"), 86400.0
         ),
         tag_translation_state=Path(
-            os.getenv("TAG_TRANSLATION_STATE", "./tag_translation.json")
+            os.getenv("TAG_TRANSLATION_STATE") or str(_default_state_path("tag_translation.json"))
         ),
     )
     return settings

@@ -135,6 +135,27 @@ def test_non_favorites_page_has_empty_favcat():
 
 
 # --------------------------------------------------------------------------
+# config: favcat scope syntax (whitelist + `-ID` exclusions)
+# --------------------------------------------------------------------------
+
+
+def test_split_favcat_scope():
+    from app.config import _split_favcat_scope
+
+    assert _split_favcat_scope(None) == ((), ())
+    assert _split_favcat_scope("") == ((), ())
+    assert _split_favcat_scope("1,2,3") == ((1, 2, 3), ())
+    assert _split_favcat_scope("-0") == ((), (0,))
+    assert _split_favcat_scope("-0,-5") == ((), (0, 5))
+    assert _split_favcat_scope("1,2,-0") == ((1, 2), (0,))
+    assert _split_favcat_scope("1,-1") == ((1,), (1,))
+    # malformed tokens ignored; `-` without digits ignored; dupes collapsed
+    assert _split_favcat_scope("bogus,2") == ((2,), ())
+    assert _split_favcat_scope("-,2") == ((2,), ())
+    assert _split_favcat_scope("1, 1 , -0,-0") == ((1,), (0,))
+
+
+# --------------------------------------------------------------------------
 # service: write ops
 # --------------------------------------------------------------------------
 
@@ -259,6 +280,68 @@ async def test_scan_favorites_whitelist(tmp_path):
     # out-of-scope favcat-2 gallery never counts (neither new nor a match)
     assert [g.gid for g in result["new"]] == [100]
     assert result["seen"] == [(100, "aaa"), (101, "bbb")]
+
+
+@pytest.mark.asyncio
+async def test_scan_favorites_blacklist(tmp_path):
+    settings, client, service = make_service(tmp_path)
+    client.pages["/favorites.php"] = _fav_page([
+        (100, "aaa", "New Common", "Common"),          # favcat 1, in scope
+        (200, "ccc", "Excluded Zero", "All Favorites"),  # favcat 0, excluded
+        (101, "bbb", "New Videos", "Videos"),            # favcat 2, in scope
+    ])
+    result = await service.scan_favorites(
+        set(), favcat_blacklist=(0,), match_threshold=5, max_pages=5
+    )
+    assert [g.gid for g in result["new"]] == [100, 101]
+    assert result["seen"] == [(100, "aaa"), (101, "bbb")]
+
+
+@pytest.mark.asyncio
+async def test_scan_favorites_blacklist_keeps_unknown_favcat(tmp_path):
+    # favcat that fails to parse (None) is kept under blacklist-only scope
+    # (whitelist mode would drop it) — miss nothing on picker changes.
+    settings, client, service = make_service(tmp_path)
+    client.pages["/favorites.php"] = _fav_page([
+        (100, "aaa", "Known Folder", "Common"),
+        (200, "ddd", "Mystery Folder", "No Such Folder"),
+    ])
+    result = await service.scan_favorites(
+        set(), favcat_blacklist=(0,), match_threshold=5, max_pages=5
+    )
+    assert [g.gid for g in result["new"]] == [100, 200]
+
+
+@pytest.mark.asyncio
+async def test_scan_favorites_mixed_scope(tmp_path):
+    # whitelist ∩ blacklist: exclusion applies on top, redundantly here.
+    settings, client, service = make_service(tmp_path)
+    client.pages["/favorites.php"] = _fav_page([
+        (100, "aaa", "New Common", "Common"),
+        (200, "ccc", "Old Videos", "Videos"),
+    ])
+    result = await service.scan_favorites(
+        set(), favcat_whitelist=(1,), favcat_blacklist=(2,),
+        match_threshold=5, max_pages=5,
+    )
+    assert [g.gid for g in result["new"]] == [100]
+
+
+@pytest.mark.asyncio
+async def test_scan_favorites_empty_scope_warns(tmp_path, caplog):
+    # whitelist fully covered by blacklist -> scans nothing, warns loudly.
+    settings, client, service = make_service(tmp_path)
+    client.pages["/favorites.php"] = _fav_page([
+        (100, "aaa", "New Common", "Common"),
+    ])
+    with caplog.at_level("WARNING", logger="app.eh.service"):
+        result = await service.scan_favorites(
+            set(), favcat_whitelist=(1,), favcat_blacklist=(1,),
+            match_threshold=5, max_pages=5,
+        )
+    assert result["new"] == []
+    assert result["seen"] == []
+    assert "scope is empty" in caplog.text
 
 
 @pytest.mark.asyncio

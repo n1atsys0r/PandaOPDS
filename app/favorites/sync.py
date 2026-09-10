@@ -162,6 +162,7 @@ class FavoritesSyncer:
             result = await self.service.scan_favorites(
                 self.state.known(),
                 favcat_whitelist=self.settings.favorites_sync_categories,
+                favcat_blacklist=self.settings.favorites_sync_excludes,
                 match_threshold=self.settings.favorites_sync_match_threshold,
                 max_pages=self.settings.favorites_sync_max_pages,
             )
@@ -259,6 +260,7 @@ class FavoritesSyncer:
             "categories": (
                 list(self.settings.favorites_sync_categories) or "all"
             ),
+            "excluded_categories": list(self.settings.favorites_sync_excludes),
             "running": self._busy,
             "last_error": self._last_error,
             **self.state.summary(),
