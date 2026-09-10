@@ -212,9 +212,20 @@ class EHService:
         params = {"next": str(last_gid)} if last_gid is not None else {}
         return await self._list_page("watched", "/watched", params)
 
-    async def favorites_galleries(self, last_gid: str | None = None) -> GalleryPageInfo:
-        """Favorites list (/favorites.php). Reuses the standard list parser."""
-        params = {"next": str(last_gid)} if last_gid is not None else {}
+    async def favorites_galleries(
+        self, last_gid: str | None = None, favcat: int | str | None = None
+    ) -> GalleryPageInfo:
+        """Favorites list (/favorites.php). Reuses the standard list parser.
+
+        `favcat` filters to a single favorites folder
+        (`/favorites.php?favcat=N`); None keeps the full view. The value
+        joins `params`, so it is automatically part of the list-cache key.
+        """
+        params: dict[str, str] = {}
+        if last_gid is not None:
+            params["next"] = str(last_gid)
+        if favcat is not None:
+            params["favcat"] = str(favcat)
         return await self._list_page("favorites", "/favorites.php", params)
 
     async def toplist_galleries(

@@ -96,6 +96,11 @@ def _resolve_preset(query: str) -> tuple[str, str | None]:
         return ("watched", None)
     elif query == "favorites":
         return ("favorites", None)
+    elif query.startswith("favorites:"):
+        favcat = query.split(":", 1)[1]
+        if not favcat.isdigit():
+            raise ValueError(f"Unknown favorites favcat: {favcat!r}")
+        return ("favorites", favcat)
     elif query == "archives":
         # Local Archives shelf (ready zip masters) — zero upstream.
         return ("archives", None)
@@ -119,7 +124,9 @@ async def fetch_section(service: EHService, section: Section) -> GalleryPageInfo
         elif method == "watched":
             return await service.watched_galleries()
         elif method == "favorites":
-            return await service.favorites_galleries()
+            if arg is None:
+                return await service.favorites_galleries()
+            return await service.favorites_galleries(favcat=int(arg))
         elif method == "toplist":
             return await service.toplist_galleries(period=arg or "yesterday")
         elif method == "archives":
@@ -144,7 +151,9 @@ def build_href(*, type: str, query: str, base: str = "/opds/v2.0") -> str:
         elif method == "watched":
             return f"{base}/gallery?query=watched"
         elif method == "favorites":
-            return f"{base}/gallery?query=favorites"
+            if arg is None:
+                return f"{base}/gallery?query=favorites"
+            return f"{base}/gallery?query=favorites:{arg}"
         elif method == "toplist":
             return f"{base}/toplist?period={arg}"
         elif method == "archives":
@@ -156,7 +165,9 @@ def build_href(*, type: str, query: str, base: str = "/opds/v2.0") -> str:
 
 def is_auth_required(type: str, query: str) -> bool:
     """Return True if this section needs IPB authentication."""
-    return type == "preset" and query in ("watched", "favorites")
+    if type != "preset":
+        return False
+    return query in ("watched", "favorites") or query.startswith("favorites:")
 
 
 # ---------------------------------------------------------------------------

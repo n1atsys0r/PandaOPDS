@@ -624,13 +624,26 @@ async def gallery_feed(
                 f_cats = mask
                 break
 
+    # `favorites` (full view) and `favorites:N` (single folder,
+    # `/favorites.php?favcat=N`) share the favorites upstream; anything else
+    # starting with `favorites:` is malformed and rejected (v2.0 only).
+    favcat: str | None = None
+    is_favorites = query == "favorites" or query.startswith("favorites:")
+    if query.startswith("favorites:"):
+        favcat = query.split(":", 1)[1]
+        if not favcat.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown favorites folder {favcat!r} (expected favorites or favorites:N)",
+            )
+
     try:
         if query == "popular":
             info = await service.popular_galleries(last_gid=next)
         elif query == "watched":
             info = await service.watched_galleries(last_gid=next)
-        elif query == "favorites":
-            info = await service.favorites_galleries(last_gid=next)
+        elif is_favorites:
+            info = await service.favorites_galleries(last_gid=next, favcat=favcat)
         else:
             info = await service.search_galleries(query=query, last_gid=next, f_cats=f_cats)
     except Exception as exc:  # mapped to proper statuses by app-level handlers
@@ -651,7 +664,10 @@ async def gallery_feed(
             + ("&" + "&".join(q_parts) if q_parts else "")
         )
 
-    title = _LIST_TITLES.get(query, "Search") if query else "Latest"
+    if query.startswith("favorites:"):
+        title = f"Favorites {favcat}"
+    else:
+        title = _LIST_TITLES.get(query, "Search") if query else "Latest"
     if category:
         title = f"{title} — {category}"
     title = f"E-Hentai: {title}"
@@ -659,7 +675,7 @@ async def gallery_feed(
     # Only emit facets for the main search feed (not popular/watched/favorites
     # which use different upstream URLs that may not support f_cats).
     facets = None
-    if query not in ("popular", "watched", "favorites"):
+    if query not in ("popular", "watched", "favorites") and not query.startswith("favorites:"):
         facets = builder.build_category_facets(current_category=category)
 
     content = builder.acquisition_document(
