@@ -519,6 +519,29 @@ def test_comment_gallery_links_rewritten_absolute():
     )
 
 
+def test_comment_gallery_links_without_trailing_slash():
+    """No-slash / ?-direct / #-direct / uppercase-host gallery links all rewrite."""
+    html = (
+        '<div class="c6" id="comment_8666377">'
+        '前作：<a href="https://e-hentai.org/g/3669047/50da180ab8">'
+        'https://e-hentai.org/g/3669047/50da180ab8</a>'
+        ' <a href="https://e-hentai.org/g/123456/aabbcc?p=2">query-direct</a>'
+        ' <a href="https://exhentai.org/g/123456/aabbcc#comments">frag-direct</a>'
+        ' <a href="https://e-hentai.org/mpv/98765/fedcba">mpv-noslash</a>'
+        ' <a href="HTTPS://E-HENTAI.ORG/g/123456/aabbcc/">upper-host</a>'
+        ' <a href="https://e-hentai.org/uploader/someone">uploader</a>'
+        "</div>"
+    )
+    c = GalleryComment(id=8666377, username="u", time="2026-08-12 13:11", content_html=html)
+    content = _comment_payload(c, href=lambda p: p)["content"]
+    assert 'href="/opds/v2.0/gallery/3669047/50da180ab8"' in content
+    assert content.count('href="/opds/v2.0/gallery/123456/aabbcc"') == 3
+    assert 'href="/opds/v2.0/gallery/98765/fedcba"' in content
+    # anchor text untouched; non-gallery links stay verbatim
+    assert ">https://e-hentai.org/g/3669047/50da180ab8</a>" in content
+    assert 'href="https://e-hentai.org/uploader/someone"' in content
+
+
 # -- comment standard-cover rewriting (CORS workaround) --------------------
 
 from urllib.parse import quote as _quote

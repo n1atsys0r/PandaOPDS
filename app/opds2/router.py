@@ -50,13 +50,14 @@ router = APIRouter(prefix="/opds/v2.0", tags=["opds2"])
 # is malformed and rejected before it reaches the upstream request.
 _NEXT_CURSOR_RE = re.compile(r"^\d+(?:-\d+)*$")
 
-# Gallery URLs inside comment HTML: https://(e-hentai|exhentai).org/g/{gid}/{token}/
-# (optionally with ?p= / #anchors; /mpv/ viewer links map to the same detail doc).
-# The trailing `[^"']*` eats any query/fragment so the rewritten href always
-# points at the OPDS 2.0 detail document for that gallery.
+# Gallery URLs inside comment HTML: https://(e-hentai|exhentai).org/g/{gid}/{token}
+# (trailing slash optional; optionally with ?p= / #anchors; /mpv/ viewer links
+# map to the same detail doc). Scheme/host match case-insensitively (DNS),
+# path stays case-sensitive. The trailing `[^"']*` eats any /query/fragment
+# so the rewritten href always points at the OPDS 2.0 detail doc for that gallery.
 _CONTENT_GALLERY_LINK_RE = re.compile(
-    r'(href=["\'])(https?://(?:e-hentai|exhentai)\.org/'
-    r'(?:g|mpv)/(\d+)/([0-9a-fA-F]+)/[^"\']*)(["\'])'
+    r'(href=["\'])((?i:https?://(?:e-hentai|exhentai)\.org)/'
+    r'(?:g|mpv)/(\d+)/([0-9a-fA-F]+)[^"\']*)(["\'])'
 )
 
 
