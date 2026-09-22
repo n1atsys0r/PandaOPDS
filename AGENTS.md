@@ -199,12 +199,12 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 | `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
 | `GET /api/archive` | JSON：归档列表 + 统计（数量/可用/占用/状态分布） |
 | `GET /api/archive/{gid}/{token}/quote` | 归档报价：标题 + GP 余额 + 各档位（dltype/label/价格 Free 或 GP/大小/可用性/已解锁）（**不扣 GP，不发任务**） |
-| `POST /api/archive/{gid}/{token}/start` | 触发归档（body `{"quality": "org"}`，缺省 `ARCHIVE_QUALITY`；`_match_option` 匹配 dltype/标签/别名）并开始后台任务；免费/已解锁档不扣 GP |
+| `POST /api/archive/{gid}/{token}/start` | 触发归档（body `{"quality": "org"}`，缺省 `ARCHIVE_QUALITY`；`_match_option` 匹配 dltype/标签/别名）并开始后台任务；免费/已解锁档不扣 GP；幂等：ready/进行中条目直接返回现状（ready 带 `skipped: true`），failed/absent 走正常流程；body 加 `"force": true` 强制重下 |
 | `GET /api/archive/{gid}/{token}` | 单条状态/进度（含 active、download_url、metadata_at） |
 | `GET /api/archive/{gid}/{token}/metadata` | 读取本地持久化的 gdata 元数据快照（metadata.json；无快照 404） |
 | `POST /api/archive/{gid}/{token}/metadata/refresh` | 手动刷新元数据：force 拉取 gdata 最新 metadata + 封面并覆盖本地快照（不触发下载、不扣 GP；无 IPB 亦可，gdata/封面均公开） |
 | `DELETE /api/archive/{gid}/{token}` | 删除本地归档（取消任务 + 删文件；账户归档记录保留，可重下） |
-| `POST /api/archive/{gid}/{token}/refresh` | 重新 POST 重准备并重下（免费档不扣 GP） |
+| `POST /api/archive/{gid}/{token}/refresh` | 重新 POST 重准备并重下（免费档不扣 GP；等价 `start` + `"force": true`，沿用存量档位） |
 | `POST /api/favorites` | **收藏夹写操作代理**：body `{"action": "add\|move\|remove", "gid", "token", "favcat", "note"}` 单条，或 `{"action", "favcat", "items": [{"gid", "token"}, ...]}` 批量（≤200）；经 `gallerypopups.php?act=addfav` 转发 EH（move = 写入新 favcat，remove = `favcat=favdel`）；逐项返回 ok/error；成功后失效 `list:favorites:*` 缓存；需 IPB 登录态（无则 403） |
 | `GET /api/favorites/categories` | 收藏夹目录列表（id + name，来自 `/favorites.php` 分类选择器，缓存 10min） |
 | `GET /api/favorites/sync` | 收藏夹同步状态（周期/自动归档开关/归档范围/已知与已归档计数/上次运行） |

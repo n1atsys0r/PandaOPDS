@@ -367,6 +367,65 @@ async def test_refresh_retriggers_download(tmp_path):
     assert manager.get_status(1, "t")["status"] == ST_READY
 
 
+@pytest.mark.asyncio
+async def test_start_skips_when_ready(tmp_path):
+    """Repeat start on a ready entry: no upstream POST, skipped marker."""
+    _, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    await manager.start(1, "t")
+    await wait_done(manager, 1, "t")
+    assert manager.get_status(1, "t")["status"] == ST_READY
+    assert len(client.submits) == 1
+
+    again = await manager.start(1, "t")
+    assert len(client.submits) == 1  # no re-POST
+    assert again["status"] == ST_READY
+    assert again.get("skipped") is True
+    assert manager.get_status(1, "t")["page_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_start_returns_active_while_pending(tmp_path):
+    """Repeat start while in flight: no upstream POST, active status back."""
+    _, client, manager = make_manager(tmp_path)
+    await manager.store.upsert(1, "t", {"title": "Inflight", "status": "pending"})
+    again = await manager.start(1, "t")
+    assert len(client.submits) == 0  # no upstream POST at all
+    assert again.get("skipped") is None
+    assert again["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_start_retries_when_failed(tmp_path):
+    """Failed entries are retryable via plain start (no force needed)."""
+    _, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    # pre-existing failed entry with no partial download on disk
+    await manager.store.upsert(
+        1, "t", {"title": "Old", "status": "failed", "error": "boom"}
+    )
+    await manager.start(1, "t")
+    assert len(client.submits) == 1  # falls through to the normal flow
+    await wait_done(manager, 1, "t")
+    assert manager.get_status(1, "t")["status"] == ST_READY
+
+
+@pytest.mark.asyncio
+async def test_start_force_redownloads_when_ready(tmp_path):
+    """start(force=True) on a ready entry re-runs the pipeline."""
+    _, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    await manager.start(1, "t")
+    await wait_done(manager, 1, "t")
+    assert len(client.submits) == 1
+
+    st = await manager.start(1, "t", force=True)
+    assert len(client.submits) == 2
+    assert st.get("skipped") is None
+    await wait_done(manager, 1, "t")
+    assert manager.get_status(1, "t")["status"] == ST_READY
+
+
 # --------------------------------------------------------------------------
 # service integration: /stream serves archived pages first
 # --------------------------------------------------------------------------

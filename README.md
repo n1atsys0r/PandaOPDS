@@ -68,9 +68,9 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
 | `GET /api/archive` | JSON：归档列表 + 统计 |
 | `GET /api/archive/{gid}/{token}/quote` | 归档报价（标题/画质/GP 价格，不扣 GP） |
-| `POST /api/archive/{gid}/{token}/start` | 购买并开始归档任务（消耗 GP；已购直接重下） |
+| `POST /api/archive/{gid}/{token}/start` | 购买并开始归档任务（消耗 GP；幂等：已归档/进行中直接返回，重复请求不重下；`{"force": true}` 强制重下） |
 | `GET/DELETE /api/archive/{gid}/{token}` | 单条状态 / 删除本地归档 |
-| `POST /api/archive/{gid}/{token}/refresh` | 重新下载（不扣 GP） |
+| `POST /api/archive/{gid}/{token}/refresh` | 重新下载（不扣 GP；等价 start + `force`，沿用存量档位） |
 
 - **归档（Archiver）**：WebUI 的「归档」视图通过上述 API 管理 GP 购买的持久归档——输入图库 URL 查询报价 → 选画质确认 → 后台下载统一保存为 zip（cbz）母本于 `ARCHIVE_DIR`，`/stream` 对该图库直接读归档页（长效缓存，不受磁盘 LRU/7 天 TTL 约束）。需登录态与星会员；未解锁档消耗 GP，请确认后操作。
 

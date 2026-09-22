@@ -560,11 +560,14 @@ async function startArchive(gid, token) {
       alert("启动失败：" + (j.detail || j.error || "HTTP " + r.status));
       return;
     }
+    const st = await r.json().catch(() => ({}));
   } catch (e) {
     alert("启动失败：" + e);
     return;
   }
-  document.getElementById("arc-quote").innerHTML = '<span class="note">已提交，任务在后台执行（准备→下载→校验）。</span>';
+  document.getElementById("arc-quote").innerHTML = st && st.skipped
+    ? '<span class="note">该图库已归档，已跳过（需重新下载请用 Refresh）。</span>'
+    : '<span class="note">已提交，任务在后台执行（准备→下载→校验）。</span>';
   loadArchive();
 }
 

@@ -2,17 +2,22 @@
 
 - GET    /api/archive                          list + stats
 - GET    /api/archive/{gid}/{token}/quote      tier list + prices (no GP spent)
-- POST   /api/archive/{gid}/{token}/start      trigger archive (free tiers free)
+- POST   /api/archive/{gid}/{token}/start      trigger archive (free tiers free;
+  idempotent: ready/in-flight entries are returned as-is with
+  ``skipped: True`` on ready; body ``{"quality": ..., "force": true}``
+  forces a re-download regardless of state)
 - GET    /api/archive/{gid}/{token}            single entry status
 - GET    /api/archive/{gid}/{token}/metadata    persisted gdata snapshot
 - POST   /api/archive/{gid}/{token}/metadata/refresh  force-refetch gdata + cover
 - DELETE /api/archive/{gid}/{token}            delete local archive
-- POST   /api/archive/{gid}/{token}/refresh    re-trigger re-download (no GP)
+- POST   /api/archive/{gid}/{token}/refresh    re-trigger re-download (thin
+  alias of start with force=True, reusing the stored tier; no GP for
+  free/unlocked tiers)
 
 All routes require IPB cookies (archiver is a logged-in Star-member service);
 the manager raises ArchiverUnavailableError (403) otherwise, mapped by the
 global EHException handler. Deleting only removes local files — the E-Hentai
-account archive record stays, so refresh/start re-downloads spend no GP.
+account archive record stays, so refresh/forced-start re-downloads spend no GP.
 """
 
 from __future__ import annotations
@@ -52,9 +57,11 @@ async def archive_quote(request: Request, gid: int, token: str):
 @router.post("/api/archive/{gid}/{token}/start")
 async def archive_start(request: Request, gid: int, token: str, payload: dict | None = None):
     quality = None
+    force = False
     if isinstance(payload, dict):
         quality = payload.get("quality")
-    return await _manager(request).start(gid, token, quality)
+        force = bool(payload.get("force"))
+    return await _manager(request).start(gid, token, quality, force=force)
 
 
 @router.get("/api/archive/{gid}/{token}")

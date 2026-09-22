@@ -296,18 +296,38 @@ class ArchiveManager:
             "download_url": page.download_url,
         }
 
-    async def start(self, gid: int, token: str, quality: str | None = None) -> dict:
+    async def start(
+        self, gid: int, token: str, quality: str | None = None, force: bool = False
+    ) -> dict:
         """Trigger an archive download and start the background task.
 
-        POSTs the tier form (``dltype``/``dlcheck``) — free tiers (already
-        unlocked) cost no GP, paid tiers are debited here. The response
-        carries the hath.network status URL that the task polls until the
-        archive is ready.
+        Idempotent without ``force``: entries that are already ready or
+        still in flight (pending / downloading / zipping) are returned
+        as-is — no upstream POST, no GP spent, no task respawn. Ready
+        entries carry ``skipped: True`` so callers can tell the skip
+        apart from a freshly triggered task. Failed / absent entries
+        always run the normal flow (start retries a failed entry).
+
+        With ``force=True`` every state re-runs the submit → pending →
+        download pipeline (tier switch included). ``refresh()`` is a
+        thin alias of this forced path reusing the stored tier.
         """
         if not self.has_ipb:
             raise ArchiverUnavailableError(
                 "archiver requires IPB cookies (IPB_MEMBER_ID + IPB_PASS_HASH)"
             )
+        if not force:
+            meta = self.store.get(gid, token)
+            if meta is not None:
+                state = meta.get("status")
+                if state in (ST_PENDING, ST_DOWNLOADING, ST_ZIPPING):
+                    return self._status(gid, token)
+                if state == ST_READY:
+                    return {
+                        **self._status(gid, token),
+                        "skipped": True,
+                        "reason": "already_archived",
+                    }
         html = await self._archiver_get(gid, token)
         page = parse_archiver_page(html)
         if page.error:
@@ -349,9 +369,11 @@ class ArchiveManager:
     async def refresh(self, gid: int, token: str) -> dict:
         """Re-trigger the archive download (existing entry; same tier).
 
-        Free/unlocked tiers cost no GP; a paid tier whose session already
-        exists simply returns its status URL again. The local zip is replaced
-        once the re-download finishes.
+        Thin alias of ``start(force=True)``: requires an existing entry,
+        reuses its stored tier, and always re-runs the submit → pending →
+        download pipeline. Free/unlocked tiers cost no GP; a paid tier
+        whose session already exists simply returns its status URL again.
+        The local zip is replaced once the re-download finishes.
         """
         if not self.has_ipb:
             raise ArchiverUnavailableError(
@@ -360,7 +382,7 @@ class ArchiveManager:
         meta = self.store.get(gid, token)
         if meta is None:
             raise EHException("no archive entry to refresh (start first)")
-        return await self.start(gid, token, quality=meta.get("or"))
+        return await self.start(gid, token, quality=meta.get("or"), force=True)
 
     async def remove(self, gid: int, token: str) -> bool:
         """Cancel any in-flight task and delete the local entry."""
