@@ -73,6 +73,15 @@ async def lifespan(app: FastAPI):
     )
     service.attach_archive(archive_manager)
     app.state.archive = archive_manager
+    try:
+        rolled_back = await archive_manager.recover_interrupted_upgrades()
+        if rolled_back:
+            logger.warning(
+                "archive startup: rolled back %d interrupted tier upgrade(s)",
+                rolled_back,
+            )
+    except Exception as exc:  # noqa: BLE001 - recovery must not block startup
+        logger.warning("archive startup recovery failed (%s)", exc)
 
     # Favorites syncer: periodic incremental scan (+ optional auto-archive).
     favorites_syncer = FavoritesSyncer(

@@ -19,6 +19,12 @@ so enabling auto-archive on a fresh snapshot never mass-spends GP on existing
 favorites. Auto-archive applies from the second run onward (genuinely new
 items only). Deleting the state file resets the baseline (the next run
 records everything again, still without archiving).
+
+**Tier upgrade**: a newly discovered favorite whose gallery already has a
+ready local archive is upgraded res -> org (forced ``start``) when the
+configured ``ARCHIVE_QUALITY`` canonicalizes to org; any other combination
+(same tier, org -> res, in-flight, failed) is skipped. A failed upgrade
+rolls back to the previous ready tier inside the archive manager.
 """
 
 from __future__ import annotations
@@ -197,21 +203,47 @@ class FavoritesSyncer:
         favcats = {k: v for k, v in favcats.items() if k in known}
 
         archived_now: list[str] = []
+        upgraded_now: list[str] = []
         # The FIRST run establishes the baseline: it records every
         # favorite as known but never auto-archives (a fresh snapshot must not
         # treat all current favorites as "new" — that would mass-spend GP).
         # Auto-archive only applies from the second run onward.
         if not is_baseline and self.settings.favorites_sync_archive and self.archive is not None:
+            desired = self.archive.canonical_tier(self.settings.archive_quality)
             for item in new_items:
                 key = f"{item.gid}:{item.token}"
                 # FAVORITES_SYNC_CATEGORIES is an auto-archive scope only:
                 # out-of-scope items stay known/favorited, just never archived.
                 if not self._in_archive_scope(getattr(item, "favcat", None)):
                     continue
+                existing = self.archive.store.get(item.gid, item.token)
+                if existing is not None:
+                    # A locally archived gallery re-discovered as new (e.g.
+                    # re-favorited): upgrade res -> org when the default
+                    # quality asks for org, otherwise leave it alone (same
+                    # tier, org -> res downgrade, in-flight and failed all
+                    # skip — a failed upgrade rolls back to ready inside the
+                    # archive manager, never stranding the old tier).
+                    if existing.get("status") == "ready" and self.archive.needs_upgrade(
+                        self.archive.stored_tier(existing) or existing.get("or"),
+                        desired,
+                    ):
+                        try:
+                            await self.archive.start(
+                                item.gid, item.token, quality=desired, force=True
+                            )
+                            archived.add(key)
+                            upgraded_now.append(key)
+                            errors.pop(key, None)
+                        except Exception as exc:  # noqa: BLE001 - one bad item ≠ abort
+                            errors[key] = str(exc)[:300]
+                            logger.warning(
+                                "auto-upgrade failed for %s:%s (%s)",
+                                item.gid, item.token, exc,
+                            )
+                    continue
                 # never touch items already archived or already in the store
                 if key in archived:
-                    continue
-                if self.archive.store.get(item.gid, item.token) is not None:
                     continue
                 try:
                     await self.archive.start(item.gid, item.token)
@@ -238,9 +270,10 @@ class FavoritesSyncer:
         self._last_error = None
 
         logger.info(
-            "favorites sync: %s run, %d new (scanned %d pages), %d auto-archived%s",
+            "favorites sync: %s run, %d new (scanned %d pages), %d auto-archived, "
+            "%d auto-upgraded%s",
             "baseline" if is_baseline else "incremental",
-            len(new_items), pages, len(archived_now),
+            len(new_items), pages, len(archived_now), len(upgraded_now),
             "" if (not is_baseline and self.settings.favorites_sync_archive)
             else " (auto-archive off)",
         )
@@ -251,6 +284,7 @@ class FavoritesSyncer:
             "new": [{"gid": i.gid, "token": i.token, "title": i.title}
                     for i in new_items],
             "auto_archived": archived_now,
+            "auto_upgraded": upgraded_now,
             "errors": errors,
             "pages": pages,
         }

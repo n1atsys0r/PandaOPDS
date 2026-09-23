@@ -67,6 +67,9 @@ _META_FIELDS = (
     "updated_at",
     "error",
     "metadata_at",  # unix ts of the last successful gdata snapshot
+    # Tier-upgrade rollback snapshot (res->org): pre-upgrade ready meta kept
+    # here until the new tier verifies; empty dict = no upgrade in flight.
+    "upgrade_backup",
 )
 
 

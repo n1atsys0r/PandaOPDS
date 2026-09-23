@@ -837,3 +837,104 @@ async def test_archives_shelf_prefers_title_jpn(tmp_path):
     assert shelf["metadata"]["title"] == detail["metadata"]["title"]
     assert shelf["metadata"]["title"] == "\u65e5\u672c\u8a9e\u30bf\u30a4\u30c8\u30eb"
     assert shelf["metadata"]["authors"] == [{"name": "\u8457\u8005"}]
+
+
+# --------------------------------------------------------------------------
+# tier upgrade: res -> org with rollback to res on failure
+# --------------------------------------------------------------------------
+
+
+def _wire_tier(client, tiers_html, names):
+    """Wire get/submit/status/download chain with the given tiers + zip."""
+    client.pages[("get", 1, "t")] = tiers_html
+    client.pages[("submit", 1, "t")] = PREPARING_HTML
+    client.urls[STATUS_URL] = READY_HTML
+    client.archives[DL_URL] = zip_bytes(names)
+
+
+async def _seed_res_ready(client, manager):
+    """Drive a full res lifecycle so (1, 't') is a ready res entry."""
+    _wire_tier(client, TIERS_RES_HTML, ("r1.jpg", "r2.jpg"))
+    await manager.start(1, "t", quality="res")
+    await wait_done(manager, 1, "t")
+    assert manager.get_status(1, "t")["or"] == "res"
+
+
+def test_canonical_tier_and_needs_upgrade():
+    assert ArchiveManager.canonical_tier("original") == "org"
+    assert ArchiveManager.canonical_tier("ORG") == "org"
+    assert ArchiveManager.canonical_tier("resample") == "res"
+    assert ArchiveManager.canonical_tier("Resized") == "res"
+    assert ArchiveManager.canonical_tier("res") == "res"
+    assert ArchiveManager.needs_upgrade("res", "org") is True
+    assert ArchiveManager.needs_upgrade("res", "original") is True
+    assert ArchiveManager.needs_upgrade("res", "res") is False
+    assert ArchiveManager.needs_upgrade("org", "org") is False
+    assert ArchiveManager.needs_upgrade("org", "res") is False
+    assert ArchiveManager.needs_upgrade("", "org") is False
+    assert ArchiveManager.needs_upgrade(None, "org") is False
+    assert ArchiveManager.stored_tier({"or": "res"}) == "res"
+    assert ArchiveManager.stored_tier({"quality": "Download Original Archive"}) == "org"
+    assert ArchiveManager.stored_tier({"quality": "Download Resample Archive"}) == "res"
+    assert ArchiveManager.stored_tier({}) == ""
+
+
+@pytest.mark.asyncio
+async def test_upgrade_res_to_org_replaces_zip(tmp_path):
+    _, client, manager = make_manager(tmp_path)
+    await _seed_res_ready(client, manager)
+    assert await manager.get_page_bytes(1, "t", 1) == b"page-0"
+
+    # a stale .part must not pollute the new tier (upgrade deletes it)
+    manager.store.part_path(1, "t").write_bytes(b"stale-res-bytes")
+    _wire_tier(client, TIERS_HTML, ("o1.jpg", "o2.jpg", "o3.jpg"))
+    st = await manager.start(1, "t", quality="org", force=True)
+    assert st["status"] == "pending"
+    assert manager.store.get(1, "t")["upgrade_backup"]["or"] == "res"
+    await wait_done(manager, 1, "t")
+
+    meta = manager.get_status(1, "t")
+    assert meta["status"] == ST_READY
+    assert meta["or"] == "org"
+    assert meta.get("upgrade_backup") == {}
+    assert await manager.get_page_bytes(1, "t", 3) == b"page-2"
+
+
+@pytest.mark.asyncio
+async def test_upgrade_failure_rolls_back_to_res(tmp_path):
+    _, client, manager = make_manager(tmp_path)
+    await _seed_res_ready(client, manager)
+
+    client.pages[("get", 1, "t")] = TIERS_HTML  # org offered...
+    client.archives[DL_URL] = b"corrupt-not-a-zip"  # ...but the bytes are junk
+    st = await manager.start(1, "t", quality="org", force=True)
+    assert st["status"] == "pending"
+    await wait_done(manager, 1, "t")
+
+    meta = manager.get_status(1, "t")
+    assert meta["status"] == ST_READY
+    assert meta["or"] == "res"
+    assert meta.get("upgrade_backup") == {}
+    assert meta.get("error")  # failure stays visible
+    # the old master survived: still serving res pages
+    assert await manager.get_page_bytes(1, "t", 1) == b"page-0"
+
+
+@pytest.mark.asyncio
+async def test_recover_interrupted_upgrades(tmp_path):
+    _, client, manager = make_manager(tmp_path)
+    await _seed_res_ready(client, manager)
+    # simulate a restart mid-upgrade: pending + backup + intact zip
+    await manager.store.upsert(1, "t", {
+        "status": "pending", "or": "org", "quality": "Original Archive",
+        "download_url": STATUS_URL,
+        "upgrade_backup": {"or": "res", "quality": "Resample Archive",
+                           "download_url": "http://old-status", "page_count": 2},
+    })
+    assert await manager.recover_interrupted_upgrades() == 1
+    meta = manager.get_status(1, "t")
+    assert meta["status"] == ST_READY
+    assert meta["or"] == "res"
+    assert await manager.get_page_bytes(1, "t", 2) == b"page-1"
+    # second call is a no-op
+    assert await manager.recover_interrupted_upgrades() == 0

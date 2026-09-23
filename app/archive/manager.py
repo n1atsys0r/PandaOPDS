@@ -69,6 +69,20 @@ _ZIP_MAGIC = b"PK\x03\x04"
 _PREPARE_POLL_SECONDS = 20.0
 _PREPARE_TIMEOUT_SECONDS = 2 * 3600.0
 
+# Canonical tier map shared by _match_option/canonical_tier/needs_upgrade:
+# friendly names collapse onto the archiver page's dltype values (org/res).
+_TIER_ALIASES = {"original": "org", "resample": "res", "resized": "res"}
+
+
+def _canonical_tier(value: str | None) -> str:
+    """Collapse a quality/dltype/label token onto org/res (lowercased).
+
+    Unknown values pass through lowercased so exact-dltype matches on future
+    tiers keep working.
+    """
+    v = (value or "").strip().lower()
+    return _TIER_ALIASES.get(v, v)
+
 
 # ---------------------------------------------------------------------------
 # Local (offline) snapshot → feed-model conversions
@@ -236,6 +250,35 @@ class ArchiveManager:
     # -- public API --------------------------------------------------------
 
     @staticmethod
+    def canonical_tier(value: str | None) -> str:
+        """Collapse a quality/dltype/label token onto org/res (lowercased)."""
+        return _canonical_tier(value)
+
+    @staticmethod
+    def stored_tier(meta: dict) -> str:
+        """Best-effort canonical tier of a persisted entry.
+
+        Prefers ``meta["or"]`` (the exact dltype); old entries without it fall
+        back to keyword sniffing on the human-readable ``quality`` label.
+        """
+        direct = _canonical_tier(meta.get("or"))
+        if direct:
+            return direct
+        label = (meta.get("quality") or "").lower()
+        if "original" in label:
+            return "org"
+        if "resample" in label or "resized" in label:
+            return "res"
+        return ""
+
+    @staticmethod
+    def needs_upgrade(stored_or: str | None, desired_quality: str | None) -> bool:
+        """True only for a res -> org tier switch (never downgrades)."""
+        return bool(stored_or) and _canonical_tier(stored_or) == "res" and bool(
+            desired_quality
+        ) and _canonical_tier(desired_quality) == "org"
+
+    @staticmethod
     def _match_option(
         options: list[ArchiveOption], quality: str | None, default_quality: str
     ) -> ArchiveOption | None:
@@ -254,7 +297,7 @@ class ArchiveManager:
         for o in options:
             if quality in o.label.lower():
                 return o
-        alias = {"original": "org", "resample": "res", "resized": "res"}
+        alias = _TIER_ALIASES
         if quality in alias:
             for o in options:
                 if o.or_value.lower() == alias[quality]:
@@ -354,6 +397,32 @@ class ArchiveManager:
                 f"(state={page.download_state!r})"
             )
 
+        # Tier switch on a ready entry (e.g. res -> org): snapshot the old
+        # ready meta so a failed upgrade can roll back to it, and drop any
+        # stale .part so the new tier never resumes from foreign bytes.
+        # archive.zip itself is untouched until _finalize verifies the new
+        # download, so the old tier stays on disk throughout the upgrade.
+        upgrade_backup: dict = {}
+        prev = self.store.get(gid, token)
+        if prev is not None and prev.get("status") == ST_READY and self.needs_upgrade(
+            self.stored_tier(prev) or prev.get("or"), option.or_value
+        ):
+            upgrade_backup = {
+                k: prev[k]
+                for k in ("or", "quality", "gp_price", "download_url",
+                          "page_count", "bytes", "total_bytes")
+                if prev.get(k) is not None
+            }
+            try:
+                self.store.part_path(gid, token).unlink()
+            except OSError:
+                pass
+            logger.warning(
+                "archive tier upgrade %s:%s %s -> %s (rolls back on failure)",
+                gid, token, self.stored_tier(prev) or prev.get("or"),
+                option.or_value,
+            )
+
         await self.store.upsert(gid, token, {
             "title": page.title or None,
             "quality": option.label,
@@ -362,6 +431,7 @@ class ArchiveManager:
             "download_url": page.download_url,
             "status": ST_PENDING,
             "error": None,
+            "upgrade_backup": upgrade_backup,
         })
         self._spawn(gid, token)
         return self._status(gid, token)
@@ -795,7 +865,11 @@ class ArchiveManager:
             })
 
     async def _finalize(self, gid: int, token: str) -> None:
-        """Detect format, produce archive.zip, validate, mark ready."""
+        """Detect format, produce archive.zip, validate, mark ready.
+
+        Upgrade-safe: the previous archive.zip is only replaced once the new
+        download verifies, so a corrupt download never destroys the old tier.
+        """
         part = self.store.part_path(gid, token)
         if not part.exists():
             raise EHException("download produced no file")
@@ -803,12 +877,25 @@ class ArchiveManager:
         zip_path = self.store.zip_path(gid, token)
 
         if fmt == "zip":
+            # Verify the download before replacing any previous tier master.
+            ok, count = await asyncio.to_thread(self._verify_zip, part)
+            if not ok:
+                raise EHException("archive zip failed validation")
             await asyncio.to_thread(os.replace, part, zip_path)
         elif fmt == "7z":
             await self.store.upsert(gid, token, {"status": ST_ZIPPING})
-            ok = await self._convert_7z(part, zip_path)
+            # Convert into a temp file: a failed conversion must not truncate
+            # the previous tier's archive.zip.
+            tmp_zip = zip_path.with_name(zip_path.name + ".tmp")
+            ok = await self._convert_7z(part, tmp_zip)
             if not ok:
+                await asyncio.to_thread(self._remove_file, tmp_zip)
                 raise EHException("7z conversion failed")
+            ok, count = await asyncio.to_thread(self._verify_zip, tmp_zip)
+            if not ok:
+                await asyncio.to_thread(self._remove_file, tmp_zip)
+                raise EHException("archive zip failed validation")
+            await asyncio.to_thread(os.replace, tmp_zip, zip_path)
             await asyncio.to_thread(self._remove_file, part)
         else:
             # keep the unknown file for inspection, mark failed
@@ -816,13 +903,16 @@ class ArchiveManager:
                 f"unknown archive format ({fmt}); file kept at {part.name}"
             )
 
-        ok, count = await asyncio.to_thread(self._verify_zip, zip_path)
-        if not ok:
-            raise EHException("archive zip failed validation")
+        if fmt != "zip":
+            ok, count = await asyncio.to_thread(self._verify_zip, zip_path)
+            if not ok:  # pragma: no cover - tmp was verified above
+                raise EHException("archive zip failed validation")
         await self.store.upsert(gid, token, {
             "status": ST_READY,
             "page_count": count,
             "total_bytes": zip_path.stat().st_size if zip_path.exists() else 0,
+            "error": None,
+            "upgrade_backup": {},
         })
         logger.info("archive ready: %s:%s (%d pages, %d bytes)",
                     gid, token, count, zip_path.stat().st_size if zip_path.exists() else 0)
@@ -895,7 +985,61 @@ class ArchiveManager:
             pass
 
     async def _fail(self, gid: int, token: str, message: str) -> None:
+        meta = self.store.get(gid, token)
+        backup = (meta or {}).get("upgrade_backup") or {}
+        if backup and self.store.zip_path(gid, token).exists():
+            # Tier upgrade failed after the old master survived on disk:
+            # roll back to the previous ready tier instead of stranding it
+            # as failed. The error stays visible; /stream serves res again.
+            logger.warning(
+                "archive tier upgrade failed for %s:%s (%s); rolled back to %s",
+                gid, token, message,
+                backup.get("or") or backup.get("quality") or "previous tier",
+            )
+            await self.store.upsert(gid, token, {
+                **{k: backup[k] for k in (
+                    "or", "quality", "gp_price", "download_url",
+                    "page_count", "bytes", "total_bytes") if backup.get(k) is not None},
+                "status": ST_READY,
+                "error": message[:500],
+                "upgrade_backup": {},
+            })
+            return
         await self.store.upsert(gid, token, {
             "status": ST_FAILED,
             "error": message[:500],
+            "upgrade_backup": {},
         })
+
+    async def recover_interrupted_upgrades(self) -> int:
+        """Roll back upgrade-in-flight entries stranded by a restart.
+
+        Entries stuck in pending/downloading/zipping with a tier-upgrade
+        backup and an intact archive.zip return to ready (previous tier).
+        Returns the number of entries rolled back.
+        """
+        rolled_back = 0
+        for entry in self.store.list_entries():
+            if entry.get("status") not in (ST_PENDING, ST_DOWNLOADING, ST_ZIPPING):
+                continue
+            backup = entry.get("upgrade_backup") or {}
+            if not backup:
+                continue
+            gid, token = entry["gid"], entry["token"]
+            if not self.store.zip_path(gid, token).exists():
+                continue
+            logger.warning(
+                "archive upgrade interrupted by restart for %s:%s; "
+                "rolled back to %s",
+                gid, token, backup.get("or") or backup.get("quality") or "?",
+            )
+            await self.store.upsert(gid, token, {
+                **{k: backup[k] for k in (
+                    "or", "quality", "gp_price", "download_url",
+                    "page_count", "bytes", "total_bytes") if backup.get(k) is not None},
+                "status": ST_READY,
+                "error": "upgrade interrupted by restart; rolled back",
+                "upgrade_backup": {},
+            })
+            rolled_back += 1
+        return rolled_back

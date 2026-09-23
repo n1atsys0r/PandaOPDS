@@ -11,6 +11,7 @@ import asyncio
 import httpx
 import pytest
 
+from app.archive.manager import ArchiveManager
 from app.config import Settings
 from app.eh.parser import parse_list_page, parse_favorites_categories
 from app.eh.service import EHService
@@ -318,17 +319,27 @@ class FakeArchive:
 
     def __init__(self):
         self.started: list[tuple[int, str]] = []
+        self.start_kwargs: list[dict] = []
         self.fail_on: set[tuple[int, str]] = set()
+        self.entries: dict[str, dict] = {}
+        self.store = self._Store(self.entries)
 
-    class store:
-        @staticmethod
-        def get(gid, token):
-            return None
+    class _Store:
+        def __init__(self, entries):
+            self._entries = entries
 
-    async def start(self, gid, token):
+        def get(self, gid, token):
+            return self._entries.get(f"{gid}:{token}")
+
+    canonical_tier = staticmethod(ArchiveManager.canonical_tier)
+    stored_tier = staticmethod(ArchiveManager.stored_tier)
+    needs_upgrade = staticmethod(ArchiveManager.needs_upgrade)
+
+    async def start(self, gid, token, quality=None, force=False):
         if (gid, token) in self.fail_on:
             raise RuntimeError("no GP")
         self.started.append((gid, token))
+        self.start_kwargs.append({"quality": quality, "force": force})
 
 
 def _new_result(items, pages=1):
@@ -487,6 +498,116 @@ async def test_sync_archive_scope_whitelist_skips_unknown_favcat(tmp_path):
     assert syncer.archive.started == []
     assert out["auto_archived"] == []
     assert "200:ccc" in syncer.state.known()
+
+
+@pytest.mark.asyncio
+async def test_sync_upgrades_res_to_org_when_quality_org(tmp_path):
+    """A new favorite with a ready res archive is force-upgraded when the
+    default quality canonicalizes to org."""
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, archive_quality="original"
+    )
+    archive = FakeArchive()
+    archive.entries["200:ccc"] = {
+        "gid": 200, "token": "ccc", "status": "ready",
+        "or": "res", "quality": "Resample Archive",
+    }
+    syncer.archive = archive
+    syncer.service.result = _new_result([_item(100, "aaa")])
+    await syncer.run()  # baseline
+    syncer.service.result = _new_result([_item(200, "ccc")])
+    out = await syncer.run()
+    assert archive.started == [(200, "ccc")]
+    assert archive.start_kwargs == [{"quality": "org", "force": True}]
+    assert out["auto_upgraded"] == ["200:ccc"]
+    assert out["auto_archived"] == []
+    assert "200:ccc" in syncer.state.archived()
+
+
+@pytest.mark.asyncio
+async def test_sync_skips_upgrade_when_quality_res(tmp_path):
+    """Same setup but ARCHIVE_QUALITY=res: the res entry is left alone."""
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, archive_quality="res"
+    )
+    archive = FakeArchive()
+    archive.entries["200:ccc"] = {
+        "gid": 200, "token": "ccc", "status": "ready",
+        "or": "res", "quality": "Resample Archive",
+    }
+    syncer.archive = archive
+    syncer.service.result = _new_result([_item(100, "aaa")])
+    await syncer.run()  # baseline
+    syncer.service.result = _new_result([_item(200, "ccc")])
+    out = await syncer.run()
+    assert archive.started == []
+    assert out["auto_upgraded"] == []
+    assert "200:ccc" in syncer.state.known()
+
+
+@pytest.mark.asyncio
+async def test_sync_skips_same_tier_inflight_and_downgrade(tmp_path):
+    """org/ready, pending entries and org->res never trigger an upgrade."""
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, archive_quality="original"
+    )
+    archive = FakeArchive()
+    archive.entries["200:ccc"] = {
+        "gid": 200, "token": "ccc", "status": "ready",
+        "or": "org", "quality": "Original Archive",
+    }
+    archive.entries["201:ddd"] = {
+        "gid": 201, "token": "ddd", "status": "downloading", "or": "res",
+    }
+    syncer.archive = archive
+    syncer.service.result = _new_result([_item(100, "aaa")])
+    await syncer.run()  # baseline
+    syncer.service.result = _new_result([_item(200, "ccc"), _item(201, "ddd")])
+    out = await syncer.run()
+    assert archive.started == []
+    assert out["auto_upgraded"] == []
+
+    # downgrade desired (ARCHIVE_QUALITY=res) never touches an org entry
+    syncer2 = make_syncer(
+        tmp_path, favorites_sync_archive=True, archive_quality="res"
+    )
+    archive2 = FakeArchive()
+    archive2.entries["200:ccc"] = {
+        "gid": 200, "token": "ccc", "status": "ready",
+        "or": "org", "quality": "Original Archive",
+    }
+    syncer2.archive = archive2
+    syncer2.service.result = _new_result([])
+    await syncer2.run()  # baseline (nothing new -> nothing archived)
+    syncer2.service.result = _new_result([_item(200, "ccc")])
+    out2 = await syncer2.run()
+    assert archive2.started == []
+    assert out2["auto_upgraded"] == []
+
+
+@pytest.mark.asyncio
+async def test_sync_upgrade_failure_keeps_archived(tmp_path):
+    """A failed upgrade is recorded in errors but keeps archived membership
+    (the res master is still valid after the manager-side rollback)."""
+    syncer = make_syncer(
+        tmp_path, favorites_sync_archive=True, archive_quality="original"
+    )
+    archive = FakeArchive()
+    archive.entries["200:ccc"] = {
+        "gid": 200, "token": "ccc", "status": "ready",
+        "or": "res", "quality": "Resample Archive",
+    }
+    archive.fail_on = {(200, "ccc")}
+    syncer.archive = archive
+    syncer.service.result = _new_result([_item(100, "aaa")])
+    await syncer.run()  # baseline
+    await syncer.state.update(archived={"200:ccc"})
+    syncer.service.result = _new_result([_item(200, "ccc")])
+    out = await syncer.run()
+    assert "200:ccc" in out["errors"]
+    assert out["auto_upgraded"] == []
+    assert archive.started == []  # start raised -> not recorded
+    assert "200:ccc" in syncer.state.archived()  # membership kept
 
 
 @pytest.mark.asyncio
