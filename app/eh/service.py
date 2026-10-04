@@ -80,17 +80,15 @@ def _extract_category_keywords(
     allowed = 0
     matched = False
     valid = False
-    translated_namespace = (
-        getattr(translator, "category_namespace", lambda: "reclass")()
-        if translator is not None
-        else "reclass"
-    )
-    category_namespaces = {"category", "reclass", translated_namespace.casefold()}
-    if translator is not None:
-        category_namespaces.add("分类")
     for token in _CATEGORY_TOKEN_RE.findall(query):
         prefix, separator, value = token.partition(":")
-        if not separator or prefix.casefold() not in category_namespaces:
+        is_category_prefix = prefix.casefold() == "category"
+        is_translated_prefix = (
+            prefix == "分类"
+            and translator is not None
+            and hasattr(translator, "category_mask")
+        )
+        if not separator or not (is_category_prefix or is_translated_prefix):
             rest.append(token)
             continue
         value = value.strip().strip('"')

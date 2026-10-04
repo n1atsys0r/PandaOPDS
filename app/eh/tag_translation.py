@@ -415,16 +415,9 @@ class TagTranslator:
         return f"{display_ns}:{name}"
 
     def display_category(self, category: str) -> str:
-        """Return the translated reclass namespace and name when available."""
+        """Return the fixed Chinese category namespace with reclass value text."""
         hit = self._forward.get(("reclass", category.casefold()))
-        display_ns = self.translate_namespace("reclass")
-        if display_ns:
-            return f"{display_ns}:{hit[1] if hit else category}"
-        return f"category:{category}"
-
-    def category_namespace(self) -> str:
-        """Display namespace used by reclass, falling back to its raw name."""
-        return self.translate_namespace("reclass") or "reclass"
+        return f"分类:{hit[1] if hit else category}"
 
     def category_aliases(self, aliases: dict[str, int]) -> dict[str, int]:
         """Add translated reclass names as aliases for known category masks."""

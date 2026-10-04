@@ -164,6 +164,11 @@ async def test_search_galleries_category_keywords_and_facets(monkeypatch):
     assert captured[-1]["f_search"] == "分类:同人志"
     assert "f_cats" not in captured[-1]
 
+    # reclass is the ordinary EH tag namespace, not a category-search alias.
+    await svc.search_galleries(query="reclass:doujinshi")
+    assert captured[-1]["f_search"] == "reclass:doujinshi"
+    assert "f_cats" not in captured[-1]
+
     # An explicit facet intersects the category union from search keywords.
     await svc.search_galleries(
         query='category:"Artist CG" category:doujinshi', f_cats=1021, last_gid="42"
@@ -229,4 +234,7 @@ async def test_search_galleries_translated_category_keyword(monkeypatch):
     await svc.search_galleries(query="category:同人志", last_gid="1")
     assert "f_search" not in captured[-1]
     assert captured[-1]["f_cats"] == "1021"
+    await svc.search_galleries(query="reclass:doujinshi")
+    assert captured[-1]["f_search"] == "reclass:doujinshi"
+    assert "f_cats" not in captured[-1]
     await svc.close()

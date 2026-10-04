@@ -39,7 +39,7 @@ def _translator(tmp_path, **kw) -> TagTranslator:
         "parody": "原作",
         "artist": "画师",
         "mixed": "混合",
-        "reclass": "分类",
+        "reclass": "重分类",
     }
     abbrs = {"f": "female", "m": "male", "x": "mixed"}
     tags = {
@@ -331,7 +331,7 @@ def test_flatten_subjects_without_translator_unchanged():
     assert out == [{"name": "female:netorare"}]
 
 
-def test_category_subject_uses_reclass_translation_with_raw_fallback(tmp_path):
+def test_category_subject_uses_reclass_values_with_fixed_namespace(tmp_path):
     t = _translator(tmp_path)
     assert _flatten_subjects([], translator=t, category="Doujinshi") == [
         {"name": "分类:同人志"}
@@ -339,6 +339,8 @@ def test_category_subject_uses_reclass_translation_with_raw_fallback(tmp_path):
     assert _flatten_subjects([], translator=t, category="Manga") == [
         {"name": "分类:Manga"}
     ]
+    # `reclass` remains a distinct tag namespace even if its own label differs.
+    assert t.display_tag("reclass", "doujinshi") == "重分类:同人志"
     assert _flatten_subjects([], category="Manga") == [
         {"name": "category:Manga"}
     ]
