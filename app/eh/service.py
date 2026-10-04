@@ -8,6 +8,7 @@ Pipeline for one image: page-URL cache -> detail page (1 req / 20 pages)
 from __future__ import annotations
 
 import logging
+import re
 from typing import Awaitable, Callable
 
 from ..cache.disk import DiskImageCache, detect_image_type
@@ -43,6 +44,75 @@ from .parser import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ALL_CATEGORY_MASK = 1023
+_EH_CATEGORY_MASKS = {
+    "misc": 1022,
+    "doujinshi": 1021,
+    "manga": 1019,
+    "artist cg": 1015,
+    "game cg": 1007,
+    "western": 991,
+    "non-h": 959,
+    "image set": 895,
+    "cosplay": 767,
+    "asian porn": 511,
+}
+_CATEGORY_TOKEN_RE = re.compile(r'([^\s"]+:"[^"]*"|"[^"]*"|\S+)')
+
+
+def _extract_category_keywords(
+    query: str,
+    facets: list[tuple[str, int]],
+    translator=None,
+) -> tuple[str, int | None]:
+    """Strip category: tokens and return their combined EH exclusion mask."""
+    if not query:
+        return query, None
+    aliases = {name.casefold(): mask for name, mask in _EH_CATEGORY_MASKS.items()}
+    # Configuration names override built-ins and can define category groups.
+    aliases.update({str(name).casefold(): int(mask) for name, mask in facets})
+    if translator is not None and hasattr(translator, "category_aliases"):
+        translated = translator.category_aliases(aliases)
+        for name, mask in translated.items():
+            aliases.setdefault(str(name).casefold(), int(mask))
+    rest: list[str] = []
+    allowed = 0
+    matched = False
+    valid = False
+    translated_namespace = (
+        getattr(translator, "category_namespace", lambda: "reclass")()
+        if translator is not None
+        else "reclass"
+    )
+    category_namespaces = {"category", "reclass", translated_namespace.casefold()}
+    if translator is not None:
+        category_namespaces.add("分类")
+    for token in _CATEGORY_TOKEN_RE.findall(query):
+        prefix, separator, value = token.partition(":")
+        if not separator or prefix.casefold() not in category_namespaces:
+            rest.append(token)
+            continue
+        value = value.strip().strip('"')
+        matched = True
+        mask = aliases.get(value.casefold())
+        if mask is None and translator is not None and hasattr(translator, "category_mask"):
+            mask = translator.category_mask(value, aliases)
+        if mask is not None:
+            allowed |= _ALL_CATEGORY_MASK ^ int(mask)
+            valid = True
+    if not matched:
+        return query, None
+    return " ".join(rest), (_ALL_CATEGORY_MASK ^ allowed) if valid else None
+
+
+def _intersect_category_masks(explicit: int | None, keyword: int) -> int:
+    keyword_allowed = _ALL_CATEGORY_MASK ^ keyword
+    if explicit is None:
+        return keyword
+    return _ALL_CATEGORY_MASK ^ (
+        (_ALL_CATEGORY_MASK ^ int(explicit)) & keyword_allowed
+    )
 
 GDATA_BATCH_SIZE = 25
 THUMBS_PER_DETAIL_PAGE = 20
@@ -180,21 +250,26 @@ class EHService:
         (either a plain gid or a `gid-favoritedAt` composite from favorites).
         `f_cats` is the EH exclude-category bitmask (e.g. 1021 = Doujinshi only).
 
-        Extension keywords embedded in `query` (rating:5 / expunged /
-        nohide:uploader|language|tags|all) are stripped and translated into
-        advanced-search URL params (see app/eh/query_ext.py); translated tag
-        names (EhTagTranslation, opt-in) are rewritten into native keyword
-        syntax; the stripped remainder goes into f_search. Adv params join
-        `params`, so they are automatically part of the list-cache key (no
-        collisions between differently-filtered searches) and ride along on
-        `next` pagination.
+        Category keywords are stripped into `f_cats`; other extension
+        keywords (rating:5 / expunged / nohide:...) become advanced-search URL
+        params (see app/eh/query_ext.py). Translated tag names
+        (EhTagTranslation, opt-in) are rewritten into native keyword syntax;
+        the remaining text goes into `f_search`. All resulting params are
+        part of the list-cache key and ride along on `next` pagination.
         """
+        query, category_mask = _extract_category_keywords(
+            query, self.settings.facets, self.translator
+        )
         query, adv_params = extract_adv_params(query)
         if self.translator is not None:
             query = self.translator.translate_query(query)
         params: dict[str, str] = dict(adv_params)
         if query:
             params["f_search"] = query
+        # EH f_cats is an exclusion mask. Convert masks to allowed-category
+        # bits to combine the keyword union with an explicit facet intersection.
+        if category_mask is not None:
+            f_cats = _intersect_category_masks(f_cats, category_mask)
         if f_cats is not None:
             params["f_cats"] = str(f_cats)
         if last_gid is not None:

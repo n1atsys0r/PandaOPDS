@@ -6,7 +6,7 @@ EHService.search_galleries (params merging + cache-key isolation).
 
 import pytest
 
-from app.config import load_settings
+from app.config import Settings, load_settings
 from app.eh.query_ext import extract_adv_params
 from app.eh.service import EHService
 
@@ -132,4 +132,101 @@ async def test_search_galleries_merges_adv_params(monkeypatch):
     assert params["f_srdd"] == "4"
     assert params["f_sft"] == "on"
 
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_search_galleries_category_keywords_and_facets(monkeypatch):
+    settings = load_settings()
+    svc = EHService(settings)
+    captured = []
+
+    async def fake_html_get(path, params=None):
+        captured.append(dict(params or {}))
+        return FIXTURE_HTML
+
+    monkeypatch.setattr(svc, "_html_get", fake_html_get)
+    await svc.search_galleries(query='naruto category:"Artist CG" category:doujinshi')
+    assert captured[-1]["f_search"] == "naruto"
+    # Union of two allowed categories; exclude every other category.
+    assert captured[-1]["f_cats"] == "1013"
+
+    await svc.search_galleries(query="category:doujinshi")
+    assert "f_search" not in captured[-1]
+    assert captured[-1]["f_cats"] == "1021"
+
+    await svc.search_galleries(query='"category:doujinshi"')
+    assert captured[-1]["f_search"] == '"category:doujinshi"'
+    assert "f_cats" not in captured[-1]
+
+    # The translated category namespace is only reserved when translation is on.
+    await svc.search_galleries(query="分类:同人志")
+    assert captured[-1]["f_search"] == "分类:同人志"
+    assert "f_cats" not in captured[-1]
+
+    # An explicit facet intersects the category union from search keywords.
+    await svc.search_galleries(
+        query='category:"Artist CG" category:doujinshi', f_cats=1021, last_gid="42"
+    )
+    assert "f_search" not in captured[-1]
+    assert captured[-1]["f_cats"] == "1021"
+
+    await svc.search_galleries(query="category:unknown naruto", f_cats=1021)
+    assert captured[-1]["f_search"] == "naruto"
+    assert captured[-1]["f_cats"] == "1021"
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_search_galleries_facets_aliases_override_builtin_names(monkeypatch):
+    settings = Settings(facets=[("Doujinshi", 17), ("自定义分类", 7)])
+    svc = EHService(settings)
+    captured = []
+
+    async def fake_html_get(path, params=None):
+        captured.append(dict(params or {}))
+        return FIXTURE_HTML
+
+    monkeypatch.setattr(svc, "_html_get", fake_html_get)
+    await svc.search_galleries(query="category:doujinshi")
+    assert captured[-1]["f_cats"] == "17"  # configured name overrides built-in
+
+    await svc.search_galleries(query="category:自定义分类")
+    assert captured[-1]["f_cats"] == "7"
+    assert "f_search" not in captured[-1]
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_search_galleries_translated_category_keyword(monkeypatch):
+    settings = load_settings()
+    svc = EHService(settings)
+    captured = []
+
+    class Translator:
+        def category_namespace(self):
+            return "分类"
+
+        def category_aliases(self, aliases):
+            return {"同人志": aliases["doujinshi"]}
+
+        def category_mask(self, value, aliases):
+            return aliases.get(value.casefold())
+
+        def translate_query(self, query):
+            return query
+
+    svc.translator = Translator()
+
+    async def fake_html_get(path, params=None):
+        captured.append(dict(params or {}))
+        return FIXTURE_HTML
+
+    monkeypatch.setattr(svc, "_html_get", fake_html_get)
+    await svc.search_galleries(query="分类:同人志")
+    assert "f_search" not in captured[-1]
+    assert captured[-1]["f_cats"] == "1021"
+    await svc.search_galleries(query="category:同人志", last_gid="1")
+    assert "f_search" not in captured[-1]
+    assert captured[-1]["f_cats"] == "1021"
     await svc.close()

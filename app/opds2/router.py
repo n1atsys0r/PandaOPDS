@@ -197,6 +197,7 @@ def _flatten_subjects(
     tags: list[GalleryTag],
     exclude: frozenset[str] = frozenset(),
     translator=None,
+    category: str = "",
 ) -> list[dict]:
     """RWPM subject objects over the full tag set: {"name": "ns:key", ...}.
 
@@ -213,7 +214,9 @@ def _flatten_subjects(
     becomes Chinese-namespace plus the verbatim original key; only
     fully-unknown namespaces keep their verbatim ``ns:key`` form. Translation happens
     here — after status filtering / style backfill / sorting, all of which
-    operate on raw ``ns:key`` — so those mechanisms are unaffected.
+    operate on raw ``ns:key`` — so those mechanisms are unaffected. The optional
+    gallery category is appended as a subject and uses the reclass translation
+    when the translator provides it.
     """
     seen: set[str] = set()
     out: list[dict] = []
@@ -236,6 +239,11 @@ def _flatten_subjects(
             if t.style:
                 entry["x:style"] = t.style.as_dict()
             out.append(entry)
+    if category:
+        display_category = getattr(translator, "display_category", None)
+        name = display_category(category) if callable(display_category) else f"category:{category}"
+        if name not in seen:
+            out.append({"name": name})
     return out
 
 
@@ -354,7 +362,7 @@ def _detail_eh_fields(
     Declared by the document's inline JSON-LD context (see feed.py);
     generic clients ignore unknown members. Scraped from the detail page
     (gdata-equivalent): rating, Japanese title, uploader, size, expunged,
-    category, and — when enabled — the gallery comment block (``x:reviews``,
+    and — when enabled — the gallery comment block (``x:reviews``,
     raw HTML content with gallery links rewritten to OPDS detail links via
     ``href``). Tags never appear here: styles travel inline on `subject`
     entries (list pages parse them inline; detail subjects get them backfilled
@@ -375,8 +383,6 @@ def _detail_eh_fields(
             ext["x:sizeBytes"] = size
     if detail.expunged:
         ext["x:expunged"] = True
-    if detail.category:
-        ext["x:category"] = detail.category
     if comments_enabled and detail.comments:
         ext["x:reviews"] = [
             _comment_payload(c, href, image_proxy_hosts) for c in detail.comments
@@ -405,7 +411,7 @@ def _publication(
     """One publication object rendered purely from list-page HTML data.
 
     Browsing feeds never call the ehapi; ``x:*`` metadata carries only what
-    the list page exposed (category, rating), while highlighted-tag styles
+    the list page exposed (rating), while category and highlighted-tag styles
     travel inline on `subject` entries. Full tags live in `subject` (minus
     fields exposed elsewhere: language/artist). The client opens the detail
     document for full metadata.
@@ -419,12 +425,12 @@ def _publication(
 
     tags = apply_status_filter(list(item.tags), builder.settings.tag_status_filter)
     tags = _sort_tags(tags)
-    subjects = _flatten_subjects(tags, _LIST_SUBJECT_EXCLUDED, builder.translator)
+    subjects = _flatten_subjects(
+        tags, _LIST_SUBJECT_EXCLUDED, builder.translator, item.category
+    )
     ext: dict = {}
     if item.rating:
         ext["x:rating"] = item.rating
-    if item.category:
-        ext["x:category"] = item.category
 
     return builder.publication(
         gid=item.gid,
@@ -814,7 +820,7 @@ async def _detail_publication(
         styles = await service.get_mytags()
     tags = _apply_mytags_styles(tags, styles)
     tags = _sort_tags_detail(tags)
-    subjects = _flatten_subjects(tags, frozenset(), builder.translator)
+    subjects = _flatten_subjects(tags, frozenset(), builder.translator, detail.category)
     return builder.publication(
         gid=gid,
         token=token,

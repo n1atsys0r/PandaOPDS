@@ -27,8 +27,8 @@ MIME_THUMB = "image/jpeg"
 # Readium-compatible publication (consumed by Stump/Divina readers).
 RWPM_CONTEXT = "https://readium.org/webpub-manifest/context.jsonld"
 
-# Project extension vocabulary. EH-specific metadata (rating, category,
-# reviews, ...) is flattened directly into `metadata` under the neutral
+# Project extension vocabulary. EH-specific metadata (rating, reviews, ...)
+# is flattened directly into `metadata` under the neutral
 # `x:` prefix — the JSON-LD-sanctioned way to extend a manifest. The prefix
 # is declared per-document via this inline context term; the IRI is the
 # namespace identity only (it need not be dereferenceable).
@@ -247,8 +247,8 @@ class Opds2Builder:
         Standard fields for generic clients: `subject` (RWPM collection of
         objects) carries ``{"name": ...}`` entries — highlighted tags add an
         ``x:style`` member; `numberOfPages` is the RWPM-standard page count.
-        All EH-specific scalar data (rating, Japanese title, category,
-        reviews, ...) is flattened into `metadata` under the ``x:`` prefix
+        All EH-specific scalar data (rating, Japanese title, reviews, ...) is
+        flattened into ``metadata`` under the ``x:`` prefix
         (declared via the inline JSON-LD context term) and passed in through
         ``extra_metadata`` — generic clients ignore unknown members.
 

@@ -414,6 +414,36 @@ class TagTranslator:
         display_ns, name = hit
         return f"{display_ns}:{name}"
 
+    def display_category(self, category: str) -> str:
+        """Return the translated reclass namespace and name when available."""
+        hit = self._forward.get(("reclass", category.casefold()))
+        display_ns = self.translate_namespace("reclass")
+        if display_ns:
+            return f"{display_ns}:{hit[1] if hit else category}"
+        return f"category:{category}"
+
+    def category_namespace(self) -> str:
+        """Display namespace used by reclass, falling back to its raw name."""
+        return self.translate_namespace("reclass") or "reclass"
+
+    def category_aliases(self, aliases: dict[str, int]) -> dict[str, int]:
+        """Add translated reclass names as aliases for known category masks."""
+        out: dict[str, int] = {}
+        for name, mask in aliases.items():
+            hit = self._forward.get(("reclass", name.casefold()))
+            if hit:
+                out[hit[1].casefold()] = mask
+        return out
+
+    def category_mask(self, value: str, aliases: dict[str, int]) -> int | None:
+        """Resolve translated reclass value to a known category mask."""
+        folded = value.casefold()
+        for name, mask in aliases.items():
+            hit = self._forward.get(("reclass", name.casefold()))
+            if hit and hit[1].casefold() == folded:
+                return mask
+        return None
+
     def translate_query(self, query: str) -> str:
         """Rewrite translated tag tokens into native EH keyword syntax.
 

@@ -563,7 +563,8 @@ async def test_opds2_gallery_browse_never_calls_gdata(tmp_path, monkeypatch):
     md = pubs[0]["metadata"]
     assert md["title"] == "One"
     assert md["numberOfPages"] == 10
-    assert md["x:category"] == "Manga"
+    assert {"name": "category:Manga"} in md["subject"]
+    assert "x:category" not in md
     assert "x:titleJpn" not in md and "x:sizeBytes" not in md
     assert "x:uploader" not in md
 
@@ -741,7 +742,8 @@ async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
     assert md["x:titleJpn"] == "テスト"
     assert md["x:uploader"] == "up1"
     assert md["x:sizeBytes"] == 12939427  # 12.34 MB
-    assert md["x:category"] == "Manga"
+    assert "x:category" not in md
+    assert {"name": "category:Manga"} in md["subject"]
     assert "x:expunged" not in md
     # detail publication: acquisition points at the image stream (never at
     # the detail document itself — no self-referencing loop)
@@ -835,6 +837,7 @@ async def test_opds2_list_subject_styles_inline(tmp_path, monkeypatch):
         {"name": "female:netorare", "x:style": {"background": "#0f0"}},
         {"name": "parody:Zenless Zone Zero"},
         {"name": "male:uncertain"},
+        {"name": "category:Manga"},
     ]
     assert "mytags" not in md  # side-channel bucket removed entirely
 
@@ -869,6 +872,7 @@ async def test_opds2_detail_subject_full_and_no_mytags(tmp_path, monkeypatch):
         {"name": "parody:Zenless Zone Zero"},
         {"name": "artist:Someone"},
         {"name": "female:netorare", "x:style": {"background": "#0f0"}},
+        {"name": "category:Manga"},
     ]
     assert "mytags" not in md
 
@@ -892,4 +896,4 @@ async def test_opds2_detail_subject_strict_filter(tmp_path, monkeypatch):
     r = await _get("/opds/v2.0/gallery/1/tok1")
     assert r.status_code == 200
     md = r.json()["publications"][0]["metadata"]
-    assert md["subject"] == [{"name": "female:a"}]
+    assert md["subject"] == [{"name": "female:a"}, {"name": "category:Manga"}]

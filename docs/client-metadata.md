@@ -128,7 +128,7 @@
 | `language` | [string] | 语言（**BCP 47 / RFC 5646 码**，如 `zh`/`ja`/`zh-Hans`；由 EH `language:` 标签映射，未知与标记伪标签不输出） | 非空时 |
 | `published` | string | = `modified`（上传时间） | 恒有 |
 | `description` | string | **当前不输出**（预留字段；客户端如需描述，可自行拼接 `language`/`numberOfPages`/`authors`/`x:rating`/`x:sizeBytes`） | — |
-| `subject` | [ {`name`, `x:style`?} ] | RWPM collection of objects：每项 `{"name": "ns:key"}`（去重保序，**不含分类**，分类见 `x:category`）；带高亮样式的标签额外内联 `x:style`（§3.3） | 有标签时 |
+| `subject` | [ {`name`, `x:style`?} ] | RWPM collection：标签为 `ns:key`，图库分类默认为 `category:<分类名>`；启用翻译且命中 EhTagTranslation `reclass` 时使用译名 namespace 与分类名（如 `分类:同人志`）；带高亮样式的标签额外内联 `x:style`（§3.3） | 有标签或分类时 |
 | `numberOfPages` | int | 页数（= `filecount`） | >0 时 |
 
 ### 3.2 扩展层 `x:*` 字段（拍平进 `metadata`，全部 EH 专属）
@@ -139,13 +139,12 @@
 | `x:titleJpn` | string | 日文标题 | 非空时 |
 | `x:sizeBytes` | int | 文件总字节 | ≠0 时 |
 | `x:expunged` | bool | 已删除标记 | 仅 `true` 时输出 |
-| `x:category` | string | 分类（Doujinshi/Manga/Artist CG/Game CG/Image Set/Non-H/Western/Misc…）；**刻意不进 `subject`**（避免与标签混淆），搜索维度的分类筛选走 facets（`category=` 参数 + `FACETS` 掩码） | 恒有 |
 | `x:uploader` | string | 上传者（详情页 `#gdn`） | 仅详情文档，非空时 |
 | `x:reviews` | array | 评论区（仅详情文档；每项 `id`/`username`/`userId`(可选)/`time`/`lastEditTime`(可选)/`content`(**原始 HTML**)）；`COMMENTS_ENABLED=0` 关闭 | 有评论时 |
 
 > **评论 `content` 的重写**（客户端无需感知，直接渲染即可）：① 图库链接 `(e-hentai|exhentai).org/(g|mpv)/{gid}/{token}/` → `/opds/v2.0/gallery/{gid}/{token}`（app 内跳转）；② eh/ex 封面/预览图（host ∈ `IMAGE_PROXY_HOSTS`，默认 `ehgt.org,s.exhentai.org`）在 `src`/`url()` 内 → 同源代理 `/image/fetch?url=<编码>`，**规避 WebView 跨域 CORS**（否则 `<img>` 原生跨域拉图被拦）。URL 不透明、不解析 gid/token。
 
-> 原 `metadata.extensions` 嵌套桶已移除；所有 EH 专属字段直接平铺在 `metadata` 下。旧字段名映射：`rating`→`x:rating`、`uploader`→`x:uploader`、`titleJpn`→`x:titleJpn`、`sizeBytes`→`x:sizeBytes`、`expunged`→`x:expunged`、`category`→`x:category`。
+> 原 `metadata.extensions` 嵌套桶已移除；所有 EH 专属字段直接平铺在 `metadata` 下。分类不再作为 `x:*` 字段输出，而是进入 `subject`。
 
 ### 3.3 subject 条目与高亮样式（`x:style`）
 
@@ -222,11 +221,11 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
       { "name": "female:netorare", "x:style": {
           "color": "#f1f1f1", "borderColor": "#048751",
           "background": "radial-gradient(#048751,#24A771)" } },
-      { "name": "parody:zenless zone zero" }
+      { "name": "parody:zenless zone zero" },
+      { "name": "category:Manga" }
     ],
     "numberOfPages": 42,
-    "x:rating": 4.5,
-    "x:category": "Manga"
+    "x:rating": 4.5
   },
   "links": [
     { "rel": "http://opds-spec.org/acquisition", "href": "/stream/4113236/73634e0e9a/page/{pageNumber}",
@@ -264,7 +263,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 
 ### 4.2 详情文档（`/opds/v2.0/gallery/{gid}/{token}`）
 
-- `publications` 仅 1 条；**不输出 `description`**；完整标签在 `subject`（详情 `#taglist` 全量，经 `TAG_STATUS_FILTER` 过滤，高亮样式由 My Tags 映射表回填）；`metadata` 含 `x:rating`/`x:uploader`/`x:titleJpn`/`x:sizeBytes`/`x:expunged`/`x:category`（无列表专属的样式回填差异，§3.3）。
+- `publications` 仅 1 条；**不输出 `description`**；完整标签与 `category:<名称>` subject 在详情 `#taglist` 基础上渲染（标签经 `TAG_STATUS_FILTER` 过滤，高亮样式由 My Tags 映射表回填）；`metadata` 含 `x:rating`/`x:uploader`/`x:titleJpn`/`x:sizeBytes`/`x:expunged`（无列表专属的样式回填差异，§3.3）。
 - **详情 publication 的 acquisition 恒直接指向图片流**（`/stream/{gid}/{token}/page/{pageNumber}`，`image/jpeg`，两种模式一致），**绝不指向自身**（无自循环）；并内嵌 `readingOrder`（逐页图片 URL，见 §4.3）。
 - 图库不存在 → 404。
 

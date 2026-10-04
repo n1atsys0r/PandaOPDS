@@ -39,6 +39,7 @@ def _translator(tmp_path, **kw) -> TagTranslator:
         "parody": "原作",
         "artist": "画师",
         "mixed": "混合",
+        "reclass": "分类",
     }
     abbrs = {"f": "female", "m": "male", "x": "mixed"}
     tags = {
@@ -49,6 +50,7 @@ def _translator(tmp_path, **kw) -> TagTranslator:
         "parody:original": "原创",
         "mixed:gender change": "性转换",
         "female:netorare": "NTR",
+        "reclass:doujinshi": "同人志",
     }
     t._install(namespaces, tags, abbrs)
     return t
@@ -327,6 +329,21 @@ def test_flatten_subjects_without_translator_unchanged():
     tags = [GalleryTag("female", "netorare")]
     out = _flatten_subjects(tags)
     assert out == [{"name": "female:netorare"}]
+
+
+def test_category_subject_uses_reclass_translation_with_raw_fallback(tmp_path):
+    t = _translator(tmp_path)
+    assert _flatten_subjects([], translator=t, category="Doujinshi") == [
+        {"name": "分类:同人志"}
+    ]
+    assert _flatten_subjects([], translator=t, category="Manga") == [
+        {"name": "分类:Manga"}
+    ]
+    assert _flatten_subjects([], category="Manga") == [
+        {"name": "category:Manga"}
+    ]
+    assert t.category_mask("同人志", {"doujinshi": 1021}) == 1021
+    assert t.category_aliases({"doujinshi": 1021}) == {"同人志": 1021}
 
 
 def test_flatten_subjects_dedupes_on_display_string(tmp_path):

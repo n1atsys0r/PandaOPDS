@@ -43,7 +43,6 @@ def _pub(builder: Opds2Builder, **kw) -> dict:
             "x:rating": 4.0,
             "x:titleJpn": "テスト",
             "x:uploader": "uploader",
-            "x:category": "Doujinshi",
             "x:sizeBytes": 12345,
         },
     )
@@ -122,7 +121,7 @@ def test_publication_metadata_and_links():
     assert md["x:rating"] == 4.0
     assert md["x:titleJpn"] == "テスト"
     assert md["x:uploader"] == "uploader"
-    assert md["x:category"] == "Doujinshi"
+    assert "x:category" not in md
     assert md["x:sizeBytes"] == 12345
     assert "extensions" not in md
 
