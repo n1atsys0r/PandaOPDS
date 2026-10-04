@@ -198,6 +198,7 @@ def _flatten_subjects(
     exclude: frozenset[str] = frozenset(),
     translator=None,
     category: str = "",
+    category_first: bool = False,
 ) -> list[dict]:
     """RWPM subject objects over the full tag set: {"name": "ns:key", ...}.
 
@@ -214,9 +215,9 @@ def _flatten_subjects(
     becomes Chinese-namespace plus the verbatim original key; only
     fully-unknown namespaces keep their verbatim ``ns:key`` form. Translation happens
     here — after status filtering / style backfill / sorting, all of which
-    operate on raw ``ns:key`` — so those mechanisms are unaffected. The optional
-    gallery category is appended as a subject and uses the reclass translation
-    when the translator provides it.
+    operate on raw ``ns:key`` — so those mechanisms are unaffected. The
+    gallery category is first for detail subjects, or follows highlighted tags
+    and precedes unstyled tags for list subjects.
     """
     seen: set[str] = set()
     out: list[dict] = []
@@ -242,8 +243,19 @@ def _flatten_subjects(
     if category:
         display_category = getattr(translator, "display_category", None)
         name = display_category(category) if callable(display_category) else f"category:{category}"
-        if name not in seen:
-            out.append({"name": name})
+        category_entry = next((entry for entry in out if entry["name"] == name), None)
+        if category_entry is not None:
+            out.remove(category_entry)
+        else:
+            category_entry = {"name": name}
+        if category_first:
+            index = 0
+        else:
+            index = next(
+                (i for i, entry in enumerate(out) if "x:style" not in entry),
+                len(out),
+            )
+        out.insert(index, category_entry)
     return out
 
 
@@ -820,7 +832,9 @@ async def _detail_publication(
         styles = await service.get_mytags()
     tags = _apply_mytags_styles(tags, styles)
     tags = _sort_tags_detail(tags)
-    subjects = _flatten_subjects(tags, frozenset(), builder.translator, detail.category)
+    subjects = _flatten_subjects(
+        tags, frozenset(), builder.translator, detail.category, category_first=True
+    )
     return builder.publication(
         gid=gid,
         token=token,

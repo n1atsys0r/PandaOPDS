@@ -817,7 +817,7 @@ async def test_opds2_list_subject_styles_inline(tmp_path, monkeypatch):
         GalleryTag("language", "english", style=None),
         GalleryTag("artist", "Someone", style=None),
         GalleryTag("female", "netorare", style=TagStyle(background="#0f0")),
-        GalleryTag("parody", "Zenless Zone Zero", style=None),
+        GalleryTag("parody", "Zenless Zone Zero", style=TagStyle(color="#fff")),
         GalleryTag("male", "uncertain", status="skepticism"),
     ]
     settings = _settings()
@@ -832,12 +832,12 @@ async def test_opds2_list_subject_styles_inline(tmp_path, monkeypatch):
     assert r.status_code == 200
     md = r.json()["publications"][0]["metadata"]
     # list subject: full set minus language/artist (skepticism kept: balanced);
-    # highlighted tag sorts first and carries its inline x:style member
+    # All highlighted tags stay first, then category, then unstyled tags.
     assert md["subject"] == [
         {"name": "female:netorare", "x:style": {"background": "#0f0"}},
-        {"name": "parody:Zenless Zone Zero"},
-        {"name": "male:uncertain"},
+        {"name": "parody:Zenless Zone Zero", "x:style": {"color": "#fff"}},
         {"name": "category:Manga"},
+        {"name": "male:uncertain"},
     ]
     assert "mytags" not in md  # side-channel bucket removed entirely
 
@@ -865,14 +865,14 @@ async def test_opds2_detail_subject_full_and_no_mytags(tmp_path, monkeypatch):
     r = await _get("/opds/v2.0/gallery/1/tok1")
     assert r.status_code == 200
     md = r.json()["publications"][0]["metadata"]
-    # detail subject: namespace weight (language->parody->character->cosplayer->group->artist
-    # ->female->male->mixed->location->other), styled-first within group
+    # Detail category leads; tag order remains namespace-weighted, styled-first
+    # within group after the synthetic category.
     assert md["subject"] == [
+        {"name": "category:Manga"},
         {"name": "language:english"},
         {"name": "parody:Zenless Zone Zero"},
         {"name": "artist:Someone"},
         {"name": "female:netorare", "x:style": {"background": "#0f0"}},
-        {"name": "category:Manga"},
     ]
     assert "mytags" not in md
 
@@ -896,4 +896,4 @@ async def test_opds2_detail_subject_strict_filter(tmp_path, monkeypatch):
     r = await _get("/opds/v2.0/gallery/1/tok1")
     assert r.status_code == 200
     md = r.json()["publications"][0]["metadata"]
-    assert md["subject"] == [{"name": "female:a"}, {"name": "category:Manga"}]
+    assert md["subject"] == [{"name": "category:Manga"}, {"name": "female:a"}]

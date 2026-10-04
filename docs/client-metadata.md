@@ -128,7 +128,7 @@
 | `language` | [string] | 语言（**BCP 47 / RFC 5646 码**，如 `zh`/`ja`/`zh-Hans`；由 EH `language:` 标签映射，未知与标记伪标签不输出） | 非空时 |
 | `published` | string | = `modified`（上传时间） | 恒有 |
 | `description` | string | **当前不输出**（预留字段；客户端如需描述，可自行拼接 `language`/`numberOfPages`/`authors`/`x:rating`/`x:sizeBytes`） | — |
-| `subject` | [ {`name`, `x:style`?} ] | RWPM collection：标签为 `ns:key`，图库分类默认为 `category:<分类名>`；启用翻译时分类使用固定 namespace `分类`，仅分类名通过 EhTagTranslation `reclass` 查译（无译名则保留原分类名）；带高亮样式的标签额外内联 `x:style`（§3.3） | 有标签或分类时 |
+| `subject` | [ {`name`, `x:style`?} ] | RWPM collection：标签为 `ns:key`，图库分类默认为 `category:<分类名>`；启用翻译时分类使用固定 namespace `分类`，仅分类名通过 EhTagTranslation `reclass` 查译（无译名则保留原分类名）。详情文档分类排第一；列表文档分类位于所有带 `x:style` 的条目之后、未着色标签之前；标签原有顺序不变 | 有标签或分类时 |
 | `numberOfPages` | int | 页数（= `filecount`） | >0 时 |
 
 ### 3.2 扩展层 `x:*` 字段（拍平进 `metadata`，全部 EH 专属）
