@@ -337,11 +337,11 @@ async def archives_feed(request: Request, page: int = 1):
 
 @router.get("/gallery/{gid}/{token}/chapters", response_class=Response)
 async def chapter_feed(request: Request, gid: int, token: str):
-    """Detail feed: rendered from the local archive snapshot when the gallery
-    is archived (zero upstream), otherwise from the cached detail-page HTML.
+    """Detail feed: archived galleries prefer cached online detail HTML and
+    fall back to the local archive snapshot when upstream is unavailable.
 
-    Fetching the (non-archived) detail page also pre-warms the page-URL
-    mapping cache so the first /stream request skips one upstream round trip.
+    Fetching the detail page also pre-warms the page-URL mapping cache so the
+    first /stream request skips one upstream round trip.
     """
     service = _service(request)
     builder = _builder(request)

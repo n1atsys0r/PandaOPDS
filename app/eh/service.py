@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from typing import Awaitable, Callable
 
 from ..cache.disk import DiskImageCache, detect_image_type
@@ -517,9 +518,9 @@ class EHService:
     def get_mytags_cached(self) -> dict[str, TagStyle]:
         """Current mytags style map WITHOUT the TTL-triggered upstream refresh.
 
-        Memory/disk only. Used by the offline detail path (ready archive) so
-        a fully-local render never issues an upstream request — the persisted
-        snapshot is served as-is until the operator refreshes metadata.
+        Memory/disk only. Used when rendering a ready archive so detail
+        requests do not trigger a separate ``/mytags`` refresh; the existing
+        persisted map stays available even when the source site is offline.
         """
         return self.mytags.get()
 
@@ -634,17 +635,38 @@ class EHService:
         """Detail-page info for the OPDS detail documents (v1.2 chapters /
         v2.0 detail + publication).
 
-        A ready archive renders entirely from the local snapshot (zero
-        upstream, see ArchiveManager.build_detail_page) — its purchased zip
-        master + gdata snapshot are the long-term source of truth, so a
-        gallery deleted upstream keeps producing a full detail document.
-        Everything else keeps the cached upstream detail-page path (which
-        pre-warms the page-URL mapping for fast reader entry).
+        A ready archive uses its local snapshot as an offline fallback, but
+        prefers the cached upstream detail page whenever it is available so
+        fields absent from the gdata snapshot (notably comments) stay current.
+        The ZIP-derived page count remains authoritative for archived entries.
+        Fetching the upstream page also pre-warms the page-URL mapping.
         """
         if self.archive is not None and self.archive.is_ready(gid, token):
             local = self.archive.build_detail_page(gid, token)
             if local is not None:
-                return local
+                try:
+                    online = await self.get_detail_page(gid, token, page_index)
+                except Exception as exc:  # noqa: BLE001 - archive remains readable offline
+                    logger.warning(
+                        "online detail fetch failed for archived gallery %s; "
+                        "using local snapshot: %s",
+                        gid,
+                        exc,
+                    )
+                    return local
+                # The archive zip is the source of truth for pages the local
+                # stream can actually serve, even if upstream metadata differs.
+                count = local.image_count
+                return replace(
+                    online,
+                    image_no_from=0,
+                    image_no_to=max(0, count - 1),
+                    image_count=count,
+                    page_count=(count + THUMBS_PER_DETAIL_PAGE - 1)
+                    // THUMBS_PER_DETAIL_PAGE
+                    if count
+                    else 0,
+                )
         return await self.get_detail_page(gid, token, page_index)
 
     async def resolve_image_page(

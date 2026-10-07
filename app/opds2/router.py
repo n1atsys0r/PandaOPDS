@@ -831,13 +831,10 @@ async def _detail_publication(
 ) -> dict:
     """Render the single-publication object for the detail endpoints.
 
-    A ready archive renders entirely from the local snapshot (zero upstream,
-    see EHService.get_detail_doc) — reading an archived gallery never touches
-    the source site, so a deleted gallery keeps serving a full document. The
-    local path uses the persisted My Tags map as-is (no TTL-triggered refresh)
-    and carries no comments (snapshot has none). Non-archived galleries keep
-    the cached upstream detail-page HTML (which also pre-warms the page-URL
-    mapping for fast reader entry). Zero gdata in both paths.
+    Ready archives prefer cached upstream detail HTML for current metadata and
+    comments, falling back to the local snapshot if the source is unavailable.
+    The ZIP page count remains authoritative. Non-archived galleries use the
+    same cached upstream detail-page path. No gdata is used in either path.
     """
     detail = await service.get_detail_doc(gid, token)
     clean_title, authors = parse_detail_title(
@@ -884,9 +881,9 @@ async def _detail_publication(
 async def gallery_detail(request: Request, gid: int, token: str):
     """Single-publication acquisition document.
 
-    Ready archives render from the local snapshot (zero upstream); otherwise
-    from the detail-page HTML (which also pre-warms the page-URL mapping cache
-    so the first /stream request skips one upstream round trip). Zero gdata.
+    Ready archives prefer detail-page HTML and fall back to the local snapshot
+    when upstream is unavailable; other galleries use detail-page HTML. The
+    page fetch also pre-warms the URL mapping cache. Zero gdata.
     """
     service = _service(request)
     builder = _builder(request)
@@ -914,7 +911,8 @@ async def gallery_publication(request: Request, gid: int, token: str):
     like Stump follow `self` to open details and read through the embedded
     `readingOrder` (per-page image URLs); the response shape matches what
     their parser expects (a publication object, not an acquisition feed).
-    Ready archives render from the local snapshot (zero upstream).
+    Ready archives prefer online detail-page HTML and use the local snapshot
+    when upstream is unavailable.
     """
     service = _service(request)
     builder = _builder(request)
