@@ -276,6 +276,20 @@ def parse_publish_time_iso(text: str) -> str:
     return ""
 
 
+def _parse_gnd_added_time(text: str) -> str | None:
+    """Normalize an Added timestamp immediately following a #gnd link."""
+    candidates = re.findall(
+        r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}|"
+        r"\d{1,2}\s+[A-Za-z]+\s+\d{4},\s+\d{2}:\d{2}",
+        text or "",
+    )
+    for candidate in candidates:
+        normalized = parse_publish_time_iso(candidate)
+        if normalized:
+            return normalized
+    return None
+
+
 def _parse_list_rating(row: Any) -> float:
     """Parse the 0-5 star rating from the `.ir` sprite background-position.
 
@@ -933,7 +947,14 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
             if (gid, token) in seen:
                 continue
             seen.add((gid, token))
-            newer_versions.append(GalleryVersion(gid=gid, token=token, title=title))
+            newer_versions.append(
+                GalleryVersion(
+                    gid=gid,
+                    token=token,
+                    title=title,
+                    added_at=_parse_gnd_added_time(anchor.tail or ""),
+                )
+            )
     return DetailPageInfo(
         image_no_from=image_no_from,
         image_no_to=image_no_to,

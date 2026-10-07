@@ -820,8 +820,10 @@ async def test_opds2_detail_newer_versions_note(path, wrapped, tmp_path, monkeyp
     service = EHService(settings)
     detail = _detail(1)
     detail.newer_versions = [
-        GalleryVersion(936128, "585a8242de", "New <title> & edition"),
-        GalleryVersion(936129, "abc123", "Second edition"),
+        GalleryVersion(
+            936128, "585a8242de", "New <title> & edition", "2026-02-01T00:00:00Z"
+        ),
+        GalleryVersion(936129, "abc123", "Second edition", "2025-03-01T00:00:00Z"),
     ]
     monkeypatch.setattr(service, "get_detail_page", _async_value(detail))
 
@@ -839,9 +841,7 @@ async def test_opds2_detail_newer_versions_note(path, wrapped, tmp_path, monkeyp
     assert metadata["x:note"] == (
         'There are newer versions of this gallery available:<br>'
         '<a href="https://catalog.example/opds/v2.0/gallery/936128/585a8242de">'
-        'New &lt;title&gt; &amp; edition</a><br>'
-        '<a href="https://catalog.example/opds/v2.0/gallery/936129/abc123">'
-        'Second edition</a>'
+        'New &lt;title&gt; &amp; edition</a>'
     )
 
 

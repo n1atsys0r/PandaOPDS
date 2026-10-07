@@ -409,16 +409,20 @@ def _newer_versions_note(
     """HTML note linking to successor galleries in the local OPDS catalog."""
     if not detail.newer_versions:
         return None
-    anchors = []
-    for version in detail.newer_versions:
-        target = href(f"/opds/v2.0/gallery/{version.gid}/{version.token}")
-        anchors.append(
-            f'<a href="{html.escape(target, quote=True)}">'
-            f"{html.escape(version.title)}</a>"
-        )
+    dated = [version for version in detail.newer_versions if version.added_at]
+    version = (
+        max(dated, key=lambda item: item.added_at or "")
+        if dated
+        else detail.newer_versions[-1]
+    )
+    target = href(f"/opds/v2.0/gallery/{version.gid}/{version.token}")
+    anchor = (
+        f'<a href="{html.escape(target, quote=True)}">'
+        f"{html.escape(version.title)}</a>"
+    )
     return (
         "There are newer versions of this gallery available:<br>"
-        + "<br>".join(anchors)
+        + anchor
     )
 
 

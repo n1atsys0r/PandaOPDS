@@ -165,14 +165,19 @@ def test_parse_detail_page_new_structure():
         ("", []),
         (
             '<div id="gnd">There are newer versions: '
-            '<a href="/g/936128/585a8242de/">New title</a></div>',
-            [(936128, "585a8242de", "New title")],
+            '<a href="/g/936128/585a8242de/">New title</a>'
+            ' Added on 2024-01-02 12:00</div>',
+            [(936128, "585a8242de", "New title", "2024-01-02T12:00:00Z")],
         ),
         (
             '<div id="gnd"><a href="/g/936128/585a8242de/">First</a>'
             '<a href="https://e-hentai.org/g/999/abcdef/">Second &amp; newer</a>'
+            ' Added on 3 February 2025, 09:30'
             '<a href="/g/bad/token/">bad</a></div>',
-            [(936128, "585a8242de", "First"), (999, "abcdef", "Second & newer")],
+            [
+                (936128, "585a8242de", "First", None),
+                (999, "abcdef", "Second & newer", "2025-02-03T09:30:00Z"),
+            ],
         ),
     ],
 )
@@ -180,7 +185,9 @@ def test_parse_detail_page_newer_versions(block, expected):
     info = parse_detail_page(
         DETAIL_NEW_HTML.replace("</body>", f"{block}</body>"), "e-hentai.org"
     )
-    assert [(v.gid, v.token, v.title) for v in info.newer_versions] == expected
+    assert [
+        (v.gid, v.token, v.title, v.added_at) for v in info.newer_versions
+    ] == expected
 
 
 def test_parse_detail_page_new_structure_page_2():

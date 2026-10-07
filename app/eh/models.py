@@ -28,6 +28,7 @@ class GalleryVersion:
     gid: int
     token: str
     title: str
+    added_at: str | None = None
 
 
 @dataclass
