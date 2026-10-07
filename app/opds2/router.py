@@ -6,6 +6,7 @@ Versioned under /opds/v2.0 (JSON); the v1.2 Atom feeds live under /opds/v1.2.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import re
 from dataclasses import replace
@@ -400,6 +401,25 @@ def _detail_eh_fields(
             _comment_payload(c, href, image_proxy_hosts) for c in detail.comments
         ]
     return ext
+
+
+def _newer_versions_note(
+    detail: DetailPageInfo, href: Callable[[str], str]
+) -> str | None:
+    """HTML note linking to successor galleries in the local OPDS catalog."""
+    if not detail.newer_versions:
+        return None
+    anchors = []
+    for version in detail.newer_versions:
+        target = href(f"/opds/v2.0/gallery/{version.gid}/{version.token}")
+        anchors.append(
+            f'<a href="{html.escape(target, quote=True)}">'
+            f"{html.escape(version.title)}</a>"
+        )
+    return (
+        "There are newer versions of this gallery available:<br>"
+        + "<br>".join(anchors)
+    )
 
 
 def _item_modified(item: GalleryListItem) -> str:
@@ -835,6 +855,15 @@ async def _detail_publication(
     subjects = _flatten_subjects(
         tags, frozenset(), builder.translator, detail.category, category_first=True
     )
+    extra_metadata = _detail_eh_fields(
+        detail,
+        builder.settings.comments_enabled,
+        builder.href,
+        builder.settings.image_proxy_hosts,
+    )
+    newer_versions_note = _newer_versions_note(detail, builder.href)
+    if newer_versions_note:
+        extra_metadata["x:note"] = newer_versions_note
     return builder.publication(
         gid=gid,
         token=token,
@@ -846,12 +875,7 @@ async def _detail_publication(
         published=modified,
         subjects=subjects,
         number_of_pages=detail.image_count,
-        extra_metadata=_detail_eh_fields(
-            detail,
-            builder.settings.comments_enabled,
-            builder.href,
-            builder.settings.image_proxy_hosts,
-        ),
+        extra_metadata=extra_metadata or None,
         detail_document=True,
     )
 

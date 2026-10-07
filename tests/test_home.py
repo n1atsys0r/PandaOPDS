@@ -806,6 +806,70 @@ async def test_opds2_gallery_publication_rwpm_document(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,wrapped",
+    [
+        ("/opds/v2.0/gallery/1/tok1", True),
+        ("/opds/v2.0/gallery/1/tok1/publication", False),
+    ],
+)
+async def test_opds2_detail_newer_versions_note(path, wrapped, tmp_path, monkeypatch):
+    from app.eh.models import GalleryVersion
+
+    settings = _settings(public_base_url="https://catalog.example")
+    service = EHService(settings)
+    detail = _detail(1)
+    detail.newer_versions = [
+        GalleryVersion(936128, "585a8242de", "New <title> & edition"),
+        GalleryVersion(936129, "abc123", "Second edition"),
+    ]
+    monkeypatch.setattr(service, "get_detail_page", _async_value(detail))
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called for detail documents")
+
+    monkeypatch.setattr(service, "get_metadata", boom)
+    _stub_mytags(monkeypatch, service)
+    _install_app_state(settings, service)
+
+    response = await _get(path)
+    assert response.status_code == 200
+    doc = response.json()
+    metadata = doc["publications"][0]["metadata"] if wrapped else doc["metadata"]
+    assert metadata["x:note"] == (
+        'There are newer versions of this gallery available:<br>'
+        '<a href="https://catalog.example/opds/v2.0/gallery/936128/585a8242de">'
+        'New &lt;title&gt; &amp; edition</a><br>'
+        '<a href="https://catalog.example/opds/v2.0/gallery/936129/abc123">'
+        'Second edition</a>'
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,wrapped",
+    [
+        ("/opds/v2.0/gallery/1/tok1", True),
+        ("/opds/v2.0/gallery/1/tok1/publication", False),
+    ],
+)
+async def test_opds2_detail_without_newer_versions_omits_note(
+    path, wrapped, tmp_path, monkeypatch
+):
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(service, "get_detail_page", _async_value(_detail(1)))
+    _stub_mytags(monkeypatch, service)
+    _install_app_state(settings, service)
+
+    response = await _get(path)
+    assert response.status_code == 200
+    doc = response.json()
+    metadata = doc["publications"][0]["metadata"] if wrapped else doc["metadata"]
+    assert "x:note" not in metadata
+
+
+@pytest.mark.asyncio
 async def test_opds2_list_subject_styles_inline(tmp_path, monkeypatch):
     """subject entries are RWPM objects; highlighted tags carry inline
     x:style (replacing the old mytags side-channel), and subject excludes

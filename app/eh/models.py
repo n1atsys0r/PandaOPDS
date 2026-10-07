@@ -21,6 +21,15 @@ class GalleryUrl:
         return f"{self.gid}:{self.token}"
 
 
+@dataclass(frozen=True)
+class GalleryVersion:
+    """A successor gallery linked from an upstream detail page."""
+
+    gid: int
+    token: str
+    title: str
+
+
 @dataclass
 class TagStyle:
     """Inline style of a featured (voted-up) tag, from the upstream HTML.
@@ -242,6 +251,7 @@ class DetailPageInfo:
     expunged: bool = False   # any #gdd value contains "Expunged"
     # Comments from the #cdiv block (latest batch visible on this page).
     comments: list[GalleryComment] = field(default_factory=list)
+    newer_versions: list[GalleryVersion] = field(default_factory=list)
 
 
 @dataclass

@@ -26,6 +26,7 @@ from .models import (
     GalleryTag,
     GalleryThumbnail,
     GalleryUrl,
+    GalleryVersion,
     ImagePageInfo,
     TAG_STATUS_CONFIDENCE,
     TAG_STATUS_INCORRECT,
@@ -919,6 +920,20 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
         current_page_no = int(_text(cur))
 
     meta = _parse_detail_metadata(doc, site_host)
+    newer_versions: list[GalleryVersion] = []
+    gnd = _first(doc, "#gnd")
+    if gnd is not None:
+        seen: set[tuple[int, str]] = set()
+        for anchor in _el(gnd, "a"):
+            match = _GALLERY_HREF_RE.search(_attr(anchor, "href"))
+            title = _text(anchor)
+            if match is None or not title:
+                continue
+            gid, token = int(match.group(1)), match.group(2)
+            if (gid, token) in seen:
+                continue
+            seen.add((gid, token))
+            newer_versions.append(GalleryVersion(gid=gid, token=token, title=title))
     return DetailPageInfo(
         image_no_from=image_no_from,
         image_no_to=image_no_to,
@@ -939,6 +954,7 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
         torrent_count=meta["torrent_count"],
         expunged=meta["expunged"],
         comments=_parse_detail_comments(doc),
+        newer_versions=newer_versions,
     )
 
 
