@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"pandaopds/internal/eh"
 	"pandaopds/internal/feed"
@@ -17,6 +19,23 @@ import (
 
 var cursorRE = regexp.MustCompile(`^\d+(?:-\d+)*$`)
 var periods = map[string]string{"yesterday": "Yesterday", "month": "Past Month", "year": "Past Year", "alltime": "All Time"}
+
+const homepagePreviewDeadline = 12 * time.Second
+
+type homePreviewKey struct {
+	typeName string
+	query    string
+}
+
+type homePreviewResult struct {
+	info eh.GalleryPageInfo
+	err  error
+}
+
+type homePreviewDone struct {
+	key    homePreviewKey
+	result homePreviewResult
+}
 
 func quote(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") }
 func (s *Server) builder() feed.Builder {
@@ -327,6 +346,7 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 			rootNav = append(rootNav, map[string]any{"title": title, "href": s.builder().Href(home.BuildHref(sec.Type, sec.Query)), "rel": "subsection", "type": feed.MIMEOPDSAcq})
 		}
 	}
+	previews, previewTimedOut := s.fetchHomePreviews(r.Context(), sections)
 	for _, gid := range groupOrder {
 		if emitted[gid] {
 			continue
@@ -349,20 +369,22 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 		nav := []map[string]any{}
 		for _, sec := range list {
 			if sec.Kind == "publication" {
-				count := 10
-				if sec.Count != nil {
-					count = *sec.Count
-				}
+				count := previewCount(sec)
 				if count <= 0 {
 					continue
 				}
-				info, err := s.fetchHomeSection(r, sec)
-				if err != nil {
+				result, ok := previews[homePreviewKey{sec.Type, sec.Query}]
+				if !ok || result.err != nil {
 					if s.Logger != nil {
+						err := result.err
+						if !ok {
+							err = context.DeadlineExceeded
+						}
 						s.Logger.Printf("home section %q: %v", sec.Title, err)
 					}
 					continue
 				}
+				info := result.info
 				if count > len(info.Galleries) {
 					count = len(info.Galleries)
 				}
@@ -382,11 +404,89 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 		outGroups = append(outGroups, g)
 	}
 	doc := s.builder().NavigationDocument(rootNav, outGroups)
-	writeBytes(w, 200, feed.MIMEOPDSNav, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
+	cacheControl := "public, max-age=300"
+	if previewTimedOut {
+		cacheControl = "no-store"
+	}
+	writeBytes(w, 200, feed.MIMEOPDSNav, map[string]string{"Cache-Control": cacheControl}, s.builder().JSON(doc))
 }
-func (s *Server) fetchHomeSection(r *http.Request, sec home.Section) (eh.GalleryPageInfo, error) {
+func previewCount(sec home.Section) int {
+	if sec.Count == nil {
+		return 10
+	}
+	return *sec.Count
+}
+
+func (s *Server) fetchHomePreviews(parent context.Context, sections []home.Section) (map[homePreviewKey]homePreviewResult, bool) {
+	keys := make([]homePreviewKey, 0, len(sections))
+	seen := make(map[homePreviewKey]bool)
+	for _, sec := range sections {
+		if sec.Kind != "publication" || previewCount(sec) <= 0 {
+			continue
+		}
+		key := homePreviewKey{sec.Type, sec.Query}
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	results := make(map[homePreviewKey]homePreviewResult, len(keys))
+	if len(keys) == 0 {
+		return results, false
+	}
+	if err := parent.Err(); err != nil {
+		return results, err == context.DeadlineExceeded
+	}
+	ctx, cancel := context.WithTimeout(parent, homepagePreviewDeadline)
+	defer cancel()
+	completed := make(chan homePreviewDone, len(keys))
+	for _, key := range keys {
+		key := key
+		go func() {
+			result := homePreviewResult{}
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					result.err = fmt.Errorf("preview worker panic: %v", recovered)
+					if s.Logger != nil {
+						s.Logger.Printf("home preview %q: %v", key.query, result.err)
+					}
+				}
+				completed <- homePreviewDone{key, result}
+			}()
+			if ctx.Err() != nil {
+				result.err = ctx.Err()
+				return
+			}
+			sec := home.Section{Type: key.typeName, Query: key.query}
+			result.info, result.err = s.fetchHomeSection(ctx, sec)
+		}()
+	}
+	pending := len(keys)
+	for pending > 0 {
+		select {
+		case done := <-completed:
+			results[done.key] = done.result
+			pending--
+		case <-ctx.Done():
+			for {
+				select {
+				case done := <-completed:
+					results[done.key] = done.result
+				default:
+					return results, ctx.Err() == context.DeadlineExceeded
+				}
+			}
+		}
+	}
+	return results, ctx.Err() == context.DeadlineExceeded
+}
+
+func (s *Server) fetchHomeSection(ctx context.Context, sec home.Section) (eh.GalleryPageInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return eh.GalleryPageInfo{}, err
+	}
 	if sec.Type == "search" {
-		return s.Service.Search(r.Context(), sec.Query, "", nil)
+		return s.Service.Search(ctx, sec.Query, "", nil)
 	}
 	kind, arg, e := home.ResolvePreset(sec.Query)
 	if e != nil {
@@ -394,17 +494,17 @@ func (s *Server) fetchHomeSection(r *http.Request, sec home.Section) (eh.Gallery
 	}
 	switch kind {
 	case "search":
-		return s.Service.Search(r.Context(), arg, "", nil)
+		return s.Service.Search(ctx, arg, "", nil)
 	case "popular":
-		return s.Service.Popular(r.Context(), "")
+		return s.Service.Popular(ctx, "")
 	case "watched":
-		return s.Service.Watched(r.Context(), "")
+		return s.Service.Watched(ctx, "")
 	case "favorites":
-		return s.Service.Favorites(r.Context(), "", arg)
+		return s.Service.Favorites(ctx, "", arg)
 	case "archives":
 		return eh.GalleryPageInfo{Galleries: s.Service.ArchivedGalleries(1)}, nil
 	case "toplist":
-		return s.Service.Toplist(r.Context(), arg, 1)
+		return s.Service.Toplist(ctx, arg, 1)
 	}
 	return eh.GalleryPageInfo{}, fmt.Errorf("unknown section")
 }

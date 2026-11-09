@@ -94,12 +94,13 @@ type Throttle struct {
 	Circuit  *CircuitBreaker
 	pools    map[RequestKind]chan struct{}
 	mu       sync.Mutex
+	htmlLock *contextMutex
 	lastHTML time.Time
 	counts   map[RequestKind]int64
 }
 
 func NewThrottle(cfg config.Settings) *Throttle {
-	return &Throttle{cfg: cfg, Circuit: NewCircuitBreaker(), pools: map[RequestKind]chan struct{}{KindHTML: make(chan struct{}, positive(cfg.MaxConcurrency, 5)), KindAPI: make(chan struct{}, positive(cfg.MaxConcurrency, 5)), KindImage: make(chan struct{}, positive(cfg.ImageMaxConcurrency, 5)), KindThumb: make(chan struct{}, positive(cfg.ThumbMaxConcurrency, 25))}, counts: map[RequestKind]int64{}}
+	return &Throttle{cfg: cfg, Circuit: NewCircuitBreaker(), pools: map[RequestKind]chan struct{}{KindHTML: make(chan struct{}, positive(cfg.MaxConcurrency, 5)), KindAPI: make(chan struct{}, positive(cfg.MaxConcurrency, 5)), KindImage: make(chan struct{}, positive(cfg.ImageMaxConcurrency, 5)), KindThumb: make(chan struct{}, positive(cfg.ThumbMaxConcurrency, 25))}, htmlLock: newContextMutex(), counts: map[RequestKind]int64{}}
 }
 func positive(v, d int) int {
 	if v <= 0 {
@@ -111,36 +112,59 @@ func (t *Throttle) Acquire(ctx context.Context, kind RequestKind) error {
 	if err := t.Circuit.Check(); err != nil {
 		return err
 	}
-	if kind == KindHTML && t.cfg.HTMLIntervalSeconds > 0 {
-		t.mu.Lock()
-		wait := time.Until(t.lastHTML.Add(time.Duration(t.cfg.HTMLIntervalSeconds * float64(time.Second))))
-		if wait > 0 {
-			timer := time.NewTimer(wait)
-			t.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-			t.mu.Lock()
-		}
-		t.lastHTML = time.Now()
-		t.mu.Unlock()
-	}
 	pool := t.pools[kind]
 	if pool == nil {
 		pool = t.pools[KindHTML]
 	}
 	select {
 	case pool <- struct{}{}:
-		t.mu.Lock()
-		t.counts[kind]++
-		t.mu.Unlock()
-		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	failed := true
+	defer func() {
+		if failed {
+			<-pool
+		}
+	}()
+	if kind == KindHTML && t.cfg.HTMLIntervalSeconds > 0 {
+		// Admission happens first, so HTML spacing is enforced at dispatch while
+		// still respecting the configured concurrency cap. The serialized wait
+		// prevents a burst when several callers reach the interval together.
+		if err := t.htmlLock.Lock(ctx); err != nil {
+			return err
+		}
+		wait := time.Until(t.lastHTML.Add(time.Duration(t.cfg.HTMLIntervalSeconds * float64(time.Second))))
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				t.htmlLock.Unlock()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			t.htmlLock.Unlock()
+			return err
+		}
+		if err := t.Circuit.Check(); err != nil {
+			t.htmlLock.Unlock()
+			return err
+		}
+		t.lastHTML = time.Now()
+		t.htmlLock.Unlock()
+	} else if err := ctx.Err(); err != nil {
+		return err
+	} else if err := t.Circuit.Check(); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	t.counts[kind]++
+	t.mu.Unlock()
+	failed = false
+	return nil
 }
 func (t *Throttle) Release(kind RequestKind) {
 	pool := t.pools[kind]

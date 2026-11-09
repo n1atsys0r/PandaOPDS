@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"pandaopds/internal/config"
 )
@@ -39,6 +41,53 @@ func TestCompoundFavoritesCursorIsForwardedOpaque(t *testing.T) {
 	}
 	if got != cursor {
 		t.Fatalf("cursor forwarded as %q, want %q", got, cursor)
+	}
+}
+
+func TestCanceledHomepageListLockWaitDoesNotDispatchUpstream(t *testing.T) {
+	var requests atomic.Int64
+	cfg := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, CacheDir: t.TempDir()}
+	service := NewService(cfg, replayRoundTripper(func(r *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return replayResponse(r, 200, `<html>unexpected</html>`), nil
+	}))
+	defer service.Close()
+	unlock, err := service.acquireList(context.Background(), "list:popular??")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = service.GetList(ctx, "popular", "", nil, false)
+	unlock()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("GetList error=%v, want deadline exceeded", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("canceled list lock wait dispatched %d upstream requests", got)
+	}
+}
+
+func TestCanceledSessionLockWaitDoesNotDispatchUpstream(t *testing.T) {
+	var requests atomic.Int64
+	cfg := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, CacheDir: t.TempDir()}
+	service := NewService(cfg, replayRoundTripper(func(r *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return replayResponse(r, 200, `<html>unexpected</html>`), nil
+	}))
+	defer service.Close()
+	if err := service.Client.sessionMu.Lock(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, _, err := service.Client.Get(ctx, "https://e-hentai.org/popular", KindHTML)
+	service.Client.sessionMu.Unlock()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Get error=%v, want deadline exceeded", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("canceled session lock wait dispatched %d upstream requests", got)
 	}
 }
 

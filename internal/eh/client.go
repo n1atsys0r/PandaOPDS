@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	xhtml "golang.org/x/net/html"
@@ -34,7 +33,7 @@ type Client struct {
 	HTTP         *http.Client
 	Throttle     *Throttle
 	sessionReady bool
-	sessionMu    sync.Mutex
+	sessionMu    *contextMutex
 }
 
 func NewClient(cfg config.Settings, transport http.RoundTripper, throttle *Throttle) *Client {
@@ -56,12 +55,17 @@ func NewClient(cfg config.Settings, transport http.RoundTripper, throttle *Throt
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	return &Client{cfg: cfg, HTTP: &http.Client{Transport: transport, Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)), Jar: jar}, Throttle: throttle}
+	return &Client{cfg: cfg, HTTP: &http.Client{Transport: transport, Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)), Jar: jar}, Throttle: throttle, sessionMu: newContextMutex()}
 }
 func (c *Client) BaseURL() string { return "https://" + c.cfg.SiteHost() }
 func (c *Client) EstablishSession(ctx context.Context) error {
-	c.sessionMu.Lock()
+	if err := c.sessionMu.Lock(ctx); err != nil {
+		return err
+	}
 	defer c.sessionMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.sessionReady {
 		return nil
 	}
@@ -118,6 +122,9 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 	defer c.Throttle.Release(kind)
 	var last error
 	for attempt := 0; attempt <= retries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 		if err != nil {
 			return nil, nil, err
@@ -131,7 +138,9 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		if err != nil {
 			last = err
 			if attempt < retries {
-				time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
+				if err := sleepContext(ctx, time.Duration(100*(attempt+1))*time.Millisecond); err != nil {
+					return nil, nil, err
+				}
 				continue
 			}
 			break
@@ -141,6 +150,9 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		if readErr != nil {
 			last = readErr
 			if attempt < retries {
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
+				}
 				continue
 			}
 			break
@@ -158,12 +170,16 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		}
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
 			if attempt < retries {
-				time.Sleep(time.Duration(200*(attempt+1)) * time.Millisecond)
+				if err := sleepContext(ctx, time.Duration(200*(attempt+1))*time.Millisecond); err != nil {
+					return nil, nil, err
+				}
 				continue
 			}
 		}
 		if strings.Contains(text, "Page load has been aborted due to a fatal error") && attempt < retries {
-			time.Sleep(time.Duration(300*(attempt+1)) * time.Millisecond)
+			if err := sleepContext(ctx, time.Duration(300*(attempt+1))*time.Millisecond); err != nil {
+				return nil, nil, err
+			}
 			continue
 		}
 		if resp.StatusCode >= 400 {
@@ -178,7 +194,21 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		}
 		return data, resp.Header, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	return nil, nil, last
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return ctx.Err()
+	}
 }
 func brief(s string) string {
 	if len(s) > 300 {

@@ -39,6 +39,7 @@ type Service struct {
 	metadata   map[string]cached[GalleryMetadata]
 	categories map[string]cached[map[int]string]
 	locks      map[string]*sync.Mutex
+	listLocks  map[string]*contextMutex
 	disk       *DiskCache
 	started    time.Time
 	archive    ArchiveReader
@@ -71,7 +72,7 @@ type ArchiveInfo struct {
 
 func NewService(cfg config.Settings, transport http.RoundTripper) *Service {
 	th := NewThrottle(cfg)
-	s := &Service{Settings: cfg, Throttle: th, Client: NewClient(cfg, transport, th), lists: map[string]cached[GalleryPageInfo]{}, cover: map[string]cached[string]{}, pages: map[string]cached[[]Thumbnail]{}, details: map[string]cached[DetailPageInfo]{}, imgPages: map[string]cached[ImagePageInfo]{}, metadata: map[string]cached[GalleryMetadata]{}, categories: map[string]cached[map[int]string]{}, locks: map[string]*sync.Mutex{}, disk: NewDiskCache(cfg.CacheDir, cfg.CacheMaxGB, cfg.ImageCacheEnabled), started: time.Now(), myTags: map[string]map[string]string{}, translator: NewTagTranslator(cfg, transport)}
+	s := &Service{Settings: cfg, Throttle: th, Client: NewClient(cfg, transport, th), lists: map[string]cached[GalleryPageInfo]{}, cover: map[string]cached[string]{}, pages: map[string]cached[[]Thumbnail]{}, details: map[string]cached[DetailPageInfo]{}, imgPages: map[string]cached[ImagePageInfo]{}, metadata: map[string]cached[GalleryMetadata]{}, categories: map[string]cached[map[int]string]{}, locks: map[string]*sync.Mutex{}, listLocks: map[string]*contextMutex{}, disk: NewDiskCache(cfg.CacheDir, cfg.CacheMaxGB, cfg.ImageCacheEnabled), started: time.Now(), myTags: map[string]map[string]string{}, translator: NewTagTranslator(cfg, transport)}
 	s.loadMyTags()
 	return s
 }
@@ -98,6 +99,19 @@ func (s *Service) lock(key string) *sync.Mutex {
 	}
 	return l
 }
+func (s *Service) acquireList(ctx context.Context, key string) (func(), error) {
+	s.mu.Lock()
+	l := s.listLocks[key]
+	if l == nil {
+		l = newContextMutex()
+		s.listLocks[key] = l
+	}
+	s.mu.Unlock()
+	if err := l.Lock(ctx); err != nil {
+		return nil, err
+	}
+	return l.Unlock, nil
+}
 func (s *Service) GetList(ctx context.Context, query, next string, extra url.Values, bypass bool) (GalleryPageInfo, error) {
 	params := url.Values{}
 	for k, v := range extra {
@@ -116,9 +130,11 @@ func (s *Service) GetList(ctx context.Context, query, next string, extra url.Val
 		}
 	}
 	s.mu.Unlock()
-	lock := s.lock("list:" + cacheKey)
-	lock.Lock()
-	defer lock.Unlock()
+	unlock, err := s.acquireList(ctx, "list:"+cacheKey)
+	if err != nil {
+		return GalleryPageInfo{}, err
+	}
+	defer unlock()
 	s.mu.Lock()
 	if !bypass {
 		if v, ok := lookup(s.lists, cacheKey); ok {
@@ -127,6 +143,9 @@ func (s *Service) GetList(ctx context.Context, query, next string, extra url.Val
 		}
 	}
 	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return GalleryPageInfo{}, err
+	}
 	raw, _, err := s.Client.Get(ctx, s.Client.ListURL(clean, next, params), KindHTML)
 	if err != nil {
 		return GalleryPageInfo{}, err

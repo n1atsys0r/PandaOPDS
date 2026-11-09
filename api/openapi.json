@@ -622,7 +622,7 @@
         "operationId": "root_feed_opds_v2_0_get",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Navigation and available publication previews. The Go service waits up to 12 seconds for previews and marks the response no-store if the deadline is reached.",
             "content": {
               "application/opds+json;profile=navigation": {
                 "schema": {
