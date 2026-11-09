@@ -34,6 +34,9 @@ func newWebPSpriteService(t *testing.T, detail string, sprite []byte) *Service {
 		case "/g/77/token/":
 			return replayResponse(r, http.StatusOK, detail), nil
 		case "/sprite.webp":
+			if r.Referer() != "https://e-hentai.org/g/77/token/" {
+				return replayResponse(r, http.StatusBadRequest, "gallery Referer missing"), nil
+			}
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/webp"}}, Body: io.NopCloser(bytes.NewReader(sprite)), Request: r}, nil
 		default:
 			return replayResponse(r, http.StatusNotFound, "unexpected request"), nil

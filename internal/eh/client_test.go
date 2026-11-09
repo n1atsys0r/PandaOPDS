@@ -2,6 +2,7 @@ package eh
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -9,6 +10,24 @@ import (
 
 	"pandaopds/internal/config"
 )
+
+func TestRequestDoesNotRetryAfterCircuitOpens(t *testing.T) {
+	cfg := config.Settings{TimeoutSeconds: 2, Retries: 1}
+	throttle := NewThrottle(cfg)
+	var attempts int
+	client := NewClient(cfg, replayRoundTripper(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			throttle.TripFromBody("Your IP address is temporarily banned", KindHTML, "e-hentai.org")
+		}
+		return replayResponse(r, http.StatusServiceUnavailable, "temporary error"), nil
+	}), throttle)
+	_, _, err := client.Get(context.Background(), "https://ehgt.org/preview.webp", KindThumb)
+	var circuitErr *CircuitOpenError
+	if attempts != 1 || !errors.As(err, &circuitErr) || circuitErr.Reason != "banned" {
+		t.Fatalf("attempts=%d error=%v; want one attempt and an open banned circuit", attempts, err)
+	}
+}
 
 type profileCall struct {
 	method  string

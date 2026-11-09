@@ -3,6 +3,7 @@ package eh
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -185,14 +186,16 @@ func (t *Throttle) Counts() map[string]int64 {
 	}
 	return out
 }
-func (t *Throttle) TripFromBody(body string) {
+func (t *Throttle) TripFromBody(body string, kind RequestKind, host string) {
 	x := strings.TrimSpace(body)
 	if strings.HasPrefix(x, "Your IP address") || strings.HasPrefix(x, "This IP address") {
 		t.Circuit.Trip("banned", time.Duration(t.cfg.BannedCooldownSeconds*float64(time.Second)))
+		log.Printf("upstream circuit opened: reason=banned kind=%s host=%s", kind, host)
 		return
 	}
 	if strings.HasPrefix(x, "You have exceeded your image") {
 		t.Circuit.Trip("exceed", time.Duration(t.cfg.ExceedCooldownSeconds*float64(time.Second)))
+		log.Printf("upstream circuit opened: reason=exceed kind=%s host=%s", kind, host)
 	}
 }
 func (t *Throttle) WaitError() error {

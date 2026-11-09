@@ -160,6 +160,11 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
+		if attempt > 0 {
+			if err := c.Throttle.Circuit.Check(); err != nil {
+				return nil, nil, err
+			}
+		}
 		req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 		if err != nil {
 			return nil, nil, err
@@ -193,7 +198,11 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 			break
 		}
 		text := strings.TrimSpace(string(data))
-		c.Throttle.TripFromBody(text)
+		responseHost := req.URL.Hostname()
+		if resp.Request != nil && resp.Request.URL != nil {
+			responseHost = resp.Request.URL.Hostname()
+		}
+		c.Throttle.TripFromBody(text, kind, responseHost)
 		if strings.HasPrefix(text, "Your IP address") || strings.HasPrefix(text, "This IP address") {
 			return data, resp.Header, &UpstreamError{Status: 503, Detail: "E-Hentai IP address is banned"}
 		}

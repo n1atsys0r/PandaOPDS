@@ -1,12 +1,12 @@
 package eh
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,13 +35,115 @@ type DiskCache struct {
 	maxBytes int64
 	enabled  bool
 	mu       sync.Mutex
+	loaded   bool
+	index    diskCacheIndex
+}
+
+type diskCacheEntry struct {
+	path     string
+	size     int64
+	modTime  time.Time
+	accessed time.Time
+}
+
+type diskCacheHeap struct {
+	items     []diskCacheEntry
+	positions map[string]int
+	byAccess  bool
+}
+
+type diskCacheIndex struct {
+	entries map[string]diskCacheEntry
+	lru     diskCacheHeap
+	expiry  diskCacheHeap
+	total   int64
+}
+
+func newDiskCacheIndex() diskCacheIndex {
+	return diskCacheIndex{
+		entries: map[string]diskCacheEntry{},
+		lru:     diskCacheHeap{positions: map[string]int{}, byAccess: true},
+		expiry:  diskCacheHeap{positions: map[string]int{}},
+	}
+}
+
+func (h diskCacheHeap) Len() int { return len(h.items) }
+func (h diskCacheHeap) Less(i, j int) bool {
+	first, second := h.items[i].modTime, h.items[j].modTime
+	if h.byAccess {
+		first, second = h.items[i].accessed, h.items[j].accessed
+	}
+	if first.Equal(second) {
+		return h.items[i].path < h.items[j].path
+	}
+	return first.Before(second)
+}
+func (h diskCacheHeap) Swap(i, j int) {
+	h.items[i], h.items[j] = h.items[j], h.items[i]
+	h.positions[h.items[i].path] = i
+	h.positions[h.items[j].path] = j
+}
+func (h *diskCacheHeap) Push(item any) {
+	entry := item.(diskCacheEntry)
+	h.positions[entry.path] = len(h.items)
+	h.items = append(h.items, entry)
+}
+func (h *diskCacheHeap) Pop() any {
+	last := len(h.items) - 1
+	entry := h.items[last]
+	h.items[last] = diskCacheEntry{}
+	h.items = h.items[:last]
+	delete(h.positions, entry.path)
+	return entry
+}
+func (h *diskCacheHeap) set(entry diskCacheEntry) {
+	if i, ok := h.positions[entry.path]; ok {
+		h.items[i] = entry
+		heap.Fix(h, i)
+		return
+	}
+	heap.Push(h, entry)
+}
+func (h *diskCacheHeap) remove(path string) bool {
+	i, ok := h.positions[path]
+	if !ok {
+		return false
+	}
+	heap.Remove(h, i)
+	return true
+}
+func (i *diskCacheIndex) set(entry diskCacheEntry) {
+	if previous, ok := i.entries[entry.path]; ok {
+		i.total -= previous.size
+	}
+	i.entries[entry.path] = entry
+	i.total += entry.size
+	i.lru.set(entry)
+	i.expiry.set(entry)
+}
+func (i *diskCacheIndex) remove(path string) (diskCacheEntry, bool) {
+	entry, ok := i.entries[path]
+	if !ok {
+		return diskCacheEntry{}, false
+	}
+	delete(i.entries, path)
+	i.total -= entry.size
+	i.lru.remove(path)
+	i.expiry.remove(path)
+	return entry, true
 }
 
 const imageCacheTTL = 7 * 24 * time.Hour
 
 func NewDiskCache(dir string, maxGB float64, enabled bool) *DiskCache {
 	max := int64(maxGB * 1024 * 1024 * 1024)
-	return &DiskCache{dir: dir, maxBytes: max, enabled: enabled}
+	d := &DiskCache{dir: dir, maxBytes: max, enabled: enabled, index: newDiskCacheIndex()}
+	if enabled {
+		d.mu.Lock()
+		d.loadIndexLocked()
+		d.mu.Unlock()
+	}
+	return d
 }
 func (d *DiskCache) path(key string) string {
 	sum := sha256.Sum256([]byte(key))
@@ -54,18 +156,40 @@ func (d *DiskCache) Get(key string) ([]byte, bool) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.loadIndexLocked()
 	p := d.path(key)
-	b, e := os.ReadFile(p)
-	if e != nil {
+	st, err := os.Stat(p)
+	if os.IsNotExist(err) {
+		d.index.remove(p)
 		return nil, false
 	}
-	if st, err := os.Stat(p); err == nil {
-		if time.Since(st.ModTime()) > imageCacheTTL {
-			_ = os.Remove(p)
-			return nil, false
-		}
-		_ = os.Chtimes(p, time.Now(), st.ModTime())
+	if err != nil {
+		return nil, false
 	}
+	entry := diskCacheEntry{path: p, size: st.Size(), modTime: st.ModTime(), accessed: st.ModTime()}
+	if cached, ok := d.index.entries[p]; ok && cached.modTime.Equal(entry.modTime) && cached.size == entry.size {
+		entry.accessed = cached.accessed
+	}
+	if time.Since(entry.modTime) > imageCacheTTL {
+		err := os.Remove(p)
+		if err == nil || os.IsNotExist(err) {
+			d.index.remove(p)
+		} else {
+			d.index.set(entry)
+		}
+		return nil, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			d.index.remove(p)
+		}
+		return nil, false
+	}
+	now := time.Now()
+	_ = os.Chtimes(p, now, st.ModTime())
+	entry.accessed = now
+	d.index.set(entry)
 	return b, true
 }
 func (d *DiskCache) Put(key string, b []byte) {
@@ -73,23 +197,26 @@ func (d *DiskCache) Put(key string, b []byte) {
 		return
 	}
 	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.loadIndexLocked()
 	p := d.path(key)
 	if os.MkdirAll(filepath.Dir(p), 0o755) != nil {
-		d.mu.Unlock()
 		return
 	}
 	tmp := p + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) != nil {
-		d.mu.Unlock()
 		return
 	}
 	if os.Rename(tmp, p) != nil {
 		_ = os.Remove(tmp)
-		d.mu.Unlock()
 		return
 	}
-	d.mu.Unlock()
-	d.prune()
+	modTime := time.Now()
+	if st, err := os.Stat(p); err == nil {
+		modTime = st.ModTime()
+	}
+	d.index.set(diskCacheEntry{path: p, size: int64(len(b)), modTime: modTime, accessed: modTime})
+	d.pruneLocked(time.Now())
 }
 func (d *DiskCache) Delete(key string) {
 	if !d.enabled {
@@ -97,7 +224,12 @@ func (d *DiskCache) Delete(key string) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	_ = os.Remove(d.path(key))
+	d.loadIndexLocked()
+	p := d.path(key)
+	err := os.Remove(p)
+	if err == nil || os.IsNotExist(err) {
+		d.index.remove(p)
+	}
 }
 func (d *DiskCache) Clear() error {
 	if !d.enabled {
@@ -105,8 +237,11 @@ func (d *DiskCache) Clear() error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.loadIndexLocked()
 	entries, err := os.ReadDir(d.dir)
 	if os.IsNotExist(err) {
+		d.index = newDiskCacheIndex()
+		d.loaded = false
 		return nil
 	}
 	if err != nil {
@@ -114,60 +249,83 @@ func (d *DiskCache) Clear() error {
 	}
 	for _, entry := range entries {
 		if err := os.RemoveAll(filepath.Join(d.dir, entry.Name())); err != nil {
+			d.index = newDiskCacheIndex()
+			d.loaded = false
+			d.loadIndexLocked()
 			return err
 		}
 	}
+	d.index = newDiskCacheIndex()
+	d.loaded = true
 	return nil
 }
 func (d *DiskCache) Stats() map[string]any {
-	var bytes int64
-	count := 0
-	_ = filepath.WalkDir(d.dir, func(_ string, e fs.DirEntry, err error) error {
-		if err == nil && !e.IsDir() {
-			if st, x := e.Info(); x == nil {
-				count++
-				bytes += st.Size()
+	if !d.enabled {
+		var bytes int64
+		count := 0
+		_ = filepath.WalkDir(d.dir, func(_ string, e fs.DirEntry, err error) error {
+			if err == nil && !e.IsDir() {
+				if st, x := e.Info(); x == nil {
+					count++
+					bytes += st.Size()
+				}
 			}
-		}
-		return nil
-	})
-	return map[string]any{"entries": count, "bytes": bytes, "enabled": d.enabled, "max_bytes": d.maxBytes}
-}
-func (d *DiskCache) prune() {
+			return nil
+		})
+		return map[string]any{"entries": count, "bytes": bytes, "enabled": false, "max_bytes": d.maxBytes}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.loadIndexLocked()
+	return map[string]any{"entries": len(d.index.entries), "bytes": d.index.total, "enabled": true, "max_bytes": d.maxBytes}
+}
+
+func (d *DiskCache) loadIndexLocked() {
+	if d.loaded {
+		return
+	}
+	if d.dir == "" {
+		d.loaded = true
+		return
+	}
+	if err := os.MkdirAll(d.dir, 0o755); err != nil {
+		return
+	}
+	d.loaded = true
+	d.index = newDiskCacheIndex()
+	_ = filepath.WalkDir(d.dir, func(p string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
+			return nil
+		}
+		st, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		d.index.set(diskCacheEntry{path: p, size: st.Size(), modTime: st.ModTime(), accessed: st.ModTime()})
+		return nil
+	})
+	d.pruneLocked(time.Now())
+}
+
+func (d *DiskCache) pruneLocked(now time.Time) {
 	if d.maxBytes <= 0 {
 		return
 	}
-	type file struct {
-		p    string
-		size int64
-		at   time.Time
-	}
-	files := []file{}
-	var total int64
-	_ = filepath.WalkDir(d.dir, func(p string, e fs.DirEntry, err error) error {
-		if err == nil && !e.IsDir() && !strings.HasSuffix(e.Name(), ".tmp") {
-			if st, x := e.Info(); x == nil {
-				if time.Since(st.ModTime()) > imageCacheTTL {
-					_ = os.Remove(p)
-					return nil
-				}
-				total += st.Size()
-				files = append(files, file{p, st.Size(), st.ModTime()})
-			}
-		}
-		return nil
-	})
-	if total <= d.maxBytes {
-		return
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].at.Before(files[j].at) })
-	for _, f := range files {
-		if total <= d.maxBytes {
+	for len(d.index.expiry.items) > 0 {
+		oldest := d.index.expiry.items[0]
+		if now.Sub(oldest.modTime) <= imageCacheTTL {
 			break
 		}
-		_ = os.Remove(f.p)
-		total -= f.size
+		if err := os.Remove(oldest.path); err != nil && !os.IsNotExist(err) {
+			return
+		}
+		d.index.remove(oldest.path)
+	}
+	for d.index.total > d.maxBytes && len(d.index.lru.items) > 0 {
+		oldest := d.index.lru.items[0]
+		if err := os.Remove(oldest.path); err != nil && !os.IsNotExist(err) {
+			return
+		}
+		d.index.remove(oldest.path)
 	}
 }

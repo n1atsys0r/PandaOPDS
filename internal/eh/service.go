@@ -770,7 +770,7 @@ func (s *Service) GetPageThumbnail(ctx context.Context, gid int, token string, p
 		r := image.Rect(left, top, left+width, top+height)
 		crop = &r
 	}
-	img, e := s.getThumbnailSource(ctx, thumb.ThumbURL)
+	img, e := s.getThumbnailSource(ctx, thumb.ThumbURL, s.Client.GalleryURL(gid, token))
 	if e != nil {
 		return nil, "", e
 	}
@@ -782,7 +782,7 @@ func (s *Service) GetPageThumbnail(ctx context.Context, gid int, token string, p
 	return preview, "image/jpeg", nil
 }
 
-func (s *Service) getThumbnailSource(ctx context.Context, sourceURL string) (image.Image, error) {
+func (s *Service) getThumbnailSource(ctx context.Context, sourceURL, referer string) (image.Image, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -805,7 +805,7 @@ func (s *Service) getThumbnailSource(ctx context.Context, sourceURL string) (ima
 		if err := workerCtx.Err(); err != nil {
 			return nil, err
 		}
-		source, _, err := s.Client.Get(workerCtx, sourceURL, KindThumb)
+		source, _, err := s.Client.request(workerCtx, http.MethodGet, sourceURL, nil, KindThumb, map[string]string{"Referer": referer}, false)
 		if err != nil {
 			return nil, err
 		}
