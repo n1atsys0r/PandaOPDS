@@ -1,0 +1,4649 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PandaOPDS",
+    "description": "PandaOPDS management and reading API. Basic authentication applies when both AUTH_USERNAME and AUTH_PASSWORD are configured, subject to configured path exemptions. E-Hentai account credentials are configured server-side. Archive start and refresh can spend GP.",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/opds/v1.2": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Root Feed",
+        "description": "Root OPDS 1.2 navigation feed (hard-coded, no home.toml).\n\nPure standard navigation: Latest / Watched / Favorites / Popular /\nToplist (single entry; period facets live inside the toplist feed) +\na trailing protocol-level Search link.  Watched/Favorites are omitted\nwhen no IPB cookie is configured.",
+        "operationId": "root_feed_opds_v1_2_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/atom+xml;profile=opds-catalog;kind=navigation": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:pse=\"http://vaemendis.net/opds-pse/ns\" xmlns:opds=\"http://opds-spec.org/2010/catalog\" xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <title>PandaOPDS</title>\n  <id>urn:ehentai:PandaOPDS</id>\n  <updated>2026-11-09T03:08:38Z</updated>\n  <author>\n    <name>PandaOPDS</name>\n  </author>\n  <link rel=\"self\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"start\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"search\" href=\"https://catalog.example/opds/v1.2/search.xml\" type=\"application/opensearchdescription+xml\" title=\"Search\"/>\n  <entry>\n    <id>urn:ehentai:subsection:latest</id>\n    <title>Latest</title>\n    <updated>2026-11-09T03:08:38Z</updated>\n    <summary type=\"text\">Latest</summary>\n    <link rel=\"subsection\" href=\"https://catalog.example/opds/v1.2/gallery\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:ehentai:subsection:archives</id>\n    <title>Archives</title>\n    <updated>2026-11-09T03:08:38Z</updated>\n    <summary type=\"text\">Archives</summary>\n    <link rel=\"subsection\" href=\"https://catalog.example/opds/v1.2/archives\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:ehentai:subsection:popular</id>\n    <title>Popular</title>\n    <updated>2026-11-09T03:08:38Z</updated>\n    <summary type=\"text\">Popular</summary>\n    <link rel=\"subsection\" href=\"https://catalog.example/opds/v1.2/gallery?query=popular\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:ehentai:subsection:toplist</id>\n    <title>Toplist</title>\n    <updated>2026-11-09T03:08:38Z</updated>\n    <summary type=\"text\">Toplist</summary>\n    <link rel=\"subsection\" href=\"https://catalog.example/opds/v1.2/toplist?period=yesterday\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:ehentai:subsection:search</id>\n    <title>Search</title>\n    <updated>2026-11-09T03:08:38Z</updated>\n    <summary type=\"text\">Search E-Hentai galleries</summary>\n    <link rel=\"subsection\" href=\"https://catalog.example/opds/v1.2/search.xml\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n"
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v1.2/search.xml": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Open Search",
+        "operationId": "open_search_opds_v1_2_search_xml_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opensearchdescription+xml": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<OpenSearchDescription xmlns=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <ShortName>E-Hentai</ShortName>\n  <Description>Search E-Hentai galleries via PandaOPDS</Description>\n  <InputEncoding>UTF-8</InputEncoding>\n  <Url type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\" template=\"https://catalog.example/opds/v1.2/gallery?query={searchTerms}\"/>\n</OpenSearchDescription>\n"
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v1.2/gallery": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Gallery Feed",
+        "operationId": "gallery_feed_opds_v1_2_gallery_get",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Query"
+            }
+          },
+          {
+            "name": "next",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next"
+            },
+            "example": "2753175-1786365950",
+            "description": "Opaque upstream pagination cursor. Pass the value from the next link unchanged."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/atom+xml;profile=opds-catalog;kind=acquisition": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:pse=\"http://vaemendis.net/opds-pse/ns\" xmlns:opds=\"http://opds-spec.org/2010/catalog\" xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <title>E-Hentai: Example gallery feed</title>\n  <id>urn:ehentai:E-Hentai: Example gallery feed</id>\n  <updated>2026-11-09T03:08:38Z</updated>\n  <author>\n    <name>PandaOPDS</name>\n  </author>\n  <link rel=\"self\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"start\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"search\" href=\"https://catalog.example/opds/v1.2/search.xml\" type=\"application/opensearchdescription+xml\" title=\"Search\"/>\n  <entry>\n    <id>urn:ehentai:gallery:12345:abcdef0123</id>\n    <title>ローカル</title>\n    <updated>2023-11-14T22:13:00Z</updated>\n    <category term=\"Manga\" label=\"Manga\" scheme=\"http://e-hentai.org\"/>\n    <link rel=\"http://opds-spec.org/image/thumbnail\" href=\"https://catalog.example/image/12345/abcdef0123/thumb\" type=\"image/jpeg\"/>\n    <link rel=\"http://opds-spec.org/acquisition\" href=\"https://catalog.example/opds/v1.2/gallery/12345/abcdef0123/chapters\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n    <link rel=\"http://vaemendis.net/opds-pse/stream\" href=\"https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}\" type=\"image/jpeg\" pse:count=\"2\"/>\n    <link rel=\"alternate\" href=\"https://e-hentai.org/g/12345/abcdef0123/\" type=\"text/html\" title=\"e-hentai.org\"/>\n  </entry>\n</feed>\n"
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v1.2/toplist": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Toplist Feed",
+        "description": "Ranklist acquisition feed. `period` ∈ yesterday|month|year|alltime;\npagination uses `page` (1-based, `?p=` upstream) — not the lastGid\n`next` mechanism used by the front-page feeds. Pure standard Atom, no\nextensions (v1.2 constraint).",
+        "operationId": "toplist_feed_opds_v1_2_toplist_get",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "yesterday",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/atom+xml;profile=opds-catalog;kind=acquisition": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:pse=\"http://vaemendis.net/opds-pse/ns\" xmlns:opds=\"http://opds-spec.org/2010/catalog\" xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <title>E-Hentai: Example gallery feed</title>\n  <id>urn:ehentai:E-Hentai: Example gallery feed</id>\n  <updated>2026-11-09T03:08:38Z</updated>\n  <author>\n    <name>PandaOPDS</name>\n  </author>\n  <link rel=\"self\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"start\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"search\" href=\"https://catalog.example/opds/v1.2/search.xml\" type=\"application/opensearchdescription+xml\" title=\"Search\"/>\n  <entry>\n    <id>urn:ehentai:gallery:12345:abcdef0123</id>\n    <title>ローカル</title>\n    <updated>2023-11-14T22:13:00Z</updated>\n    <category term=\"Manga\" label=\"Manga\" scheme=\"http://e-hentai.org\"/>\n    <link rel=\"http://opds-spec.org/image/thumbnail\" href=\"https://catalog.example/image/12345/abcdef0123/thumb\" type=\"image/jpeg\"/>\n    <link rel=\"http://opds-spec.org/acquisition\" href=\"https://catalog.example/opds/v1.2/gallery/12345/abcdef0123/chapters\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n    <link rel=\"http://vaemendis.net/opds-pse/stream\" href=\"https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}\" type=\"image/jpeg\" pse:count=\"2\"/>\n    <link rel=\"alternate\" href=\"https://e-hentai.org/g/12345/abcdef0123/\" type=\"text/html\" title=\"e-hentai.org\"/>\n  </entry>\n</feed>\n"
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v1.2/archives": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Archives Feed",
+        "description": "Local Archives shelf (ready zip masters), newest first — zero upstream.\n\nThe OPDS 1.2 entry point for purchased archives: entries keep their\nstream/thumb/detail URLs working even after the upstream gallery is\ndeleted. Pagination mirrors toplist (`page` 1-based).",
+        "operationId": "archives_feed_opds_v1_2_archives_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/atom+xml;profile=opds-catalog;kind=acquisition": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:pse=\"http://vaemendis.net/opds-pse/ns\" xmlns:opds=\"http://opds-spec.org/2010/catalog\" xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <title>E-Hentai: Archives</title>\n  <id>urn:ehentai:E-Hentai: Archives</id>\n  <updated>2026-11-09T03:08:38Z</updated>\n  <author>\n    <name>PandaOPDS</name>\n  </author>\n  <link rel=\"self\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"start\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"search\" href=\"https://catalog.example/opds/v1.2/search.xml\" type=\"application/opensearchdescription+xml\" title=\"Search\"/>\n  <entry>\n    <id>urn:ehentai:gallery:12345:abcdef0123</id>\n    <title>ローカル</title>\n    <updated>2023-11-14T22:13:00Z</updated>\n    <category term=\"Manga\" label=\"Manga\" scheme=\"http://e-hentai.org\"/>\n    <link rel=\"http://opds-spec.org/image/thumbnail\" href=\"https://catalog.example/image/12345/abcdef0123/thumb\" type=\"image/jpeg\"/>\n    <link rel=\"http://opds-spec.org/acquisition\" href=\"https://catalog.example/opds/v1.2/gallery/12345/abcdef0123/chapters\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n    <link rel=\"http://vaemendis.net/opds-pse/stream\" href=\"https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}\" type=\"image/jpeg\" pse:count=\"2\"/>\n    <link rel=\"alternate\" href=\"https://e-hentai.org/g/12345/abcdef0123/\" type=\"text/html\" title=\"e-hentai.org\"/>\n  </entry>\n</feed>\n"
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v1.2/gallery/{gid}/{token}/chapters": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Chapter Feed",
+        "description": "Detail feed: archived galleries prefer cached online detail HTML and\nfall back to the local archive snapshot when upstream is unavailable.\n\nFetching the detail page also pre-warms the page-URL mapping cache so the\nfirst /stream request skips one upstream round trip.",
+        "operationId": "chapter_feed_opds_v1_2_gallery__gid___token__chapters_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/atom+xml;profile=opds-catalog;kind=acquisition": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:pse=\"http://vaemendis.net/opds-pse/ns\" xmlns:opds=\"http://opds-spec.org/2010/catalog\" xmlns:opensearch=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <title>ローカル</title>\n  <id>urn:ehentai:ローカル</id>\n  <updated>2023-11-14T22:13:00Z</updated>\n  <author>\n    <name>PandaOPDS</name>\n  </author>\n  <link rel=\"self\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"start\" href=\"https://catalog.example/opds/v1.2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\" title=\"PandaOPDS\"/>\n  <link rel=\"search\" href=\"https://catalog.example/opds/v1.2/search.xml\" type=\"application/opensearchdescription+xml\" title=\"Search\"/>\n  <entry>\n    <id>urn:ehentai:gallery:12345:abcdef0123</id>\n    <title>Chapter 1: ローカル</title>\n    <updated>2023-11-14T22:13:00Z</updated>\n    <category term=\"Manga\" label=\"Manga\" scheme=\"http://e-hentai.org\"/>\n    <link rel=\"http://opds-spec.org/image/thumbnail\" href=\"https://catalog.example/image/12345/abcdef0123/thumb\" type=\"image/jpeg\"/>\n    <link rel=\"http://vaemendis.net/opds-pse/stream\" href=\"https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}\" type=\"image/jpeg\" pse:count=\"2\"/>\n    <link rel=\"alternate\" href=\"https://e-hentai.org/g/12345/abcdef0123/\" type=\"text/html\" title=\"e-hentai.org\"/>\n  </entry>\n</feed>\n"
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Root Feed",
+        "description": "Root OPDS 2.0 document.\n\nLayout is driven by a TOML config: ``[[group]]`` declares named groups;\n``[[section]]`` references a group via ``group`` field.  Publication and\nnavigation sections can co-exist in the same group.\n\nSections without a ``group``:\n* ``kind=\"publication\"`` → standalone ``groups[]`` entry\n* ``kind=\"navigation\"``  → root ``navigation[]`` entry\n\nWatched / Favorites are auth-gated: omitted when no IPB cookie is set.\nThe Archives preset (``query=\"archives\"``) is store-gated: omitted\nwhile the archive store holds no ready entries.",
+        "operationId": "root_feed_opds_v2_0_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json;profile=navigation": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                },
+                "example": {
+                  "metadata": {
+                    "title": "PandaOPDS",
+                    "identifier": "urn:ehentai:root",
+                    "modified": "2026-11-09T03:08:38Z"
+                  },
+                  "links": [
+                    {
+                      "href": "https://catalog.example/opds/v2.0",
+                      "rel": "self",
+                      "type": "application/opds+json;profile=navigation",
+                      "title": "PandaOPDS"
+                    },
+                    {
+                      "href": "https://catalog.example/opds/v2.0",
+                      "rel": "start",
+                      "type": "application/opds+json;profile=navigation",
+                      "title": "PandaOPDS"
+                    },
+                    {
+                      "href": "https://catalog.example/opds/v2.0/gallery?query={searchTerms}",
+                      "rel": "search",
+                      "type": "application/opds+json;profile=acquisition",
+                      "title": "Search",
+                      "templated": true
+                    }
+                  ],
+                  "navigation": [
+                    {
+                      "title": "",
+                      "href": "https://catalog.example/opds/v2.0/archives",
+                      "rel": "subsection",
+                      "type": "application/opds+json;profile=acquisition"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/search.xml": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Open Search",
+        "operationId": "open_search_opds_v2_0_search_xml_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opensearchdescription+xml": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<?xml version='1.0' encoding='utf-8'?>\n<OpenSearchDescription xmlns=\"http://a9.com/-/spec/opensearch/1.1/\">\n  <ShortName>E-Hentai</ShortName>\n  <Description>Search E-Hentai galleries via PandaOPDS</Description>\n  <InputEncoding>UTF-8</InputEncoding>\n  <Url type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\" template=\"https://catalog.example/opds/v2.0/gallery?query={searchTerms}\"/>\n</OpenSearchDescription>\n"
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/gallery": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Gallery Feed",
+        "operationId": "gallery_feed_opds_v2_0_gallery_get",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Query"
+            }
+          },
+          {
+            "name": "next",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next"
+            },
+            "example": "2753175-1786365950",
+            "description": "Opaque upstream pagination cursor. Pass the value from the next link unchanged."
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json;profile=acquisition": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                },
+                "example": {
+                  "metadata": {
+                    "title": "Example gallery feed",
+                    "identifier": "urn:ehentai:example"
+                  },
+                  "links": [
+                    {
+                      "rel": "self",
+                      "href": "/opds/v2.0/gallery"
+                    }
+                  ],
+                  "publications": [
+                    {
+                      "metadata": {
+                        "title": "Example gallery",
+                        "identifier": "urn:ehentai:gallery:12345:abcdef0123",
+                        "numberOfPages": 2
+                      },
+                      "links": [
+                        {
+                          "rel": "self",
+                          "href": "/opds/v2.0/gallery/12345/abcdef0123/publication"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/toplist": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Toplist Feed",
+        "description": "Ranklist acquisition document. `period` ∈ yesterday|month|year|alltime;\npagination uses `page` (1-based, `?p=` upstream) — not the lastGid\n`next` mechanism used by the front-page feeds.",
+        "operationId": "toplist_feed_opds_v2_0_toplist_get",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "yesterday",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json;profile=acquisition": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                },
+                "example": {
+                  "metadata": {
+                    "title": "Example gallery feed",
+                    "identifier": "urn:ehentai:example"
+                  },
+                  "links": [
+                    {
+                      "rel": "self",
+                      "href": "/opds/v2.0/toplist"
+                    }
+                  ],
+                  "publications": [
+                    {
+                      "metadata": {
+                        "title": "Example gallery",
+                        "identifier": "urn:ehentai:gallery:12345:abcdef0123",
+                        "numberOfPages": 2
+                      },
+                      "links": [
+                        {
+                          "rel": "self",
+                          "href": "/opds/v2.0/gallery/12345/abcdef0123/publication"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/archives": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Archives Feed",
+        "description": "Local Archives shelf (ready zip masters), newest first — zero upstream.\n\nThe OPDS entry point for purchased archives: entries keep their stream/\nthumb/detail URLs working even after the upstream gallery is deleted.\nPagination mirrors toplist (`page` 1-based).",
+        "operationId": "archives_feed_opds_v2_0_archives_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json;profile=acquisition": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                },
+                "example": {
+                  "metadata": {
+                    "title": "E-Hentai: Archives",
+                    "identifier": "urn:ehentai:archives",
+                    "modified": "2026-11-09T03:08:38Z"
+                  },
+                  "links": [
+                    {
+                      "href": "https://catalog.example/opds/v2.0/archives",
+                      "rel": "self",
+                      "type": "application/opds+json;profile=acquisition",
+                      "title": "E-Hentai: Archives"
+                    },
+                    {
+                      "href": "https://catalog.example/opds/v2.0",
+                      "rel": "start",
+                      "type": "application/opds+json;profile=navigation",
+                      "title": "PandaOPDS"
+                    },
+                    {
+                      "href": "https://catalog.example/opds/v2.0/gallery?query={searchTerms}",
+                      "rel": "search",
+                      "type": "application/opds+json;profile=acquisition",
+                      "title": "Search",
+                      "templated": true
+                    }
+                  ],
+                  "publications": [
+                    {
+                      "context": [
+                        "https://readium.org/webpub-manifest/context.jsonld",
+                        {
+                          "x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"
+                        }
+                      ],
+                      "metadata": {
+                        "title": "ローカル",
+                        "identifier": "urn:ehentai:gallery:12345:abcdef0123",
+                        "modified": "2023-11-14T22:13:00Z",
+                        "language": [
+                          "ja"
+                        ],
+                        "published": "2023-11-14T22:13:00Z",
+                        "subject": [
+                          {
+                            "name": "category:Manga"
+                          },
+                          {
+                            "name": "language:japanese"
+                          }
+                        ],
+                        "numberOfPages": 2,
+                        "x:rating": 4.5
+                      },
+                      "links": [
+                        {
+                          "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
+                          "rel": "http://opds-spec.org/acquisition",
+                          "type": "image/jpeg",
+                          "title": "ローカル",
+                          "properties": {
+                            "numberOfItems": 2
+                          },
+                          "templated": true
+                        },
+                        {
+                          "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
+                          "rel": "http://vaemendis.net/opds-pse/stream",
+                          "type": "image/jpeg",
+                          "properties": {
+                            "numberOfItems": 2
+                          },
+                          "templated": true
+                        },
+                        {
+                          "href": "https://catalog.example/opds/v2.0/gallery/12345/abcdef0123/publication",
+                          "rel": "self",
+                          "type": "application/opds+json",
+                          "title": "ローカル"
+                        },
+                        {
+                          "href": "https://e-hentai.org/g/12345/abcdef0123/",
+                          "rel": "alternate",
+                          "type": "text/html",
+                          "title": "e-hentai.org"
+                        }
+                      ],
+                      "images": [
+                        {
+                          "href": "https://catalog.example/image/12345/abcdef0123/thumb",
+                          "type": "image/jpeg"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/gallery/{gid}/{token}": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Gallery Detail",
+        "description": "Single-publication acquisition document.\n\nReady archives prefer detail-page HTML and fall back to the local snapshot\nwhen upstream is unavailable; other galleries use detail-page HTML. The\npage fetch also pre-warms the URL mapping cache. Zero gdata.",
+        "operationId": "gallery_detail_opds_v2_0_gallery__gid___token__get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json;profile=acquisition": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                },
+                "example": {
+                  "metadata": {
+                    "title": "Example gallery feed",
+                    "identifier": "urn:ehentai:example"
+                  },
+                  "links": [
+                    {
+                      "rel": "self",
+                      "href": "/opds/v2.0/gallery/12345/abcdef0123"
+                    }
+                  ],
+                  "publications": [
+                    {
+                      "metadata": {
+                        "title": "Example gallery",
+                        "identifier": "urn:ehentai:gallery:12345:abcdef0123",
+                        "numberOfPages": 2
+                      },
+                      "links": [
+                        {
+                          "rel": "self",
+                          "href": "/opds/v2.0/gallery/12345/abcdef0123/publication"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/gallery/{gid}/{token}/publication": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Gallery Publication",
+        "description": "Single-publication document: a top-level RWPM/OPDS publication object.\n\nThis is the target of every publication's `rel=\"self\"` link. Clients\nlike Stump follow `self` to open details and read through the embedded\n`readingOrder` (per-page image URLs); the response shape matches what\ntheir parser expects (a publication object, not an acquisition feed).\nReady archives prefer online detail-page HTML and use the local snapshot\nwhen upstream is unavailable.",
+        "operationId": "gallery_publication_opds_v2_0_gallery__gid___token__publication_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Publication"
+                },
+                "example": {
+                  "context": [
+                    "https://readium.org/webpub-manifest/context.jsonld",
+                    {
+                      "x": "https://github.com/n1atsys0r/PandaOPDS/vocab#"
+                    }
+                  ],
+                  "metadata": {
+                    "title": "ローカル",
+                    "identifier": "urn:ehentai:gallery:12345:abcdef0123",
+                    "modified": "2023-11-14T22:13:00Z",
+                    "language": [
+                      "ja"
+                    ],
+                    "published": "2023-11-14T22:13:00Z",
+                    "subject": [
+                      {
+                        "name": "category:Manga"
+                      },
+                      {
+                        "name": "language:japanese"
+                      }
+                    ],
+                    "numberOfPages": 2,
+                    "x:rating": 4.5,
+                    "x:titleJpn": "ローカル",
+                    "x:uploader": "fixture",
+                    "x:sizeBytes": 1234
+                  },
+                  "links": [
+                    {
+                      "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
+                      "rel": "http://opds-spec.org/acquisition",
+                      "type": "image/jpeg",
+                      "title": "ローカル",
+                      "properties": {
+                        "numberOfItems": 2
+                      },
+                      "templated": true
+                    },
+                    {
+                      "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
+                      "rel": "http://vaemendis.net/opds-pse/stream",
+                      "type": "image/jpeg",
+                      "properties": {
+                        "numberOfItems": 2
+                      },
+                      "templated": true
+                    },
+                    {
+                      "href": "https://catalog.example/opds/v2.0/gallery/12345/abcdef0123/publication",
+                      "rel": "self",
+                      "type": "application/opds+json",
+                      "title": "ローカル"
+                    },
+                    {
+                      "href": "https://e-hentai.org/g/12345/abcdef0123/",
+                      "rel": "alternate",
+                      "type": "text/html",
+                      "title": "e-hentai.org"
+                    }
+                  ],
+                  "images": [
+                    {
+                      "href": "https://catalog.example/image/12345/abcdef0123/thumb",
+                      "type": "image/jpeg"
+                    }
+                  ],
+                  "readingOrder": [
+                    {
+                      "href": "https://catalog.example/stream/12345/abcdef0123/page/0",
+                      "type": "image/jpeg",
+                      "properties": {
+                        "x:thumbnail": {
+                          "href": "https://catalog.example/image/12345/abcdef0123/page/0/thumb",
+                          "type": "image/jpeg"
+                        }
+                      }
+                    },
+                    {
+                      "href": "https://catalog.example/stream/12345/abcdef0123/page/1",
+                      "type": "image/jpeg",
+                      "properties": {
+                        "x:thumbnail": {
+                          "href": "https://catalog.example/image/12345/abcdef0123/page/1/thumb",
+                          "type": "image/jpeg"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stream/{gid}/{token}/page/{page}": {
+      "get": {
+        "tags": [
+          "stream"
+        ],
+        "summary": "Stream Page",
+        "operationId": "stream_page_stream__gid___token__page__page__get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/bmp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Page is below the configured PSE page base",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/image/{gid}/{token}/thumb": {
+      "get": {
+        "tags": [
+          "stream"
+        ],
+        "summary": "Thumb",
+        "operationId": "thumb_image__gid___token__thumb_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/bmp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/image/{gid}/{token}/page/{page}/thumb": {
+      "get": {
+        "tags": [
+          "stream"
+        ],
+        "summary": "Page Thumb",
+        "operationId": "page_thumb_image__gid___token__page__page__thumb_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/image/fetch": {
+      "get": {
+        "tags": [
+          "stream"
+        ],
+        "summary": "Image Fetch",
+        "description": "Proxy a cover/preview URL (settings.image_proxy_hosts) same-origin.\n\nComment content (x:reviews) may embed eh/ex cover images on a different\norigin; a web client fetching them cross-origin hits CORS. This endpoint\nfetches the exact bytes through the throttled, authenticated client and\nserves them from the PandaOPDS origin. The URL is treated as opaque (no\ngid/token parsing).",
+        "operationId": "image_fetch_image_fetch_get",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Url"
+            },
+            "example": "https://ehgt.org/example.jpg"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/bmp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery, image, or page unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upstream image quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "URL is not HTTPS or its host is outside the configured image proxy allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/archive": {
+      "get": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive List",
+        "operationId": "archive_list_api_archive_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArchiveStatus"
+                      }
+                    },
+                    "stats": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "created_at": 1700000000,
+                      "status": "ready",
+                      "title": "A local gallery",
+                      "quality": "Resample",
+                      "or": "res",
+                      "upgrade_backup": {},
+                      "updated_at": 1700000000,
+                      "gid": 12345,
+                      "token": "abcdef0123",
+                      "page_count": 2,
+                      "error": "upgrade interrupted by restart; rolled back",
+                      "archive_size": 240,
+                      "part_size": 0,
+                      "metadata": {
+                        "title": "A local gallery",
+                        "title_jpn": "ローカル",
+                        "category": "Manga",
+                        "rating": 4.5,
+                        "filecount": 5,
+                        "filesize": 1234,
+                        "posted": 1700000000,
+                        "uploader": "fixture",
+                        "expunged": false,
+                        "torrentcount": 0,
+                        "tags": {
+                          "language": [
+                            {
+                              "namespace": "language",
+                              "key": "japanese",
+                              "status": "confidence",
+                              "style": null
+                            }
+                          ]
+                        },
+                        "thumb": ""
+                      },
+                      "cover_url": "/api/archive/12345/abcdef0123/cover",
+                      "is_favorited": true,
+                      "favcat": 2,
+                      "favcat_name": null
+                    }
+                  ],
+                  "stats": {
+                    "entries": 1,
+                    "ready": 1,
+                    "by_status": {
+                      "ready": 1
+                    },
+                    "bytes": 240,
+                    "with_metadata": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/archive/{gid}/{token}/quote": {
+      "get": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Quote",
+        "operationId": "archive_quote_api_archive__gid___token__quote_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveQuote"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "title": "Example gallery",
+                  "gp_balance": 2000,
+                  "options": [
+                    {
+                      "or": "org",
+                      "label": "Original",
+                      "gp_price": 0,
+                      "size": "12 MB",
+                      "available": true,
+                      "unlocked": true
+                    }
+                  ],
+                  "download_state": "",
+                  "download_url": ""
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream request or archive response failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Archiver unavailable, credentials missing, or insufficient GP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/archive/{gid}/{token}/start": {
+      "post": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Start",
+        "operationId": "archive_start_api_archive__gid___token__start_post",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveStart"
+              },
+              "examples": {
+                "original": {
+                  "value": {
+                    "quality": "org"
+                  }
+                },
+                "force": {
+                  "value": {
+                    "quality": "org",
+                    "force": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveStatus"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "status": "pending",
+                  "title": "Example gallery",
+                  "or": "org",
+                  "page_count": 12,
+                  "active": true
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream request or archive response failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Archiver unavailable, credentials missing, or insufficient GP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Prepare and download the archive.\n\nSubmitting a locked, paid tier may spend GP. Inspect the quote first."
+      }
+    },
+    "/api/archive/{gid}/{token}": {
+      "get": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Status",
+        "operationId": "archive_status_api_archive__gid___token__get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveStatus"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "status": "ready",
+                  "title": "Example gallery",
+                  "or": "org",
+                  "page_count": 12,
+                  "active": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Local archive entry or requested file missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Delete",
+        "operationId": "archive_delete_api_archive__gid___token__delete",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "removed": true
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Local archive entry or requested file missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Cancel any current task and delete the local files. The upstream archive record remains."
+      }
+    },
+    "/api/archive/{gid}/{token}/cover": {
+      "get": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Cover",
+        "description": "Serve the persisted cover.jpg (404 when missing).",
+        "operationId": "archive_cover_api_archive__gid___token__cover_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/bmp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Local archive entry or requested file missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/archive/{gid}/{token}/metadata": {
+      "get": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Metadata",
+        "description": "Return the persisted gdata metadata snapshot (404 when absent).",
+        "operationId": "archive_metadata_api_archive__gid___token__metadata_get",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "title": "Example gallery",
+                  "title_jpn": "",
+                  "filecount": 12,
+                  "category": "Manga"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Local archive entry or requested file missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/archive/{gid}/{token}/metadata/refresh": {
+      "post": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Metadata Refresh",
+        "description": "Force-refetch gdata metadata + cover and overwrite the snapshot.",
+        "operationId": "archive_metadata_refresh_api_archive__gid___token__metadata_refresh_post",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "title": "Example gallery",
+                  "title_jpn": "",
+                  "filecount": 12,
+                  "category": "Manga"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream request or archive response failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/archive/{gid}/{token}/refresh": {
+      "post": {
+        "tags": [
+          "archive"
+        ],
+        "summary": "Archive Refresh",
+        "operationId": "archive_refresh_api_archive__gid___token__refresh_post",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Gid"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            },
+            "example": "abcdef0123"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveStatus"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "status": "pending",
+                  "title": "Example gallery",
+                  "or": "org",
+                  "page_count": 12,
+                  "active": true
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Local archive entry or requested file missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream request or archive response failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Archiver unavailable, credentials missing, or insufficient GP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Prepare and download the archive.\n\nSubmitting a locked, paid tier may spend GP. Inspect the quote first."
+      }
+    },
+    "/api/favorites": {
+      "post": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites Action",
+        "description": "Proxy a favorites write op (add | move | remove) to E-Hentai.\n\nSingle:  ``POST /api/favorites`` with ``{action, gid, token, favcat, note}``\nBatch:   ``POST /api/favorites`` with\n         ``{action, favcat, items: [{gid, token}, ...]}``",
+        "operationId": "favorites_action_api_favorites_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteWrite"
+              },
+              "examples": {
+                "add": {
+                  "value": {
+                    "action": "add",
+                    "gid": 12345,
+                    "token": "abcdef0123",
+                    "favcat": 0
+                  }
+                },
+                "move_batch": {
+                  "value": {
+                    "action": "move",
+                    "items": [
+                      {
+                        "gid": 12345,
+                        "token": "abcdef0123"
+                      }
+                    ],
+                    "favcat": 2
+                  }
+                },
+                "remove": {
+                  "value": {
+                    "action": "remove",
+                    "gid": 12345,
+                    "token": "abcdef0123"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteResult"
+                },
+                "example": {
+                  "action": "add",
+                  "ok": true,
+                  "ok_count": 1,
+                  "items": [
+                    {
+                      "gid": 12345,
+                      "token": "abcdef0123",
+                      "ok": true
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid action, gallery identity, batch, or destination category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-Hentai account cookies required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/favorites/categories": {
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites Categories",
+        "operationId": "favorites_categories_api_favorites_categories_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "categories": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "categories": [
+                    {
+                      "id": 0,
+                      "name": "Favorites"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-Hentai account cookies required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/favorites/favcats": {
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites Favcats",
+        "description": "Flat favcat id -> name map (shortcut-friendly: plain JSON object).\n\nSame cached data as /api/favorites/categories but shaped as\n``{\"0\": \"Favorites\", \"1\": \"Common\", ...}`` so a quick-action script can\nlook a folder's real name up by id (or list names in id order) without\nunwrapping an array.",
+        "operationId": "favorites_favcats_api_favorites_favcats_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "example": {
+                  "0": "Favorites"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-Hentai account cookies required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/favorites/sync": {
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites Sync Status",
+        "operationId": "favorites_sync_status_api_favorites_sync_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteSyncStatus"
+                },
+                "example": {
+                  "enabled": true,
+                  "interval_seconds": 3600,
+                  "auto_archive": false,
+                  "categories": "all",
+                  "excluded_categories": [],
+                  "running": false,
+                  "last_error": null,
+                  "baseline": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Favorites sync unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/favorites/sync/run": {
+      "post": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites Sync Run",
+        "operationId": "favorites_sync_run_api_favorites_sync_run_post",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FavoriteSyncStatus"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean"
+                        },
+                        "new": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "auto_archived": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "auto_upgraded": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-Hentai account cookies required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Favorites sync unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Run a single favorites scan. If automatic archiving is configured, a scan after the initial baseline may submit archives and spend GP."
+      }
+    },
+    "/api/rating": {
+      "post": {
+        "tags": [
+          "rating"
+        ],
+        "summary": "Rate Gallery",
+        "operationId": "rate_gallery_api_rating_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RatingRequest"
+              },
+              "examples": {
+                "rating": {
+                  "value": {
+                    "url": "https://e-hentai.org/g/12345/abcdef0123/",
+                    "rating": 4.3
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatingResponse"
+                },
+                "example": {
+                  "gid": 12345,
+                  "token": "abcdef0123",
+                  "rating": 4.5,
+                  "rating_usr": 4.5,
+                  "rating_avg": 4.1,
+                  "rating_cnt": 18
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "E-Hentai account cookies required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid gallery URL or rating",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream rating request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Api Status",
+        "operationId": "api_status_api_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "app": {
+                      "type": "object"
+                    },
+                    "site": {
+                      "type": "object"
+                    },
+                    "throttle": {
+                      "type": "object"
+                    },
+                    "circuit": {
+                      "type": "object"
+                    },
+                    "memory_cache": {
+                      "type": "object"
+                    },
+                    "disk_cache": {
+                      "type": "object"
+                    },
+                    "archive": {
+                      "type": "object"
+                    },
+                    "favorites": {
+                      "type": "object"
+                    },
+                    "home": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "example": {
+                  "app": {
+                    "config_ok": true,
+                    "config_error": null,
+                    "version": "0.2.0"
+                  },
+                  "site": {
+                    "site": "e-hentai",
+                    "host": "e-hentai.org",
+                    "http_origin": "https://e-hentai.org",
+                    "api_url": "https://api.e-hentai.org/api.php",
+                    "public_base_url": "https://catalog.example",
+                    "is_exhentai": false,
+                    "has_ipb": false
+                  },
+                  "throttle": {
+                    "html_requests": 0,
+                    "api_requests": 0,
+                    "image_requests": 0,
+                    "thumb_requests": 0,
+                    "max_concurrency": 5,
+                    "image_max_concurrency": 5,
+                    "thumb_max_concurrency": 25,
+                    "html_interval_seconds": 0.3
+                  },
+                  "circuit": {
+                    "state": "closed",
+                    "reason": null,
+                    "remaining": 0.0,
+                    "cooldown": 600.0
+                  },
+                  "memory_cache": {
+                    "size": 0,
+                    "hits": 0,
+                    "misses": 0,
+                    "max_entries": 4096
+                  },
+                  "disk_cache": {
+                    "hits": 0,
+                    "misses": 0,
+                    "entries": 0,
+                    "bytes": 0,
+                    "enabled": true
+                  },
+                  "archive": {
+                    "entries": 1,
+                    "ready": 1,
+                    "by_status": {
+                      "ready": 1
+                    },
+                    "bytes": 240,
+                    "with_metadata": 0
+                  },
+                  "favorites": {
+                    "enabled": false,
+                    "interval_seconds": 0.0,
+                    "auto_archive": false,
+                    "categories": "all",
+                    "excluded_categories": [],
+                    "running": false,
+                    "last_error": null,
+                    "known_count": 1,
+                    "archived_count": 0,
+                    "error_count": 0,
+                    "baseline": true,
+                    "last_run": 1700000000,
+                    "last_ok": true,
+                    "scanned_pages": 0
+                  },
+                  "home": {
+                    "path": "/config/home.toml",
+                    "using_file": true,
+                    "error": null,
+                    "groups": 0,
+                    "sections": 1
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Api Config",
+        "operationId": "api_config_api_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "derived": {
+                      "type": "object"
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/home": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Api Home",
+        "operationId": "api_home_api_home_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "using_file": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "sections": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "path": "/config/home.toml",
+                  "using_file": true,
+                  "error": null,
+                  "groups": [],
+                  "sections": [
+                    {
+                      "kind": "navigation",
+                      "title": "archives",
+                      "type": "preset",
+                      "query": "archives",
+                      "count": 0,
+                      "group": null,
+                      "href": "/opds/v2.0/archives",
+                      "auth_required": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cache/clear": {
+      "post": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Api Cache Clear",
+        "description": "Purge the on-disk image cache.\n\nDisk entries live up to 7 days, so stale bytes (e.g. thumbnails cached\nbefore a cover-proxy fix) need an explicit clear. Memory caches are left\nuntouched — they hold URLs/metadata and expire within minutes/hours.\nRoute is covered by Basic Auth when enabled (same as the rest of WebUI).",
+        "operationId": "api_cache_clear_api_cache_clear_post",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cleared": {
+                      "type": "integer"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "cleared": 0,
+                  "enabled": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Webui Page",
+        "operationId": "webui_page__get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "ok",
+                        "degraded"
+                      ]
+                    },
+                    "config_error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "site": {
+                      "type": "string"
+                    },
+                    "host": {
+                      "type": "string"
+                    },
+                    "public_base_url": {
+                      "type": "string"
+                    },
+                    "stats": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "example": {
+                  "status": "ok",
+                  "config_error": null,
+                  "site": "e-hentai",
+                  "host": "e-hentai.org",
+                  "public_base_url": "(relative URLs)",
+                  "stats": {}
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      },
+      "ArchiveStart": {
+        "type": "object",
+        "properties": {
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional tier. Use the quote's or code or a recognized label such as original."
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "Prepare another download even when a ready local copy exists."
+          }
+        }
+      },
+      "ArchiveOption": {
+        "type": "object",
+        "properties": {
+          "or": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "gp_price": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "unlocked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ArchiveQuote": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "gp_balance": {
+            "type": "integer"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArchiveOption"
+            }
+          },
+          "download_state": {
+            "enum": [
+              "",
+              "preparing",
+              "ready"
+            ]
+          },
+          "download_url": {
+            "type": "string"
+          }
+        }
+      },
+      "ArchiveStatus": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "absent",
+              "quoting",
+              "pending",
+              "downloading",
+              "zipping",
+              "ready",
+              "failed"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "or": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_count": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "download_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "FavoriteItem": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "pattern": "^[+-]?[0-9]+$"
+              }
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gid",
+          "token"
+        ]
+      },
+      "FavoriteWrite": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "add",
+              "move",
+              "remove"
+            ]
+          },
+          "gid": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "pattern": "^[+-]?[0-9]+$"
+              }
+            ]
+          },
+          "token": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteItem"
+            },
+            "minItems": 1,
+            "maxItems": 200
+          },
+          "favcat": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "pattern": "^[+-]?[0-9]+$"
+              }
+            ],
+            "description": "Required for add or move. Ignored for remove."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional account-side note."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "items"
+            ]
+          },
+          {
+            "required": [
+              "gid",
+              "token"
+            ]
+          }
+        ],
+        "if": {
+          "properties": {
+            "action": {
+              "enum": [
+                "add",
+                "move"
+              ]
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "favcat"
+          ]
+        }
+      },
+      "FavoriteResult": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "ok_count": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gid": {
+                  "type": "integer"
+                },
+                "token": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "FavoriteSyncStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "interval_seconds": {
+            "type": "number"
+          },
+          "auto_archive": {
+            "type": "boolean"
+          },
+          "categories": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              {
+                "const": "all"
+              }
+            ]
+          },
+          "excluded_categories": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "baseline": {
+            "type": "boolean"
+          },
+          "last_run": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "RatingRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "HTTPS gallery URL on the configured EH or EX host."
+          },
+          "rating": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 5.0,
+            "description": "Rounded to the nearest half-star, clamped to 0.5–5.0."
+          }
+        },
+        "required": [
+          "url",
+          "rating"
+        ]
+      },
+      "RatingResponse": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "number"
+          },
+          "rating_usr": {
+            "type": "number"
+          },
+          "rating_avg": {
+            "type": "number"
+          },
+          "rating_cnt": {
+            "type": "integer"
+          }
+        }
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "rel": {
+            "type": "string"
+          },
+          "href": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "templated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Publication": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "identifier": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "numberOfPages": {
+                "type": "integer"
+              }
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "readingOrder": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          }
+        }
+      },
+      "Feed": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "identifier": {
+                "type": "string"
+              }
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "navigation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "publications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Publication"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "facets": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "."
+    }
+  ],
+  "security": [
+    {
+      "basicAuth": []
+    },
+    {}
+  ]
+}

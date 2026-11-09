@@ -303,8 +303,9 @@ async def test_detail_subject_backfills_styles_from_mytags(tmp_path, monkeypatch
     r = await _get("/opds/v2.0/gallery/1/tok1")
     assert r.status_code == 200
     md = r.json()["publications"][0]["metadata"]
-    # namespace weight: language -> parody -> female, styled-first within group
+    # Category leads the namespace order, then language, parody, and female.
     assert md["subject"] == [
+        {"name": "category:Manga"},
         {
             "name": "language:chinese",
             "x:style": {
@@ -316,7 +317,6 @@ async def test_detail_subject_backfills_styles_from_mytags(tmp_path, monkeypatch
         {"name": "parody:original", "x:style": {"borderColor": "#df4646"}},
         # inline list-page style wins over the static map (never overwritten)
         {"name": "female:netorare", "x:style": {"background": "#0f0"}},
-        {"name": "category:Manga"},
     ]
     assert "mytags" not in md
 
@@ -350,12 +350,12 @@ async def test_detail_subject_wildcard_and_abbreviation_match(tmp_path, monkeypa
     r = await _get("/opds/v2.0/gallery/1/tok1")
     assert r.status_code == 200
     md = r.json()["publications"][0]["metadata"]
-    # namespace weight: parody before female before male
+    # Category leads the namespace order, then parody, female, and male.
     assert md["subject"] == [
+        {"name": "category:Manga"},
         {"name": "parody:original", "x:style": {"color": "#222222"}},
         {"name": "female:glasses", "x:style": {"color": "#111111"}},
         {"name": "male:plain"},
-        {"name": "category:Manga"},
     ]
 
 

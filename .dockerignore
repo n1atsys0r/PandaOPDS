@@ -20,6 +20,14 @@ __pycache__
 # Runtime data
 cache
 config
+archives
+*.part
+favorites_sync.json
+mytags.json
+tag_translation.json
+
+# User experiments and parity-only harnesses are not part of production images.
+experiments
 
 # Tests & docs (not needed in the image)
 tests

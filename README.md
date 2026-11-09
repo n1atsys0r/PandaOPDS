@@ -1,5 +1,7 @@
 # PandaOPDS
 
+Go 版重构分支以 Python 提交 `4d71eec` 为行为对照。并行部署、自动对照和回滚步骤见 [Go 版验收指南](docs/go-acceptance.md)。
+
 **OPDS-PSE 串流服务器**，作为 E-Hentai 的中转代理：输出 **OPDS 1.2（Atom）** 与 **OPDS 2.0（JSON）** 双版本目录 + PSE 串流链接，适用于各种支持 OPDS-PSE 流式传输的阅读器。
 
 > 本仓库仅包含中转代理逻辑，不托管任何内容。
@@ -57,6 +59,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 - **不提供 IPB cookie**：服务照常运行，公开内容（Latest / Popular / Toplist / Search）可用，仅 Watched / Favorites 导航项不输出。
 
 ## WebUI
+
+Go 版在 `/docs` 提供交互式 Swagger UI，规范位于 `/openapi.json`。两者沿用服务认证规则。页面可以试调只读接口，写接口提供请求示例。
 
 内置一个轻量管理界面，用于**查看**当前配置与运行状态（当前阶段只读，编辑能力后续迭代）：
 

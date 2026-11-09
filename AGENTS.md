@@ -6,7 +6,7 @@ PandaOPDS 是一个 **OPDS-PSE 串流服务器**，作为 E-Hentai.org 的中转
 
 - 从 E-Hentai.org 抓取数据（图库列表、图库元数据、图片），输出为 **OPDS 1.2（Atom）与 OPDS 2.0（JSON）双版本目录 + OPDS-PSE 串流链接**。严格版本路径 `/opds/v1.2` / `/opds/v2.0`，旧 `/opds` 前缀已废弃。
 - 目标客户端：**支持 OPDS-PSE 流式阅读的阅读器**，非 Mihon/Tachiyomi 插件生态（它们无 OPDS 源）。
-- 技术栈：**Python + FastAPI + uvicorn**（单进程异步）。
+- 技术栈：Go 单进程 HTTP 服务。仓库保留 **Python + FastAPI + uvicorn** 作为行为对照。
 - 部署：Docker 单机，nginx/caddy 反代，需要 `PUBLIC_BASE_URL` 支持。
 
 **现状**：主要功能已基本实现，功能随提交持续演进。
@@ -21,7 +21,9 @@ PandaOPDS/
 │       └── PLAN-2026-08-11-archived.md  # 初期实施计划（已完成归档）
 ├── deploy/            # nginx/Caddy 反代示例
 ├── Dockerfile / docker-compose.yml
-├── app/               # 服务端代码
+├── cmd/ / internal/  # Go 服务
+├── api/               # OpenAPI 契约和 Swagger UI
+├── app/               # Python 对照服务
 └── tests/             # 测试
 ```
 
@@ -387,6 +389,16 @@ FastAPI (uvicorn) 单进程
 
 ## 开发命令
 
+Go 服务及对照测试：
+
+```bash
+go test ./...
+go test -race ./...
+go run ./cmd/pandaopds
+```
+
+下面的 Python 命令用于运行行为对照。
+
 ```bash
 # 环境（Python 3.11+）
 python -m venv .venv && source .venv/bin/activate
@@ -406,7 +418,7 @@ curl -o /tmp/p1.jpg "http://localhost:8000/stream/{gid}/{token}/page/1"
 
 ## 项目约定
 
-1. **只用 Python**；示例代码（Kotlin/Dart）仅作逻辑参考，不直接搬运语法。
+1. 新服务逻辑用 Go。Python 实现保留作为迁移对照。示例代码（Kotlin/Dart）作为逻辑参考。
 2. 所有 E-Hentai 出站请求必须经过**统一的数据层 + 限流层**（禁止绕过）。
 3. 限流与缓存为第一优先级；先跑通"列表→元数据→页面URL→图片字节"闭环，再接 OPDS 层。
 4. 新会话先读本文件；初期实施计划已全部完成并归档至 `docs/plans/PLAN-2026-08-11-archived.md`，新需求直接按本文件约定推进。
