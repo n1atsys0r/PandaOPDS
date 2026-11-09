@@ -45,6 +45,16 @@ func (s *Server) builder() feed.Builder {
 	}
 	return feed.Builder{Settings: s.Settings, Translator: translator}
 }
+func (s *Server) redirectOPDS(target string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		location := s.builder().Href(target)
+		if r.URL.RawQuery != "" || r.URL.ForceQuery {
+			location += "?" + r.URL.RawQuery
+		}
+		w.Header().Set("Location", location)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}
+}
 func (s *Server) rootV12(w http.ResponseWriter, r *http.Request) {
 	b := s.builder()
 	nav := [][3]string{{"Latest", "/opds/v1.2/gallery", "Latest"}}
