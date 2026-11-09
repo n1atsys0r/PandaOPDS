@@ -107,12 +107,14 @@ func (s *Syncer) Run(ctx context.Context) (map[string]any, error) {
 	favcats := s.State.Favcats()
 	baseline := s.State.Baseline()
 	newItems := []eh.GalleryListItem{}
-	oldCount := 0
+	discovered := map[string]bool{}
+	consecutiveKnown := 0
 	pages := 0
 	cursor := ""
 	favcatNames := map[int]string{}
+scanPages:
 	for pages < s.Settings.FavoritesSyncMaxPages {
-		page, e := s.Service.Favorites(ctx, cursor, "")
+		page, e := s.Service.FavoritesSyncPage(ctx, cursor)
 		if e != nil {
 			s.mu.Lock()
 			s.lastError = e.Error()
@@ -125,22 +127,34 @@ func (s *Syncer) Run(ctx context.Context) (map[string]any, error) {
 		for id, name := range page.FavcatMap {
 			favcatNames[id] = name
 		}
+		if len(page.Galleries) == 0 {
+			break
+		}
 		for _, item := range page.Galleries {
 			k := fmt.Sprintf("%d:%s", item.GID, item.Token)
-			if known[k] {
-				oldCount++
-			} else {
-				known[k] = true
-				newItems = append(newItems, item)
-			}
 			if item.Favcat != nil {
 				favcats[k] = *item.Favcat
 			}
+			if known[k] {
+				consecutiveKnown++
+				if consecutiveKnown >= s.Settings.FavoritesSyncMatchThreshold {
+					break scanPages
+				}
+				continue
+			}
+			consecutiveKnown = 0
+			if !discovered[k] {
+				discovered[k] = true
+				newItems = append(newItems, item)
+			}
 		}
-		if page.NextGID == "" || oldCount >= s.Settings.FavoritesSyncMatchThreshold {
+		if page.NextGID == "" {
 			break
 		}
 		cursor = page.NextGID
+	}
+	for key := range discovered {
+		known[key] = true
 	}
 	isBaseline := !baseline
 	newArchived := map[string]bool{}

@@ -207,6 +207,24 @@ func (s *Service) Favorites(ctx context.Context, next string, favcat string) (Ga
 	}
 	return s.GetList(ctx, query, next, extra, false)
 }
+
+// FavoritesSyncPage fetches the favorite-time-ordered list used by the
+// incremental syncer. It deliberately bypasses the browsing list cache and
+// fixes the upstream Extended layout without changing ordinary favorites
+// browsing behavior.
+func (s *Service) FavoritesSyncPage(ctx context.Context, next string) (GalleryPageInfo, error) {
+	params := url.Values{"inline_set": {"fs_f dm_e"}}
+	if next != "" {
+		params.Set("next", next)
+	}
+	target := s.Client.BaseURL() + "/favorites.php?" + params.Encode()
+	raw, _, err := s.Client.Get(ctx, target, KindHTML)
+	if err != nil {
+		return GalleryPageInfo{}, err
+	}
+	return ParseListPage(string(raw))
+}
+
 func (s *Service) Toplist(ctx context.Context, period string, page int) (GalleryPageInfo, error) {
 	key := fmt.Sprintf("toplist:%s:%d", period, page)
 	s.mu.Lock()
