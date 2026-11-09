@@ -24,30 +24,33 @@ import (
 	"time"
 
 	_ "golang.org/x/image/webp"
+	"golang.org/x/sync/singleflight"
 	"pandaopds/internal/config"
 )
 
 type Service struct {
-	Settings   config.Settings
-	Client     *Client
-	Throttle   *Throttle
-	mu         sync.Mutex
-	lists      map[string]cached[GalleryPageInfo]
-	cover      map[string]cached[string]
-	pages      map[string]cached[[]Thumbnail]
-	details    map[string]cached[DetailPageInfo]
-	imgPages   map[string]cached[ImagePageInfo]
-	metadata   map[string]cached[GalleryMetadata]
-	categories map[string]cached[map[int]string]
-	locks      map[string]*sync.Mutex
-	listLocks  map[string]*contextMutex
-	disk       *DiskCache
-	started    time.Time
-	archive    ArchiveReader
-	myTags     map[string]map[string]string
-	myTagsAt   time.Time
-	myTagsSeen bool
-	translator *TagTranslator
+	Settings     config.Settings
+	Client       *Client
+	Throttle     *Throttle
+	mu           sync.Mutex
+	lists        map[string]cached[GalleryPageInfo]
+	cover        map[string]cached[string]
+	pages        map[string]cached[[]Thumbnail]
+	details      map[string]cached[DetailPageInfo]
+	imgPages     map[string]cached[ImagePageInfo]
+	metadata     map[string]cached[GalleryMetadata]
+	categories   map[string]cached[map[int]string]
+	locks        map[string]*sync.Mutex
+	listLocks    map[string]*contextMutex
+	detailFlight singleflight.Group
+	thumbFlight  singleflight.Group
+	disk         *DiskCache
+	started      time.Time
+	archive      ArchiveReader
+	myTags       map[string]map[string]string
+	myTagsAt     time.Time
+	myTagsSeen   bool
+	translator   *TagTranslator
 }
 
 // ArchiveReader is implemented by the persistent archive store. Keeping this
@@ -444,28 +447,85 @@ func (s *Service) getDetailPage(ctx context.Context, gid int, token string, inde
 		return v, nil
 	}
 	s.mu.Unlock()
-	u := s.Client.GalleryURL(gid, token)
-	parsed, _ := url.Parse(u)
-	q := parsed.Query()
-	q.Set("p", fmt.Sprint(index))
-	q.Set("inline_set", "dm_e")
-	parsed.RawQuery = q.Encode()
-	raw, _, err := s.Client.Get(ctx, parsed.String(), KindHTML)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return DetailPageInfo{}, err
 	}
-	d, err := ParseDetailPage(string(raw), s.Settings.SiteHost(), index)
-	if err != nil {
-		return d, err
+	resultCh := s.detailFlight.DoChan(key, func() (value any, err error) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				value = nil
+				err = fmt.Errorf("detail page worker panic: %v", recovered)
+			}
+		}()
+		workerCtx, cancel := s.sharedRequestContext(ctx)
+		defer cancel()
+		s.mu.Lock()
+		if v, ok := lookup(s.details, key); ok {
+			s.mu.Unlock()
+			return v, nil
+		}
+		s.mu.Unlock()
+		if err := workerCtx.Err(); err != nil {
+			return nil, err
+		}
+		u := s.Client.GalleryURL(gid, token)
+		parsed, _ := url.Parse(u)
+		q := parsed.Query()
+		q.Set("p", fmt.Sprint(index))
+		q.Set("inline_set", "dm_e")
+		parsed.RawQuery = q.Encode()
+		raw, _, err := s.Client.Get(workerCtx, parsed.String(), KindHTML)
+		if err != nil {
+			return nil, err
+		}
+		d, err := ParseDetailPage(string(raw), s.Settings.SiteHost(), index)
+		if err != nil {
+			return d, err
+		}
+		s.mu.Lock()
+		put(s.details, key, d, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
+		put(s.pages, fmt.Sprintf("%d:%s", gid, token), d.Thumbnails, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
+		if d.CoverURL != "" {
+			put(s.cover, fmt.Sprintf("%d:%s", gid, token), d.CoverURL, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
+		}
+		s.mu.Unlock()
+		return d, nil
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return DetailPageInfo{}, result.Err
+		}
+		d, ok := result.Val.(DetailPageInfo)
+		if !ok {
+			return DetailPageInfo{}, errors.New("detail page worker returned an invalid result")
+		}
+		return d, nil
+	case <-ctx.Done():
+		return DetailPageInfo{}, ctx.Err()
 	}
-	s.mu.Lock()
-	put(s.details, key, d, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
-	put(s.pages, fmt.Sprintf("%d:%s", gid, token), d.Thumbnails, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
-	if d.CoverURL != "" {
-		put(s.cover, fmt.Sprintf("%d:%s", gid, token), d.CoverURL, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
+}
+
+const maxSharedRequestTimeout = 10 * time.Minute
+
+func (s *Service) sharedRequestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	seconds := s.Settings.TimeoutSeconds
+	if seconds <= 0 {
+		seconds = 6
 	}
-	s.mu.Unlock()
-	return d, nil
+	retries := max(0, s.Settings.Retries)
+	budget := time.Duration((seconds*float64(retries+1) + float64(retries)*0.5) * float64(time.Second))
+	// Detail-page requests may establish a session before fetching the page.
+	// Leave room for both operations while retaining a hard ceiling for a stuck
+	// shared worker after every waiter has left.
+	budget *= 2
+	if budget < 30*time.Second {
+		budget = 30 * time.Second
+	}
+	if budget > maxSharedRequestTimeout {
+		budget = maxSharedRequestTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), budget)
 }
 
 func detailPageCacheKey(gid int, token string, pageIndex int) string {
@@ -704,22 +764,71 @@ func (s *Service) GetPageThumbnail(ctx context.Context, gid int, token string, p
 	if width > 2000 || height > 2000 {
 		return nil, "", errors.New("thumbnail dimensions are missing or unsafe")
 	}
-	b, _, e := s.Client.Get(ctx, thumb.ThumbURL, KindThumb)
-	if e != nil {
-		return nil, "", e
-	}
 	var crop *image.Rectangle
 	if geometry {
 		left, top := int(math.Round(-*thumb.BackgroundX)), int(math.Round(-*thumb.BackgroundY))
 		r := image.Rect(left, top, left+width, top+height)
 		crop = &r
 	}
-	preview, e := renderJPEGPreview(b, crop, width, height)
+	img, e := s.getThumbnailSource(ctx, thumb.ThumbURL)
+	if e != nil {
+		return nil, "", e
+	}
+	preview, e := renderJPEGPreviewImage(img, crop, width, height)
 	if e != nil {
 		return nil, "", fmt.Errorf("cannot decode page thumbnail: %w", e)
 	}
 	s.disk.Put(previewKey, preview)
 	return preview, "image/jpeg", nil
+}
+
+func (s *Service) getThumbnailSource(ctx context.Context, sourceURL string) (image.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	key := "thumb-url:" + sourceURL
+	resultCh := s.thumbFlight.DoChan(sourceURL, func() (value any, err error) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				value = nil
+				err = fmt.Errorf("thumbnail source worker panic: %v", recovered)
+			}
+		}()
+		workerCtx, cancel := s.sharedRequestContext(ctx)
+		defer cancel()
+		if source, ok := s.disk.Get(key); ok {
+			if img, _, decodeErr := image.Decode(bytes.NewReader(source)); decodeErr == nil {
+				return img, nil
+			}
+			s.disk.Delete(key)
+		}
+		if err := workerCtx.Err(); err != nil {
+			return nil, err
+		}
+		source, _, err := s.Client.Get(workerCtx, sourceURL, KindThumb)
+		if err != nil {
+			return nil, err
+		}
+		img, _, decodeErr := image.Decode(bytes.NewReader(source))
+		if decodeErr != nil {
+			return nil, fmt.Errorf("cannot decode page thumbnail: %w", decodeErr)
+		}
+		s.disk.Put(key, source)
+		return img, nil
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		img, ok := result.Val.(image.Image)
+		if !ok {
+			return nil, errors.New("thumbnail source worker returned an invalid result")
+		}
+		return img, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func detectImageType(data []byte) string {
@@ -749,6 +858,10 @@ func renderJPEGPreview(source []byte, crop *image.Rectangle, maxWidth, maxHeight
 	if err != nil {
 		return nil, err
 	}
+	return renderJPEGPreviewImage(img, crop, maxWidth, maxHeight)
+}
+
+func renderJPEGPreviewImage(img image.Image, crop *image.Rectangle, maxWidth, maxHeight int) ([]byte, error) {
 	if crop != nil {
 		bounds := img.Bounds()
 		requested := crop.Add(bounds.Min)

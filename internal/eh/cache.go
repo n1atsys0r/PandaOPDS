@@ -91,6 +91,14 @@ func (d *DiskCache) Put(key string, b []byte) {
 	d.mu.Unlock()
 	d.prune()
 }
+func (d *DiskCache) Delete(key string) {
+	if !d.enabled {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_ = os.Remove(d.path(key))
+}
 func (d *DiskCache) Clear() error {
 	if !d.enabled {
 		return nil
