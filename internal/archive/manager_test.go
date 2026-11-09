@@ -62,7 +62,7 @@ func TestParseArchiverPricesAreScopedPerTier(t *testing.T) {
 }
 
 func TestConvert7zToZIP(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "tests", "go", "testdata", "archive-sample.7z"))
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "tests", "go", "testdata", "archive-sample-release.7z"))
 	if err != nil {
 		t.Fatal(err)
 	}
