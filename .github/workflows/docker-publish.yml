@@ -2,6 +2,7 @@
 #
 # Triggers:
 #   - push to `main`          → tags: latest, sha-<short>
+#   - push to `refactor/pandaopds-go` → tags: test, sha-<short> (never latest)
 #   - push tag `v*`           → tags: vX.Y.Z, vX.Y, vX
 #   - manual (workflow_dispatch)
 #
@@ -12,7 +13,7 @@ name: Publish Docker image
 
 on:
   push:
-    branches: [main]
+    branches: [main, "refactor/pandaopds-go"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -49,8 +50,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=auto
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=test,enable=${{ github.ref == 'refs/heads/refactor/pandaopds-go' }}
             type=sha,prefix=sha-
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
