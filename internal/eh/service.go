@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	_ "golang.org/x/image/webp"
 	"pandaopds/internal/config"
 )
 
