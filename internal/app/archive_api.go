@@ -17,17 +17,18 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 	}
 	enriched := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
-		gid := fmt.Sprint(entry["gid"])
+		gid := gidInt(entry["gid"])
+		gidText := fmt.Sprint(gid)
 		token := fmt.Sprint(entry["token"])
-		key := gid + ":" + token
-		snapshot, _ := s.Archives.Metadata(gidInt(entry["gid"]), token)
+		key := gidText + ":" + token
+		snapshot, _ := s.Archives.Metadata(gid, token)
 		var meta any
 		if snapshot != nil {
 			meta = map[string]any{"title": snapshot["title"], "title_jpn": snapshot["title_jpn"], "category": snapshot["category"], "rating": snapshot["rating"], "filecount": snapshot["filecount"], "filesize": snapshot["filesize"], "posted": snapshot["posted"], "uploader": snapshot["uploader"], "expunged": snapshot["expunged"], "torrentcount": snapshot["torrentcount"], "tags": snapshot["tags"], "thumb": snapshot["thumb"]}
 		}
 		var cover any
-		if _, ok := s.Archives.Cover(gidInt(entry["gid"]), token); ok {
-			cover = fmt.Sprintf("/api/archive/%s/%s/cover", gid, token)
+		if _, ok := s.Archives.Cover(gid, token); ok {
+			cover = fmt.Sprintf("/api/archive/%s/%s/cover", gidText, token)
 		}
 		var favcat any
 		var favcatName any

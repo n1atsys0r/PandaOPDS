@@ -55,6 +55,18 @@ func TestParseExtendedListRowsUseSiblingMetadataCell(t *testing.T) {
 	}
 }
 
+func TestParseListPageKeepsLooseGenericRowFallback(t *testing.T) {
+	page := `<html><body><div class="gl1e"><a href="/g/9/abcdef/"><div class="glink">Legacy title</div></a>
+		<div class="cn">Doujinshi</div><img src="/legacy-cover.jpg">12 pages</div></body></html>`
+	info, err := ParseListPage(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Galleries) != 1 || info.Galleries[0].Title != "Legacy title" || info.Galleries[0].Category != "Doujinshi" || info.Galleries[0].CoverURL != "/legacy-cover.jpg" || info.Galleries[0].PageCount == nil || *info.Galleries[0].PageCount != 12 {
+		t.Fatalf("generic fallback item=%#v", info.Galleries)
+	}
+}
+
 func TestParseDetailPageCommentsAndMyTags(t *testing.T) {
 	page := `<!doctype html><html><body>
 	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:transparent url(https://ehgt.org/t/thumb.jpg) no-repeat;width:100px;height:100px"></div></a></div></div>
