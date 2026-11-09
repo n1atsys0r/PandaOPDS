@@ -698,10 +698,13 @@ func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, 
 		if err != nil {
 			return nil, "", err
 		}
-		if len(d.Thumbnails) == 0 {
+		if d.CoverURL != "" {
+			u = d.CoverURL
+		} else if len(d.Thumbnails) > 0 {
+			u = d.Thumbnails[0].ThumbURL
+		} else {
 			return nil, "", errors.New("gallery has no thumbnail")
 		}
-		u = d.Thumbnails[0].ThumbURL
 	}
 	data, _, e := s.Client.Get(ctx, u, KindThumb)
 	if e != nil {

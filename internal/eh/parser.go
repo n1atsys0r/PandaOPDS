@@ -309,7 +309,18 @@ func ParseListPage(src string) (GalleryPageInfo, error) {
 	}
 	// Ranklists use a `?p=` next link in the final cell of .ptt.
 	if out.NextGID == "" {
-		if tr := first(doc, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && classHas(n, "ptt") && n.Data == "tr" }); tr != nil {
+		tr := first(doc, func(n *xhtml.Node) bool {
+			if n.Type != xhtml.ElementNode || n.Data != "tr" {
+				return false
+			}
+			for parent := n.Parent; parent != nil; parent = parent.Parent {
+				if parent.Type == xhtml.ElementNode && classHas(parent, "ptt") {
+					return true
+				}
+			}
+			return false
+		})
+		if tr != nil {
 			tds := childrenNamed(tr, "td")
 			if len(tds) > 0 {
 				if a := first(tds[len(tds)-1], func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "a" }); a != nil {
