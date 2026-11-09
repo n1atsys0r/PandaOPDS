@@ -172,11 +172,14 @@ func ParseListPage(src string) (GalleryPageInfo, error) {
 		if !ok {
 			continue
 		}
-		var row = a
-		for p := 0; p < 8 && row.Parent != nil; p++ {
-			row = row.Parent
-			if row.Type == xhtml.ElementNode && (classHas(row, "gl1e") || classHas(row, "gl1t") || classHas(row, "gl1c") || classHas(row, "gl1m") || classHas(row, "gl1")) {
-				break
+		row, view, knownLayout := knownListRow(a)
+		if !knownLayout {
+			row = a
+			for p := 0; p < 8 && row.Parent != nil; p++ {
+				row = row.Parent
+				if row.Type == xhtml.ElementNode && (classHas(row, "gl1e") || classHas(row, "gl1t") || classHas(row, "gl1c") || classHas(row, "gl1m") || classHas(row, "gl1")) {
+					break
+				}
 			}
 		}
 		if row == nil {
@@ -228,11 +231,26 @@ func ParseListPage(src string) (GalleryPageInfo, error) {
 				item.Rating = math.Max(0, 5-float64(-x)/16-float64(boolInt(y == -21))*.5)
 			}
 		}
-		for _, t := range all(row, func(n *xhtml.Node) bool {
+		tagNodes := all(row, func(n *xhtml.Node) bool {
 			return n.Type == xhtml.ElementNode && attr(n, "title") != "" && (classHas(n, "gt") || classHas(n, "gtl") || classHas(n, "gtw"))
-		}) {
+		})
+		if knownLayout && view == "extended" {
+			if name := first(row, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && classHas(n, "glname") }); name != nil {
+				children := childrenNamed(name, "div")
+				if len(children) > 1 {
+					scoped := all(children[1], func(n *xhtml.Node) bool {
+						return n.Type == xhtml.ElementNode && n.Data == "div" && attr(n, "title") != ""
+					})
+					if len(scoped) > 0 {
+						tagNodes = scoped
+					}
+				}
+			}
+		}
+		for _, t := range tagNodes {
 			item.Tags = append(item.Tags, tagFrom(t, attr(t, "title")))
 		}
+		item.Language = languageFromTags(item.Tags)
 		for _, link := range all(row, func(n *xhtml.Node) bool {
 			return n.Type == xhtml.ElementNode && n.Data == "a" && strings.Contains(attr(n, "href"), "/uploader/")
 		}) {
@@ -258,9 +276,12 @@ func ParseListPage(src string) (GalleryPageInfo, error) {
 				}
 			}
 		}
-		for range all(row, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "s" }) {
+		checkExpunged := row
+		if knownLayout {
+			checkExpunged = first(row, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && classHas(n, "glink") })
+		}
+		if first(checkExpunged, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "s" }) != nil {
 			item.Expunged = true
-			break
 		}
 		out.Galleries = append(out.Galleries, item)
 	}
@@ -304,6 +325,43 @@ func ParseListPage(src string) (GalleryPageInfo, error) {
 	}
 	return out, nil
 }
+
+func knownListRow(anchor *xhtml.Node) (*xhtml.Node, string, bool) {
+	for n := anchor; n != nil; n = n.Parent {
+		if n.Type != xhtml.ElementNode || n.Data != "tr" {
+			continue
+		}
+		p := n.Parent
+		if p != nil && p.Type == xhtml.ElementNode && (p.Data == "tbody" || p.Data == "thead" || p.Data == "tfoot") {
+			p = p.Parent
+		}
+		if p == nil || p.Type != xhtml.ElementNode || p.Data != "table" || !classHas(p, "itg") {
+			continue
+		}
+		switch {
+		case classHas(p, "gltc"):
+			return n, "compact", true
+		case classHas(p, "glte"):
+			return n, "extended", true
+		case classHas(p, "gltm"):
+			return n, "minimal", true
+		}
+	}
+	for p := anchor; p != nil; p = p.Parent {
+		if p.Type != xhtml.ElementNode || p.Data != "table" || !classHas(p, "itg") || !classHas(p, "gld") {
+			continue
+		}
+		row := anchor
+		for row.Parent != nil && row.Parent != p {
+			row = row.Parent
+		}
+		if row.Parent == p && row.Type == xhtml.ElementNode && row.Data == "div" {
+			return row, "thumbnail", true
+		}
+	}
+	return nil, "", false
+}
+
 func duplicateGID(items []GalleryListItem, gid int) bool {
 	for _, x := range items {
 		if x.GID == gid {
@@ -751,7 +809,8 @@ func ParseGData(body []byte) ([]GalleryMetadata, error) {
 func ParseFavoritesCategories(src string) map[int]string {
 	doc, _ := parseDoc(src)
 	out := map[int]string{}
-	for _, fp := range all(doc, func(n *xhtml.Node) bool {
+	container := first(doc, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && classHas(n, "nosel") })
+	for _, fp := range all(container, func(n *xhtml.Node) bool {
 		return n.Type == xhtml.ElementNode && classHas(n, "fp") && attr(n, "onclick") != ""
 	}) {
 		m := regexp.MustCompile(`favcat=(\d+)`).FindStringSubmatch(attr(fp, "onclick"))

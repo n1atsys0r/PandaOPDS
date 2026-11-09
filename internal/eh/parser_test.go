@@ -2,6 +2,59 @@ package eh
 
 import "testing"
 
+const extendedSiblingCellListHTML = `<!doctype html><html><body>
+<div class="nosel"><div class="fp" onclick="popUp('/gallerypopups.php?favcat=1')"><div>1</div><div>Favorite</div><div>Common</div></div></div>
+<table class="itg glte"><tr>
+  <td class="gl1e"><div><a href="https://e-hentai.org/g/42/abcd/"><img data-src="https://ehgt.org/test-cover.webp" src="placeholder.gif"></a></div></td>
+  <td class="gl2e"><div>
+    <div class="gl3e"><div class="cn">Manga</div><div id="posted_42" title="Common">2026-08-11 12:34</div>
+      <div class="ir" style="background-position:-16px -21px"></div>
+      <div><a href="https://e-hentai.org/uploader/fixture">Fixture Uploader</a></div>
+      <div>42 pages</div><div>0 torrents</div>
+    </div>
+    <a href="https://e-hentai.org/g/42/abcd/"><div class="gl4e glname">
+      <div class="glink"><s>Fixture Manga</s></div><div><table><tr><td>
+        <div class="gt" title="language:japanese">japanese</div>
+        <div class="gtl" title="female:sample tag" style="color:#FFFFFF;border-color:#FFFFFF;background:#000000 !important">sample tag</div>
+      </td></tr></table></div>
+    </div></a>
+  </div></td>
+</tr></table>
+<a href="/?next=42-1786365950" id="unext">Next</a>
+</body></html>`
+
+func TestParseExtendedListRowsUseSiblingMetadataCell(t *testing.T) {
+	info, err := ParseListPage(extendedSiblingCellListHTML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Galleries) != 1 {
+		t.Fatalf("gallery count=%d, want one", len(info.Galleries))
+	}
+	g := info.Galleries[0]
+	if g.GID != 42 || g.Token != "abcd" || g.Title != "Fixture Manga" || g.Category != "Manga" {
+		t.Fatalf("identity/title/category=%#v", g)
+	}
+	if g.CoverURL != "https://ehgt.org/test-cover.webp" || g.PageCount == nil || *g.PageCount != 42 {
+		t.Fatalf("cover/page_count=%q/%v", g.CoverURL, g.PageCount)
+	}
+	if g.Rating != 3.5 || g.PublishTime != "2026-08-11 12:34" || g.Uploader != "Fixture Uploader" || g.Language != "ja" {
+		t.Fatalf("extra metadata rating=%v posted=%q uploader=%q language=%q", g.Rating, g.PublishTime, g.Uploader, g.Language)
+	}
+	if g.Favcat == nil || *g.Favcat != 1 || !g.Expunged {
+		t.Fatalf("favcat/expunged=%v/%v", g.Favcat, g.Expunged)
+	}
+	if len(g.Tags) != 2 || g.Tags[0].String() != "language:japanese" || g.Tags[1].String() != "female:sample tag" {
+		t.Fatalf("tags=%#v", g.Tags)
+	}
+	if g.Tags[1].Status != "skepticism" || g.Tags[1].Style["color"] != "#FFFFFF" || g.Tags[1].Style["borderColor"] != "#FFFFFF" || g.Tags[1].Style["background"] != "#000000" {
+		t.Fatalf("tag status/style=%#v", g.Tags[1])
+	}
+	if info.NextGID != "42-1786365950" {
+		t.Fatalf("compound next cursor=%q", info.NextGID)
+	}
+}
+
 func TestParseDetailPageCommentsAndMyTags(t *testing.T) {
 	page := `<!doctype html><html><body>
 	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:transparent url(https://ehgt.org/t/thumb.jpg) no-repeat;width:100px;height:100px"></div></a></div></div>

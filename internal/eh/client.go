@@ -93,18 +93,53 @@ func (c *Client) ensureProfile(ctx context.Context) error {
 		return nil
 	}
 	doc, _ := parseDoc(string(body))
-	for _, opt := range all(doc, func(n *xhtml.Node) bool {
-		return n.Type == xhtml.ElementNode && n.Data == "option" && strings.TrimSpace(nodeText(n)) == c.cfg.EHProfile
+	profileForm := findID(doc, "profile_form")
+	optionRoot := doc
+	if profileForm != nil {
+		optionRoot = profileForm
+	}
+	postHeaders := map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Referer": u}
+	for _, opt := range all(optionRoot, func(n *xhtml.Node) bool {
+		return n.Type == xhtml.ElementNode && n.Data == "option"
 	}) {
-		id := attr(opt, "value")
-		if id != "" {
-			_, _, _ = c.request(ctx, http.MethodPost, u, []byte(url.Values{"profile_set": {id}}.Encode()), KindHTML, map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, false)
-			return nil
+		if optionText, ok := profileOptionText(opt); !ok || optionText != c.cfg.EHProfile {
+			continue
 		}
+		id := attr(opt, "value")
+		if !decimalString(id) {
+			continue
+		}
+		_, _, _ = c.request(ctx, http.MethodPost, u, []byte(url.Values{"profile_set": {id}}.Encode()), KindHTML, postHeaders, false)
+		return nil
 	}
 	form := url.Values{"profile_action": {"create"}, "profile_name": {c.cfg.EHProfile}, "profile_set": {"616"}}
-	_, _, _ = c.request(ctx, http.MethodPost, u, []byte(form.Encode()), KindHTML, map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, false)
+	_, _, _ = c.request(ctx, http.MethodPost, u, []byte(form.Encode()), KindHTML, postHeaders, false)
 	return nil
+}
+
+func profileOptionText(option *xhtml.Node) (string, bool) {
+	var text strings.Builder
+	for child := option.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == xhtml.ElementNode {
+			return "", false
+		}
+		if child.Type == xhtml.TextNode {
+			text.WriteString(child.Data)
+		}
+	}
+	return strings.TrimSpace(text.String()), true
+}
+
+func decimalString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 func (c *Client) request(ctx context.Context, method, target string, body []byte, kind RequestKind, headers map[string]string, establish bool) ([]byte, http.Header, error) {
 	return c.requestRetries(ctx, method, target, body, kind, headers, establish, c.cfg.Retries)
@@ -345,7 +380,6 @@ func (c *Client) ListURL(query, next string, extra url.Values) string {
 	}
 	u, _ := url.Parse(host + p)
 	q := u.Query()
-	q.Set("inline_set", "dm_e")
 	if query != "popular" && query != "watched" && query != "favorites" && query != "" {
 		q.Set("f_search", query)
 	}
@@ -357,6 +391,7 @@ func (c *Client) ListURL(query, next string, extra url.Values) string {
 			q.Add(k, v)
 		}
 	}
+	q.Set("inline_set", "dm_e")
 	u.RawQuery = q.Encode()
 	return u.String()
 }

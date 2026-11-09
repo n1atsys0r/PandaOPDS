@@ -91,6 +91,37 @@ func TestCanceledSessionLockWaitDoesNotDispatchUpstream(t *testing.T) {
 	}
 }
 
+func TestExtendedListReplayParsesMetadataWithoutDetailOrGData(t *testing.T) {
+	var requests []*http.Request
+	cfg := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, ListCacheTTLSeconds: 60, CacheDir: t.TempDir()}
+	service := NewService(cfg, replayRoundTripper(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.Clone(r.Context()))
+		if r.URL.Path != "/" {
+			return replayResponse(r, http.StatusNotFound, "unexpected request"), nil
+		}
+		return replayResponse(r, http.StatusOK, extendedSiblingCellListHTML), nil
+	}))
+	service.Client.sessionReady = true
+	defer service.Close()
+	page, err := service.Search(context.Background(), "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0].URL.Path != "/" {
+		t.Fatalf("list replay made requests: %#v", requests)
+	}
+	if got := requests[0].URL.Query()["inline_set"]; len(got) != 1 || got[0] != "dm_e" {
+		t.Fatalf("request inline_set=%v, want one dm_e", got)
+	}
+	if len(page.Galleries) != 1 {
+		t.Fatalf("galleries=%d, want one", len(page.Galleries))
+	}
+	g := page.Galleries[0]
+	if g.Title != "Fixture Manga" || g.Category != "Manga" || g.PageCount == nil || *g.PageCount != 42 || g.Language != "ja" || g.Uploader != "Fixture Uploader" {
+		t.Fatalf("parsed list item=%#v", g)
+	}
+}
+
 func Test509ImagePlaceholderTripsCircuitBeforeCDNFetch(t *testing.T) {
 	var detailRequests, sRequests, cdnRequests int
 	cfg := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, ImageSourceRetries: 0, PageURLTTLSeconds: 60, CacheDir: t.TempDir(), ImageCacheEnabled: false, ExceedCooldownSeconds: 60, PSEPageBase: 1}
