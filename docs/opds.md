@@ -15,6 +15,8 @@ OPDS-PSE stream link 使用 PSE stream 关系、`image/jpeg` 类型、页数以�
 
 v1.2 根导航固定由服务端提供，不读取 `HOME_CONFIG`。v2.0 根导航可由 `HOME_CONFIG` 指向的 TOML 调整分组与区块；文件缺失时用内置默认布局，配置解析失败时回退默认值。Watched/Favorites 入口依赖成对配置的登录 cookie。两版的 Archives shelf 均只列出本地 ready 归档，按页浏览，不请求上游；没有 ready 条目时根导航中的入口隐藏。归档 shelf 的列表元数据来自本地归档信息/快照，阅读仍可使用本地 zip。
 
+Favorites 列表在 OPDS 1.2 与 2.0 中提供 Favorite category facets：All 不带 `favcat`，`favcat=0`–`9` 对应账户自定义收藏夹，显示名称取自上游收藏夹目录。v2.0 也继续接受旧式 `query=favorites:N`，新 facet 链接使用 `query=favorites&favcat=N`。
+
 ## 搜索、分类与翻译
 
 两版均提供搜索入口和分页；gallery 使用不透明的上游 `next` 游标，Toplist 使用 `page`。v2.0 的 category facets 由 `FACETS` 生成，搜索文本中的受支持分类表达式也会转换为分类过滤。高级搜索支持 `rating:1`–`rating:5`、`expunged`、`nohide:uploader|language|tags|all`，命中时自动开启 EH advanced search；双引号内的文本不解析为扩展词。非法扩展值静默移除，其他 EH 搜索语法照常透传。

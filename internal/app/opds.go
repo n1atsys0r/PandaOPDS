@@ -38,6 +38,49 @@ type homePreviewDone struct {
 }
 
 func quote(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") }
+
+func favoriteFacetPath(route, favcat string) string {
+	values := url.Values{"query": {"favorites"}}
+	if favcat != "" {
+		values.Set("favcat", favcat)
+	}
+	return route + "?" + values.Encode()
+}
+
+func favoriteFacetTitle(names map[int]string, id int) string {
+	if name := strings.TrimSpace(names[id]); name != "" {
+		return name
+	}
+	return fmt.Sprintf("Favorites %d", id)
+}
+
+func favoriteAtomFacets(builder feed.Builder, route, selected string, names map[int]string) []feed.AtomFacet {
+	facets := []feed.AtomFacet{{Title: "All", Href: builder.Href(favoriteFacetPath(route, "")), Group: "Favorite category", Active: selected == ""}}
+	for id := 0; id < 10; id++ {
+		value := strconv.Itoa(id)
+		facets = append(facets, feed.AtomFacet{Title: favoriteFacetTitle(names, id), Href: builder.Href(favoriteFacetPath(route, value)), Group: "Favorite category", Active: selected == value})
+	}
+	return facets
+}
+
+func favoriteJSONFacets(builder feed.Builder, route, selected string, names map[int]string) []map[string]any {
+	links := []map[string]any{}
+	for id := -1; id < 10; id++ {
+		favcat := ""
+		title := "All"
+		if id >= 0 {
+			favcat = strconv.Itoa(id)
+			title = favoriteFacetTitle(names, id)
+		}
+		link := map[string]any{"href": builder.Href(favoriteFacetPath(route, favcat)), "title": title}
+		if selected == favcat {
+			link["rel"] = "self"
+		}
+		links = append(links, link)
+	}
+	return []map[string]any{{"metadata": map[string]string{"title": "Favorite category"}, "links": links}}
+}
+
 func (s *Server) builder() feed.Builder {
 	var translator feed.SubjectTranslator
 	if s.Service != nil {
@@ -74,6 +117,14 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := q.Get("query")
 	next := q.Get("next")
+	favcat := q.Get("favcat")
+	if query == "favorites" && favcat != "" {
+		id, err := strconv.Atoi(favcat)
+		if err != nil || id < 0 || id > 9 {
+			writeJSON(w, 400, map[string]any{"detail": "unknown favorites folder (expected favcat 0-9)"})
+			return
+		}
+	}
 	if next != "" && !cursorRE.MatchString(next) {
 		writeJSON(w, 400, map[string]any{"detail": "invalid next cursor (expected digits or gid-favtime)"})
 		return
@@ -87,7 +138,7 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	case "watched":
 		info, e = s.Service.Watched(ctx, next)
 	case "favorites":
-		info, e = s.Service.Favorites(ctx, next, "")
+		info, e = s.Service.Favorites(ctx, next, favcat)
 	default:
 		info, e = s.Service.Search(ctx, query, next, nil)
 	}
@@ -114,8 +165,15 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 		if query != "" {
 			nextHref += "&query=" + quote(query)
 		}
+		if query == "favorites" && favcat != "" {
+			nextHref += "&favcat=" + quote(favcat)
+		}
 	}
-	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(info.Galleries, title, query, query, nextHref, nil)))
+	var facets []feed.AtomFacet
+	if query == "favorites" {
+		facets = favoriteAtomFacets(s.builder(), "/opds/v1.2/gallery", favcat, info.FavcatMap)
+	}
+	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(info.Galleries, title, query, query, nextHref, facets)))
 }
 func (s *Server) toplist12(w http.ResponseWriter, r *http.Request) {
 	period := r.URL.Query().Get("period")
@@ -140,9 +198,9 @@ func (s *Server) toplist12(w http.ResponseWriter, r *http.Request) {
 	if info.NextPage != nil {
 		next = s.builder().Href(fmt.Sprintf("/opds/v1.2/toplist?period=%s&page=%d", period, *info.NextPage))
 	}
-	facets := [][3]string{}
+	facets := []feed.AtomFacet{}
 	for p, label := range periods {
-		facets = append(facets, [3]string{label, s.builder().Href("/opds/v1.2/toplist?period=" + p), fmt.Sprint(p == period)})
+		facets = append(facets, feed.AtomFacet{Title: label, Href: s.builder().Href("/opds/v1.2/toplist?period=" + p), Group: "period", Active: p == period})
 	}
 	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(info.Galleries, title, "toplist:"+period, "", next, facets)))
 }
@@ -182,7 +240,7 @@ func (s *Server) searchXML20(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	query, next, category := q.Get("query"), q.Get("next"), q.Get("category")
+	query, next, category, favcat := q.Get("query"), q.Get("next"), q.Get("category"), q.Get("favcat")
 	if next != "" && !cursorRE.MatchString(next) {
 		writeJSON(w, 400, map[string]any{"detail": "invalid next cursor (expected digits or gid-favtime)"})
 		return
@@ -205,11 +263,21 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	case query == "watched":
 		info, e = s.Service.Watched(ctx, next)
 	case query == "favorites" || strings.HasPrefix(query, "favorites:"):
-		cat := ""
+		cat := favcat
 		if strings.HasPrefix(query, "favorites:") {
-			cat = strings.TrimPrefix(query, "favorites:")
-			if !regexp.MustCompile(`^\d+$`).MatchString(cat) {
-				writeJSON(w, 400, map[string]any{"detail": fmt.Sprintf("unknown favorites folder %q (expected favorites or favorites:N)", cat)})
+			legacy := strings.TrimPrefix(query, "favorites:")
+			if !regexp.MustCompile(`^\d+$`).MatchString(legacy) {
+				writeJSON(w, 400, map[string]any{"detail": fmt.Sprintf("unknown favorites folder %q (expected favorites or favorites:N)", legacy)})
+				return
+			}
+			if cat == "" {
+				cat = legacy
+			}
+		}
+		if cat != "" {
+			id, err := strconv.Atoi(cat)
+			if err != nil || id < 0 || id > 9 {
+				writeJSON(w, 400, map[string]any{"detail": "unknown favorites folder (expected favcat 0-9)"})
 				return
 			}
 		}
@@ -243,8 +311,20 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	if info.NextGID != "" {
 		nextHref = s.builder().Href("/opds/v2.0/gallery?next=" + info.NextGID)
 		params := []string{}
-		if query != "" {
+		if query == "favorites" || strings.HasPrefix(query, "favorites:") {
+			params = append(params, "query=favorites")
+			selected := favcat
+			if selected == "" && strings.HasPrefix(query, "favorites:") {
+				selected = strings.TrimPrefix(query, "favorites:")
+			}
+			if selected != "" {
+				params = append(params, "favcat="+quote(selected))
+			}
+		} else if query != "" {
 			params = append(params, "query="+quote(query))
+		}
+		if favcat != "" && query != "favorites" && !strings.HasPrefix(query, "favorites:") {
+			params = append(params, "favcat="+quote(favcat))
 		}
 		if category != "" {
 			params = append(params, "category="+quote(category))
@@ -254,10 +334,37 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var facets []map[string]any
-	if query != "popular" && query != "watched" && query != "favorites" && !strings.HasPrefix(query, "favorites:") {
+	if query == "favorites" || strings.HasPrefix(query, "favorites:") {
+		selected := favcat
+		if selected == "" && strings.HasPrefix(query, "favorites:") {
+			selected = strings.TrimPrefix(query, "favorites:")
+		}
+		facets = favoriteJSONFacets(s.builder(), "/opds/v2.0/gallery", selected, info.FavcatMap)
+	} else if query != "popular" && query != "watched" {
 		facets = s.builder().CategoryFacets()
 	}
-	doc := s.builder().Acquisition(title, "urn:ehentai:gallery-list:"+firstNonEmpty(query, "latest"), "/opds/v2.0/gallery", pubs, nextHref, facets)
+	self := "/opds/v2.0/gallery"
+	if query == "favorites" || strings.HasPrefix(query, "favorites:") {
+		selected := favcat
+		if selected == "" && strings.HasPrefix(query, "favorites:") {
+			selected = strings.TrimPrefix(query, "favorites:")
+		}
+		self += "?query=favorites"
+		if selected != "" {
+			self += "&favcat=" + quote(selected)
+		}
+	} else if query != "" {
+		self += "?query=" + quote(query)
+		if favcat != "" {
+			self += "&favcat=" + quote(favcat)
+		}
+		if category != "" {
+			self += "&category=" + quote(category)
+		}
+	} else if category != "" {
+		self += "?category=" + quote(category)
+	}
+	doc := s.builder().Acquisition(title, "urn:ehentai:gallery-list:"+firstNonEmpty(query, "latest"), self, pubs, nextHref, facets)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
 func (s *Server) toplist20(w http.ResponseWriter, r *http.Request) {

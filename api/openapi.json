@@ -200,6 +200,18 @@
             },
             "example": "2753175-1786365950",
             "description": "Opaque upstream pagination cursor. Pass the value from the next link unchanged."
+          },
+          {
+            "name": "favcat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9,
+              "title": "Favorite category"
+            },
+            "description": "Favorite folder id (0-9). Applies when query=favorites; omit to show all favorites."
           }
         ],
         "responses": {
@@ -851,6 +863,18 @@
               "default": "",
               "title": "Category"
             }
+          },
+          {
+            "name": "favcat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9,
+              "title": "Favorite category"
+            },
+            "description": "Favorite folder id (0-9). Applies when query=favorites; omit to show all favorites. Legacy query=favorites:N is also accepted."
           }
         ],
         "responses": {

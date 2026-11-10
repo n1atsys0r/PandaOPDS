@@ -75,6 +75,12 @@ type AtomLink struct {
 	FacetGroup string `xml:"opds:facetGroup,attr,omitempty"`
 	Active     *bool  `xml:"opds:activeFacet,attr,omitempty"`
 }
+type AtomFacet struct {
+	Title  string
+	Href   string
+	Group  string
+	Active bool
+}
 type AtomCategory struct {
 	Term   string `xml:"term,attr"`
 	Label  string `xml:"label,attr,omitempty"`
@@ -131,7 +137,7 @@ func (b Builder) OpenSearch(path string) string {
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"><ShortName>E-Hentai</ShortName><Description>Search E-Hentai galleries via PandaOPDS</Description><InputEncoding>UTF-8</InputEncoding><Url type="%s" template="%s"/></OpenSearchDescription>`, html.EscapeString(MIMEAtomAcq), html.EscapeString(template))
 }
 
-func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query string, next string, facets [][3]string) string {
+func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query string, next string, facets []AtomFacet) string {
 	entries := make([]AtomEntry, 0, len(items))
 	for _, item := range items {
 		clean, authors := parseTitle(item.Title)
@@ -153,8 +159,12 @@ func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query strin
 		more = append(more, AtomLink{Rel: "next", Href: next, Type: MIMEAtomAcq, Title: "Next page"})
 	}
 	for _, f := range facets {
-		active := f[2] == "true"
-		more = append(more, AtomLink{Rel: "http://opds-spec.org/facet", Href: f[1], Type: MIMEAtomAcq, Title: f[0], FacetGroup: "period", Active: &active})
+		var active *bool
+		if f.Active {
+			value := true
+			active = &value
+		}
+		more = append(more, AtomLink{Rel: "http://opds-spec.org/facet", Href: f.Href, Type: MIMEAtomAcq, Title: f.Title, FacetGroup: f.Group, Active: active})
 	}
 	_ = feedID
 	_ = query
