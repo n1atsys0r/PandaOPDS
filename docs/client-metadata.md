@@ -1,6 +1,6 @@
 # PandaOPDS 客户端元数据手册
 
-面向阅读器开发者。描述 PandaOPDS 输出的 OPDS 1.2（Atom）与 OPDS 2.0（JSON）全部文档结构、字段、取值与渲染规则。通用客户端消费标准层即可；`metadata` 内 `x:*` 前缀扩展字段由需要扩展信息的客户端消费。
+面向阅读器开发者，说明 PandaOPDS 输出的 OPDS 1.2（Atom）与 OPDS 2.0（JSON）文档结构、字段、取值与渲染规则。通用客户端消费标准层即可；`metadata` 内 `x:*` 前缀扩展字段由需要扩展信息的客户端消费。示例和客户端消费建议不替代运行时契约；HTTP 路径及 OpenAPI schema 请以 [`api/openapi.json`](../api/openapi.json) 为准。
 
 ---
 
@@ -14,7 +14,7 @@
 | href | 默认**相对路径**；设置 `PUBLIC_BASE_URL` 时输出绝对 URL。**Stump 必须设置**（它用自身服务器地址解析相对链接，相对路径会 404）；其他客户端不受影响 |
 | 页码 | PSE stream 默认 **1-based**（第 1 页 = `page/1`）；`PSE_PAGE_BASE=0` 可切 0-based（带外约定，不在链路中传输） |
 | 获取模式 | `OPDS_ACQ_DETAIL=false\|true`（布尔，默认 **`false`**=direct）：acquisition 直接指向图片流（零二次请求）或指向详情文档（二次请求流程），§3.4 |
-| 缓存 | feed 均 `Cache-Control: public, max-age=300` |
+| 缓存 | 目录文档通常使用短期 HTTP 缓存；缓存头按文档类型与运行状态可能不同 |
 
 **登录态**：`IPB_MEMBER_ID`/`IPB_PASS_HASH` 可选。未提供时 Watched/Favorites 导航项**不输出**；提供时输出（不做探测验证，cookie 失效时对应 feed 返回 503）。
 
@@ -140,6 +140,7 @@
 | `x:sizeBytes` | int | 文件总字节 | ≠0 时 |
 | `x:expunged` | bool | 已删除标记 | 仅 `true` 时输出 |
 | `x:uploader` | string | 上传者（详情页 `#gdn`） | 仅详情文档，非空时 |
+| `x:note` | string（HTML） | 提示存在较新版本，并附指向最新版本图库详情的链接 | 仅详情文档；解析到较新版本信息时 |
 | `x:reviews` | array | 评论区（仅详情文档；每项 `id`/`username`/`userId`(可选)/`time`/`lastEditTime`(可选)/`content`(**原始 HTML**)）；`COMMENTS_ENABLED=0` 关闭 | 有评论时 |
 
 > **评论 `content` 的重写**（客户端无需感知，直接渲染即可）：① 图库链接 `(e-hentai|exhentai).org/(g|mpv)/{gid}/{token}/` → `/opds/v2.0/gallery/{gid}/{token}`（app 内跳转）；② eh/ex 封面/预览图（host ∈ `IMAGE_PROXY_HOSTS`，默认 `ehgt.org,s.exhentai.org`）在 `src`/`url()` 内 → 同源代理 `/image/fetch?url=<编码>`，**规避 WebView 跨域 CORS**（否则 `<img>` 原生跨域拉图被拦）。URL 不透明、不解析 gid/token。
@@ -332,7 +333,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 
 | 用途 | href |
 |---|---|
-| 图片流 | `/stream/{gid}/{token}/page/{pageNumber}` → `image/jpeg`；越界/509 → 429/404 |
+| 图片流 | `/stream/{gid}/{token}/page/{pageNumber}` → `image/jpeg`；小于当前页码基数的页号返回 400，图片限额返回 429；无效图库/页号错误以 OpenAPI 响应为准 |
 | 封面 | `/image/{gid}/{token}/thumb` → `image/jpeg` |
 | 详情（v2.0 采集文档） | `/opds/v2.0/gallery/{gid}/{token}` |
 | 单 publication（v2.0，`self` 落点） | `/opds/v2.0/gallery/{gid}/{token}/publication` |

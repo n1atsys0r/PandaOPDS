@@ -1,0 +1,80 @@
+# 部署与配置
+
+Go 配置解析和默认值以 [`internal/config/settings.go`](../internal/config/settings.go) 为准；Compose/Docker 可能在容器环境中覆盖部分默认值。`.env.example` 提供可复制的配置模板。所有变量均可省略。
+
+## Docker Compose
+
+```bash
+cp .env.example .env   # 可选
+docker compose up -d
+```
+
+Compose 默认拉取发布镜像。升级运行 `docker compose pull && docker compose up -d`；本地构建使用：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+Compose 使用持久卷保存图片缓存与归档；模板文件说明了 `.env` 透传及自定义 env 文件用法。
+
+## 环境变量
+
+下面默认值是 Go 应用默认值；部署模板或镜像可覆盖它们。
+
+| 变量 | 默认值 | 用途 |
+|---|---:|---|
+| `EH_SITE` | `e-hentai` | 上游站点：`e-hentai` 或 `exhentai`。 |
+| `PORT` | `8000` | Go HTTP 服务监听端口（读取自进程环境变量）。 |
+| `IPB_MEMBER_ID`, `IPB_PASS_HASH` | 空 | 可选登录 cookie；须成对提供以启用需登录功能。 |
+| `IGNEOUS` | 空 | 可选会话 cookie 种子；ExHentai 可在建立會話時取得 session cookie。 |
+| `NW`, `DATATAGS` | `1`, `1` | 上游 cookie 偏好：安全警告绕过与新版标签缩略图结构。 |
+| `PUBLIC_BASE_URL` | 空 | feed 中使用的外部基址；反代部署时设为外部 HTTPS URL。 |
+| `AUTH_USERNAME`, `AUTH_PASSWORD` | 空 | 两者均非空时启用 HTTP Basic Auth。 |
+| `AUTH_EXEMPT_PATHS`, `AUTH_EXEMPT_PREFIXES` | 空 | 认证豁免的精确路径列表与路径前缀列表；`/health` 恒豁免。 |
+| `TIMEOUT_SECONDS`, `RETRIES` | `6`, `3` | 上游请求超时与重试次数。 |
+| `HTML_INTERVAL_SECONDS` | `0.3` | HTML 请求最小间隔秒数。 |
+| `MAX_CONCURRENCY` | `5` | HTML/API 请求并发上限。 |
+| `IMAGE_MAX_CONCURRENCY` | `5` | 原图请求并发上限。 |
+| `THUMB_MAX_CONCURRENCY` | `25` | 缩略图请求并发上限。 |
+| `BANNED_COOLDOWN_SECONDS`, `EXCEED_COOLDOWN_SECONDS` | `1800`, `300` | IP 封禁与图片限额熔断冷却秒数。 |
+| `CACHE_DIR`, `CACHE_MAX_GB`, `IMAGE_CACHE_ENABLED` | `./cache`, `4`, `true` | 图片字节磁盘缓存位置、容量上限和开关。 |
+| `METADATA_TTL_SECONDS` | `600` | gdata 元数据内存缓存 TTL。 |
+| `PAGE_URL_TTL_SECONDS` | `3600` | 详情页图片 URL 映射缓存 TTL。 |
+| `LIST_CACHE_TTL_SECONDS` | `600` | 列表结果缓存 TTL。 |
+| `IMAGE_SOURCE_RETRIES` | `2` | 图片源失效后的重新解析次数。 |
+| `PSE_PAGE_BASE` | `1` | OPDS-PSE 页码基数，支持 1 或 0。 |
+| `OPDS_ACQ_DETAIL` | `false` | v2.0 acquisition 是否先进入详情文档；旧 `OPDS_ACQ_MODE=detail` 兼容此行为。 |
+| `TAG_STATUS_FILTER` | `balanced` | 标签可信度过滤：`balanced`、`strict`、`off`。 |
+| `COMMENTS_ENABLED` | `true` | 控制 v2.0 详情是否输出评论扩展。 |
+| `IMAGE_PROXY_HOSTS` | `ehgt.org,s.exhentai.org` | `/image/fetch` 允许代理的 host。 |
+| `EH_PROFILE` | `PandaOPDS` | 上游 uconfig profile 名；空值关闭。 |
+| `HOME_CONFIG` | `./config/home.toml` | v2.0 首页布局文件。 |
+| `FACETS` | 内置 10 分类 | 分类筛选配置，`名称:掩码` 逗号分隔。 |
+| `ARCHIVE_DIR` | `./archives` | 长期归档存储目录。 |
+| `ARCHIVE_QUALITY` | `original` | 默认归档画质选择。 |
+| `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载和转换并发上限。 |
+| `FAVORITES_SYNC_INTERVAL_SECONDS` | `3600` | 收藏增量扫描周期；`0` 关闭周期扫描。 |
+| `FAVORITES_SYNC_ARCHIVE` | `false` | 是否自动归档新收藏；可能消耗 GP。 |
+| `FAVORITES_SYNC_CATEGORIES` | 空 | 自动归档作用域 favcat ID；可用 `-ID` 排除分区。 |
+| `FAVORITES_SYNC_STATE` | `./favorites_sync.json`* | 收藏同步状态快照路径。 |
+| `FAVORITES_SYNC_MATCH_THRESHOLD` | `5` | 连续命中已知收藏后停止增量扫描。 |
+| `FAVORITES_SYNC_MAX_PAGES` | `50` | 单轮扫描页数上限。 |
+| `MYTAGS_TTL_SECONDS`, `MYTAGS_STATE` | `21600`, `./mytags.json`* | My Tags 样式缓存有效期及状态文件路径。 |
+| `TAG_TRANSLATION_ENABLED` | `false` | 启用中文标签翻译和搜索反查。 |
+| `TAG_TRANSLATION_URL` | GitHub latest | 标签词典下载 URL。 |
+| `TAG_TRANSLATION_INTERVAL_SECONDS` | `86400` | 词典刷新周期；`0` 表示仅启动时拉取。 |
+| `TAG_TRANSLATION_STATE` | `./tag_translation.json`* | 词典磁盘快照路径。 |
+
+\* 若 `/config` 目录存在，三个状态文件的默认路径为 `/config/` 下同名文件。
+
+`.env.example` 目前列有 `LOG_LEVEL`，但当前 Go 二进制没有读取该变量，因此设置它不会改变日志行为。
+
+## 反向代理
+
+反代须转发原始请求路径和 `Host`/转发协议头，并将 `PUBLIC_BASE_URL` 配成用户访问的外部基址，确保 feed 中的链接指向外部地址。参考配置：[`nginx.conf.example`](../deploy/nginx.conf.example) 与 [`Caddyfile.example`](../deploy/Caddyfile.example)。
+
+启用 Basic Auth 时必须经 HTTPS 提供服务。浏览器原生图片加载不能附带认证头；只有在了解访问影响后，才将 `/image/fetch` 加入 `AUTH_EXEMPT_PATHS`。管理页与 OpenAPI UI 遵循服务认证配置。
+
+## 管理与契约
+
+管理界面位于 `/`，Swagger UI 位于 `/docs`，运行时 OpenAPI 文档位于 `/openapi.json`。仓库契约文件是 [`api/openapi.json`](../api/openapi.json)。接口 schema 不在本指南重复维护。
