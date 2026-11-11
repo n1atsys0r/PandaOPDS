@@ -62,6 +62,49 @@ func (m *Manager) Close() {
 }
 func (m *Manager) HasIPB() bool { return m.Settings.HasIPB() }
 
+func (m *Manager) stagingRoot() string {
+	dir := strings.TrimSpace(m.Settings.CacheDir)
+	if dir == "" {
+		dir = "./cache"
+	}
+	return filepath.Join(dir, eh.ArchiveStagingDirName)
+}
+
+func (m *Manager) stagingPart(gid int, token string) string {
+	return filepath.Join(m.stagingRoot(), strconv.Itoa(gid), token, partName)
+}
+
+// adoptLegacyPart preserves resumable downloads created before archive staging
+// was moved out of ARCHIVE_DIR.
+func (m *Manager) adoptLegacyPart(ctx context.Context, gid int, token string) (string, error) {
+	part := m.stagingPart(gid, token)
+	if _, err := os.Stat(part); err == nil {
+		return part, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	legacy := filepath.Join(m.Store.dir(gid, token), partName)
+	if _, err := os.Stat(legacy); err == nil {
+		if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
+			return "", err
+		}
+		tmp := part + ".migrate.tmp"
+		_ = os.Remove(tmp)
+		if err := copyFileContext(ctx, legacy, tmp); err != nil {
+			_ = os.Remove(tmp)
+			return "", err
+		}
+		if err := os.Rename(tmp, part); err != nil {
+			_ = os.Remove(tmp)
+			return "", err
+		}
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return part, nil
+}
+
 type option struct {
 	Or         string `json:"or"`
 	Label      string `json:"label"`
@@ -413,6 +456,9 @@ func (m *Manager) Start(ctx context.Context, gid int, token, quality string, for
 	if !o.priceKnown {
 		return nil, fmt.Errorf("unable to determine the price for archive tier %q; refusing to submit", o.Label)
 	}
+	if err := os.MkdirAll(filepath.Dir(m.stagingPart(gid, token)), 0o755); err != nil {
+		return nil, err
+	}
 	form := url.Values{"dltype": {o.Or}, "dlcheck": {o.DLCheck}}
 	submitted, _, e := m.Client.PostFormOnce(ctx, m.archiverURL(gid, token), form, eh.KindHTML)
 	if e != nil {
@@ -439,6 +485,7 @@ func (m *Manager) Start(ctx context.Context, gid int, token, quality string, for
 			}
 		}
 		if !strings.EqualFold(fmt.Sprint(old["or"]), o.Or) {
+			_ = os.Remove(m.stagingPart(gid, token))
 			_ = os.Remove(filepath.Join(m.Store.dir(gid, token), partName))
 		}
 	}
@@ -478,6 +525,9 @@ func (m *Manager) Status(gid int, token string) map[string]any {
 		n = toInt64(v["bytes"])
 	}
 	v["bytes_downloaded"] = n
+	if st, err := os.Stat(m.stagingPart(gid, token)); err == nil {
+		v["part_size"] = st.Size()
+	}
 	return v
 }
 func (m *Manager) run(ctx context.Context, gid int, token string, done chan struct{}) {
@@ -497,6 +547,12 @@ func (m *Manager) run(ctx context.Context, gid int, token string, done chan stru
 		m.fail(gid, token, e.Error())
 		return
 	}
+	select {
+	case m.slots <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-m.slots }()
 	if e := m.download(ctx, gid, token); e != nil {
 		if ctx.Err() != nil {
 			return
@@ -505,6 +561,7 @@ func (m *Manager) run(ctx context.Context, gid int, token string, done chan stru
 		return
 	}
 	if e := m.finalize(ctx, gid, token); e != nil {
+		_ = os.Remove(m.stagingPart(gid, token))
 		if ctx.Err() != nil {
 			return
 		}
@@ -543,12 +600,6 @@ func (m *Manager) awaitReady(ctx context.Context, gid int, token string) error {
 	return errors.New("archive preparation timed out upstream")
 }
 func (m *Manager) download(ctx context.Context, gid int, token string) error {
-	select {
-	case m.slots <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-m.slots }()
 	meta := m.Store.Get(gid, token)
 	if meta == nil {
 		return errors.New("archive entry disappeared")
@@ -561,7 +612,13 @@ func (m *Manager) download(ctx context.Context, gid int, token string) error {
 	if e != nil {
 		return e
 	}
-	part := filepath.Join(m.Store.dir(gid, token), partName)
+	part, e := m.adoptLegacyPart(ctx, gid, token)
+	if e != nil {
+		return e
+	}
+	if e = os.MkdirAll(filepath.Dir(part), 0o755); e != nil {
+		return e
+	}
 	offset := int64(0)
 	if st, x := os.Stat(part); x == nil {
 		offset = st.Size()
@@ -574,21 +631,29 @@ func (m *Manager) download(ctx context.Context, gid int, token string) error {
 	return e
 }
 func (m *Manager) finalize(ctx context.Context, gid int, token string) error {
-	part := filepath.Join(m.Store.dir(gid, token), partName)
+	part, err := m.adoptLegacyPart(ctx, gid, token)
+	if err != nil {
+		return err
+	}
 	if _, x := m.Store.Upsert(gid, token, map[string]any{"status": "zipping"}); x != nil {
 		return x
 	}
 	if e := ctx.Err(); e != nil {
 		return e
 	}
+	validatedPath := part
+	convertedPath := part + ".zip-convert"
+	defer os.Remove(convertedPath)
 	if zr, e := zip.OpenReader(part); e != nil {
-		if x := convert7zToZIP(ctx, part); x != nil {
+		_ = os.Remove(convertedPath)
+		if x := convert7zToZIP(ctx, part, convertedPath); x != nil {
 			return fmt.Errorf("archive was neither a valid zip nor a readable 7z: %w", x)
 		}
+		validatedPath = convertedPath
 	} else {
 		_ = zr.Close()
 	}
-	r, e := zip.OpenReader(part)
+	r, e := zip.OpenReader(validatedPath)
 	if e != nil {
 		return fmt.Errorf("archive zip failed validation: %w", e)
 	}
@@ -610,21 +675,39 @@ func (m *Manager) finalize(ctx context.Context, gid int, token string) error {
 		return fmt.Errorf("archive zip failed validation: %w", e)
 	}
 	target := filepath.Join(m.Store.dir(gid, token), zipName)
-	if e = os.Rename(part, target); e != nil {
+	if e = os.MkdirAll(filepath.Dir(target), 0o755); e != nil {
 		return e
 	}
-	st, _ := os.Stat(target)
-	_, e = m.Store.Upsert(gid, token, map[string]any{"status": "ready", "page_count": count, "total_bytes": st.Size(), "error": nil, "upgrade_backup": map[string]any{}})
+	publish := target + ".publish.tmp"
+	_ = os.Remove(publish)
+	defer os.Remove(publish)
+	validatedStat, e := os.Stat(validatedPath)
+	if e != nil {
+		return e
+	}
+	if e = copyFileContext(ctx, validatedPath, publish); e != nil {
+		return e
+	}
+	if e = ctx.Err(); e != nil {
+		return e
+	}
+	if e = os.Rename(publish, target); e != nil {
+		return e
+	}
+	_, e = m.Store.Upsert(gid, token, map[string]any{"status": "ready", "page_count": count, "total_bytes": validatedStat.Size(), "error": nil, "upgrade_backup": map[string]any{}})
+	if e == nil {
+		_ = os.Remove(part)
+	}
 	return e
 }
 
-func convert7zToZIP(ctx context.Context, path string) error {
-	r, err := sevenzip.OpenReader(path)
+func convert7zToZIP(ctx context.Context, source, target string) error {
+	r, err := sevenzip.OpenReader(source)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
-	tmp := path + ".zip-convert"
+	tmp := target + ".tmp"
 	_ = os.Remove(tmp)
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -688,11 +771,41 @@ func convert7zToZIP(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := os.Rename(tmp, target); err != nil {
 		return err
 	}
 	ok = true
 	return nil
+}
+
+func copyFileContext(ctx context.Context, src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, &contextReader{ctx: ctx, r: in})
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 func (m *Manager) fail(gid int, token, message string) {
 	meta := m.Store.Get(gid, token)
@@ -721,12 +834,16 @@ func (m *Manager) RecoverInterruptedUpgrades() int {
 		backup, _ := entry["upgrade_backup"].(map[string]any)
 		gid := toInt(entry["gid"])
 		token := fmt.Sprint(entry["token"])
+		_ = os.Remove(filepath.Join(m.Store.dir(gid, token), zipName+".publish.tmp"))
 		if len(backup) == 0 {
 			// Preserve a partial file for Range continuation, but make a
 			// restart-interrupted task retryable through the regular start API.
 			// A zipping task may have already transformed .part from 7z to ZIP,
 			// so that byte stream cannot safely continue against the hath URL.
+			stageDir := filepath.Dir(m.stagingPart(gid, token))
+			_ = os.Remove(m.stagingPart(gid, token) + ".migrate.tmp")
 			if st == "zipping" {
+				_ = os.RemoveAll(stageDir)
 				_ = os.Remove(filepath.Join(m.Store.dir(gid, token), partName))
 			}
 			_, _ = m.Store.Upsert(gid, token, map[string]any{"status": "failed", "error": "archive task interrupted by restart"})
@@ -742,6 +859,7 @@ func (m *Manager) RecoverInterruptedUpgrades() int {
 			}
 		}
 		_, _ = m.Store.Upsert(gid, token, patch)
+		_ = os.RemoveAll(filepath.Dir(m.stagingPart(gid, token)))
 		_ = os.Remove(filepath.Join(m.Store.dir(gid, token), partName))
 		rolled++
 	}
@@ -763,6 +881,7 @@ func (m *Manager) Remove(gid int, token string) bool {
 	m.mu.Lock()
 	delete(m.progress, k)
 	m.mu.Unlock()
+	_ = os.RemoveAll(filepath.Dir(m.stagingPart(gid, token)))
 	return m.Store.Remove(gid, token)
 }
 func (m *Manager) Refresh(ctx context.Context, gid int, token string) (map[string]any, error) {
@@ -812,4 +931,17 @@ func (m *Manager) Metadata(gid int, token string) (map[string]any, error) {
 }
 func (m *Manager) Cover(gid int, token string) ([]byte, bool) { return m.Store.Cover(gid, token) }
 func (m *Manager) ListEntries() []map[string]any              { return m.Store.Entries() }
-func (m *Manager) Stats() map[string]any                      { return m.Store.Stats() }
+func (m *Manager) Stats() map[string]any {
+	stats := m.Store.Stats()
+	var stagingBytes int64
+	_ = filepath.WalkDir(m.stagingRoot(), func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && entry.Name() == partName {
+			if st, e := entry.Info(); e == nil {
+				stagingBytes += st.Size()
+			}
+		}
+		return nil
+	})
+	stats["bytes"] = toInt64(stats["bytes"]) + stagingBytes
+	return stats
+}

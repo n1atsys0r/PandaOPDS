@@ -67,13 +67,17 @@ func TestConvert7zToZIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), partName)
+	converted := path + ".converted.zip"
 	if err := os.WriteFile(path, fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := convert7zToZIP(context.Background(), path); err != nil {
+	if err := convert7zToZIP(context.Background(), path, converted); err != nil {
 		t.Fatalf("convert7zToZIP: %v", err)
 	}
-	r, err := zip.OpenReader(path)
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(fixture) {
+		t.Fatalf("conversion changed source part: read err=%v equal=%t", err, string(got) == string(fixture))
+	}
+	r, err := zip.OpenReader(converted)
 	if err != nil {
 		t.Fatalf("converted archive is not zip: %v", err)
 	}
@@ -99,6 +103,129 @@ func TestConvert7zToZIP(t *testing.T) {
 	}
 	if regular == 0 {
 		t.Fatal("converted archive has no readable files")
+	}
+}
+
+func TestLegacyPartAdoptsIntoLocalStaging(t *testing.T) {
+	base := t.TempDir()
+	cfg := config.Settings{CacheDir: filepath.Join(base, "cache"), ArchiveDir: filepath.Join(base, "archives")}
+	store, err := NewStore(cfg.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := eh.NewService(cfg, nil)
+	defer service.Close()
+	m := NewManager(cfg, service.Client, service, store)
+	defer m.Close()
+	legacy := filepath.Join(store.dir(7, "old"), partName)
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("resumable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	part, err := m.adoptLegacyPart(context.Background(), 7, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(cfg.CacheDir, eh.ArchiveStagingDirName, "7", "old", partName); part != want {
+		t.Fatalf("staging path=%q want %q", part, want)
+	}
+	if b, err := os.ReadFile(part); err != nil || string(b) != "resumable" {
+		t.Fatalf("adopted part=%q err=%v", b, err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy part remained after adoption: %v", err)
+	}
+}
+
+func TestFinalizeFailurePreservesPublishedArchive(t *testing.T) {
+	base := t.TempDir()
+	cfg := config.Settings{CacheDir: filepath.Join(base, "cache"), ArchiveDir: filepath.Join(base, "archives")}
+	store, err := NewStore(cfg.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := eh.NewService(cfg, nil)
+	defer service.Close()
+	m := NewManager(cfg, service.Client, service, store)
+	defer m.Close()
+	if _, err := store.Upsert(8, "keep", map[string]any{"status": "downloading"}); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(store.dir(8, "keep"), zipName)
+	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old, []byte("old published bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	part := m.stagingPart(8, "keep")
+	if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("invalid archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.finalize(context.Background(), 8, "keep"); err == nil {
+		t.Fatal("invalid archive unexpectedly finalized")
+	}
+	got, err := os.ReadFile(old)
+	if err != nil || string(got) != "old published bytes" {
+		t.Fatalf("old published archive changed: %q err=%v", got, err)
+	}
+}
+
+func TestFinalizePublishesValidatedZIPFromStaging(t *testing.T) {
+	base := t.TempDir()
+	cfg := config.Settings{CacheDir: filepath.Join(base, "cache"), ArchiveDir: filepath.Join(base, "archives")}
+	store, err := NewStore(cfg.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := eh.NewService(cfg, nil)
+	defer service.Close()
+	m := NewManager(cfg, service.Client, service, store)
+	defer m.Close()
+	if _, err := store.Upsert(10, "new", map[string]any{"status": "downloading"}); err != nil {
+		t.Fatal(err)
+	}
+	part := m.stagingPart(10, "new")
+	if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(part)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	entry, err := zw.Create("page-1.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("page")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.finalize(context.Background(), 10, "new"); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(store.dir(10, "new"), zipName)
+	r, err := zip.OpenReader(target)
+	if err != nil {
+		t.Fatalf("published archive is not a ZIP: %v", err)
+	}
+	_ = r.Close()
+	if got := store.Get(10, "new")["status"]; got != "ready" {
+		t.Fatalf("published status=%v, want ready", got)
+	}
+	if _, err := os.Stat(part); !os.IsNotExist(err) {
+		t.Fatalf("staging part remained after publication: %v", err)
 	}
 }
 

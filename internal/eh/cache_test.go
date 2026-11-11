@@ -38,6 +38,31 @@ func TestDiskCacheUsesPythonShardAndClearKeepsRoot(t *testing.T) {
 	}
 }
 
+func TestDiskCacheIgnoresArchiveStaging(t *testing.T) {
+	dir := t.TempDir()
+	stage := filepath.Join(dir, "archive-staging", "1", "aa", "archive.part")
+	if err := os.MkdirAll(filepath.Dir(stage), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stage, []byte("partial archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := NewDiskCache(dir, 1, true)
+	if got := cache.Stats(); got["entries"] != 0 || got["bytes"] != int64(0) {
+		t.Fatalf("staging counted as image cache: %v", got)
+	}
+	if err := cache.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(stage); err != nil || string(b) != "partial archive" {
+		t.Fatalf("image cache clear removed staging data: %q, %v", b, err)
+	}
+	disabled := NewDiskCache(dir, 1, false)
+	if got := disabled.Stats(); got["entries"] != 0 || got["bytes"] != int64(0) {
+		t.Fatalf("disabled image cache stats counted staging: %v", got)
+	}
+}
+
 func TestDiskCacheExpiresSevenDayEntries(t *testing.T) {
 	cache := NewDiskCache(t.TempDir(), 1, true)
 	key := "1:token:1"

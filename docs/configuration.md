@@ -38,7 +38,7 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `IMAGE_MAX_CONCURRENCY` | `5` | 原图请求并发上限。 |
 | `THUMB_MAX_CONCURRENCY` | `25` | 缩略图请求并发上限。 |
 | `BANNED_COOLDOWN_SECONDS`, `EXCEED_COOLDOWN_SECONDS` | `1800`, `300` | IP 封禁与图片限额熔断冷却秒数。 |
-| `CACHE_DIR`, `CACHE_MAX_GB`, `IMAGE_CACHE_ENABLED` | `./cache`, `4`, `true` | 图片字节磁盘缓存位置、容量上限和开关。 |
+| `CACHE_DIR`, `CACHE_MAX_GB`, `IMAGE_CACHE_ENABLED` | `./cache`, `4`, `true` | 图片字节磁盘缓存位置、容量上限和开关；`CACHE_DIR/archive-staging` 保存归档续传与转换临时文件，不受图片缓存淘汰或清空影响。需要跨重启续传时，为该目录配置持久本地卷。 |
 | `METADATA_TTL_SECONDS` | `600` | gdata 元数据内存缓存 TTL。 |
 | `PAGE_URL_TTL_SECONDS` | `3600` | 详情页图片 URL 映射缓存 TTL。 |
 | `LIST_CACHE_TTL_SECONDS` | `600` | 列表结果缓存 TTL。 |

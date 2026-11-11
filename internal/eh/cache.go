@@ -134,6 +134,11 @@ func (i *diskCacheIndex) remove(path string) (diskCacheEntry, bool) {
 }
 
 const imageCacheTTL = 7 * 24 * time.Hour
+const ArchiveStagingDirName = "archive-staging"
+
+func isArchiveStagingPath(cacheDir, path string) bool {
+	return filepath.Clean(path) == filepath.Join(filepath.Clean(cacheDir), ArchiveStagingDirName)
+}
 
 func NewDiskCache(dir string, maxGB float64, enabled bool) *DiskCache {
 	max := int64(maxGB * 1024 * 1024 * 1024)
@@ -248,6 +253,9 @@ func (d *DiskCache) Clear() error {
 		return err
 	}
 	for _, entry := range entries {
+		if isArchiveStagingPath(d.dir, filepath.Join(d.dir, entry.Name())) {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(d.dir, entry.Name())); err != nil {
 			d.index = newDiskCacheIndex()
 			d.loaded = false
@@ -263,7 +271,10 @@ func (d *DiskCache) Stats() map[string]any {
 	if !d.enabled {
 		var bytes int64
 		count := 0
-		_ = filepath.WalkDir(d.dir, func(_ string, e fs.DirEntry, err error) error {
+		_ = filepath.WalkDir(d.dir, func(path string, e fs.DirEntry, err error) error {
+			if err == nil && e.IsDir() && isArchiveStagingPath(d.dir, path) {
+				return filepath.SkipDir
+			}
 			if err == nil && !e.IsDir() {
 				if st, x := e.Info(); x == nil {
 					count++
@@ -294,6 +305,9 @@ func (d *DiskCache) loadIndexLocked() {
 	d.loaded = true
 	d.index = newDiskCacheIndex()
 	_ = filepath.WalkDir(d.dir, func(p string, entry fs.DirEntry, walkErr error) error {
+		if walkErr == nil && entry.IsDir() && isArchiveStagingPath(d.dir, p) {
+			return filepath.SkipDir
+		}
 		if walkErr != nil || entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
 			return nil
 		}
