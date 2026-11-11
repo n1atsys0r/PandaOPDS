@@ -285,3 +285,88 @@ func TestAdminEditAuthIgnoresExemptions(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigEditorAcceptsWeakETagFromReverseProxy(t *testing.T) {
+	t.Setenv("EH_SITE", "")
+	_ = os.Unsetenv("EH_SITE")
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	s := &Server{Settings: config.Settings{EHSite: "e-hentai"}, settingsPath: p, editKey: []byte("test-only-etag-key")}
+
+	get := httptest.NewRecorder()
+	s.configEdit(get, httptest.NewRequest(http.MethodGet, "/api/config/edit", nil))
+	if get.Code != 200 {
+		t.Fatalf("GET status=%d", get.Code)
+	}
+	if get.Header().Get("Cache-Control") != "no-cache, no-store" {
+		t.Fatalf("Cache-Control header missing or unexpected: %q", get.Header().Get("Cache-Control"))
+	}
+	tag := get.Header().Get("ETag")
+	if tag == "" {
+		t.Fatal("missing ETag")
+	}
+
+	// Reverse proxies like Caddy/Nginx/Cloudflare convert strong ETags to weak ETags (e.g. W/"...").
+	weakTag := "W/" + tag
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/config/edit", strings.NewReader(`{"eh_site":"exhentai"}`))
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("If-Match", weakTag)
+	patchRec := httptest.NewRecorder()
+	s.configEdit(patchRec, patchReq)
+	if patchRec.Code != 200 {
+		t.Fatalf("PATCH with weak ETag status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+	if patchRec.Header().Get("Cache-Control") != "no-cache, no-store" {
+		t.Fatalf("PATCH Cache-Control header missing: %q", patchRec.Header().Get("Cache-Control"))
+	}
+
+	// Comma-separated If-Match with whitespace and weak prefix should also match.
+	newTag := patchRec.Header().Get("ETag")
+	multiReq := httptest.NewRequest(http.MethodPatch, "/api/config/edit", strings.NewReader(`{"public_base_url":"https://example.com"}`))
+	multiReq.Header.Set("Content-Type", "application/json")
+	multiReq.Header.Set("If-Match", `"stale-tag", W/`+newTag)
+	multiRec := httptest.NewRecorder()
+	s.configEdit(multiRec, multiReq)
+	if multiRec.Code != 200 {
+		t.Fatalf("PATCH with multi/weak If-Match status=%d body=%s", multiRec.Code, multiRec.Body.String())
+	}
+
+	// Stale weak tag after external modification should still return 412.
+	if err := os.WriteFile(p, []byte("EH_SITE=\"exhentai\"\n# external modify\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	staleReq := httptest.NewRequest(http.MethodPatch, "/api/config/edit", strings.NewReader(`{"cache_max_gb":10}`))
+	staleReq.Header.Set("Content-Type", "application/json")
+	staleReq.Header.Set("If-Match", "W/"+newTag)
+	staleRec := httptest.NewRecorder()
+	s.configEdit(staleRec, staleReq)
+	if staleRec.Code != 412 {
+		t.Fatalf("stale weak ETag status=%d want 412 body=%s", staleRec.Code, staleRec.Body.String())
+	}
+}
+
+func TestHomeEditorAcceptsWeakETagFromReverseProxy(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "home.toml")
+	s := &Server{Settings: config.Settings{HomeConfigPath: p}, editKey: []byte("test-only-etag-key")}
+
+	get := httptest.NewRecorder()
+	s.homeEdit(get, httptest.NewRequest(http.MethodGet, "/api/home/edit", nil))
+	if get.Code != 200 {
+		t.Fatalf("GET home status=%d", get.Code)
+	}
+	if get.Header().Get("Cache-Control") != "no-cache, no-store" {
+		t.Fatalf("Cache-Control header missing: %q", get.Header().Get("Cache-Control"))
+	}
+	tag := get.Header().Get("ETag")
+
+	putReq := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"groups":[],"sections":[]}`))
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.Header.Set("If-Match", "W/"+tag)
+	putRec := httptest.NewRecorder()
+	s.homeEdit(putRec, putReq)
+	if putRec.Code != 200 {
+		t.Fatalf("PUT with weak ETag status=%d body=%s", putRec.Code, putRec.Body.String())
+	}
+	if putRec.Header().Get("Cache-Control") != "no-cache, no-store" {
+		t.Fatalf("PUT Cache-Control header missing: %q", putRec.Header().Get("Cache-Control"))
+	}
+}

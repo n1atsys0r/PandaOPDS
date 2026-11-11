@@ -101,7 +101,7 @@ async function loadConfig() {
   try {
     const r = await api("/api/config/edit");
     state.config = r.data;
-    state.etag = r.headers.get("ETag") || "";
+    state.etag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     state.confDirty = {};
     state.form = {};
     for (const [k, v] of Object.entries(r.data.fields || {}))
@@ -157,7 +157,7 @@ async function loadHome() {
   try {
     const r = await api("/api/home/edit");
     state.home = r.data;
-    state.homeTag = r.headers.get("ETag") || "";
+    state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     state.layout = {
       groups: structuredClone(r.data.groups || []),
       sections: structuredClone(r.data.sections || []),

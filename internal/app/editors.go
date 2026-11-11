@@ -45,6 +45,23 @@ func (s *Server) fileETag(kind string, exists bool, b []byte) string {
 	m.Write(b)
 	return `"` + hex.EncodeToString(m.Sum(nil)) + `"`
 }
+func matchETag(header, current string) bool {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return false
+	}
+	if header == "*" {
+		return true
+	}
+	target := strings.TrimPrefix(strings.TrimSpace(current), "W/")
+	for _, part := range strings.Split(header, ",") {
+		candidate := strings.TrimPrefix(strings.TrimSpace(part), "W/")
+		if candidate == target {
+			return true
+		}
+	}
+	return false
+}
 func sameSnapshot(path string, exists bool, b []byte) bool {
 	nowExists, now, err := readSnapshot(path)
 	return err == nil && exists == nowExists && string(now) == string(b)
@@ -91,7 +108,7 @@ func (s *Server) configEdit(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 428, map[string]any{"detail": "If-Match required"})
 			return
 		}
-		if r.Header.Get("If-Match") != tag {
+		if !matchETag(r.Header.Get("If-Match"), tag) {
 			writeJSON(w, 412, map[string]any{"detail": "settings changed; reload before editing"})
 			return
 		}
@@ -173,6 +190,7 @@ func (s *Server) configEdit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	shape := s.configEditShapeFromSnapshot(exists, snapshot)
+	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("ETag", s.fileETag("settings", exists, snapshot))
 	writeJSON(w, 200, shape)
 }
@@ -272,7 +290,7 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 428, map[string]any{"detail": "If-Match required"})
 			return
 		}
-		if r.Header.Get("If-Match") != tag {
+		if !matchETag(r.Header.Get("If-Match"), tag) {
 			writeJSON(w, 412, map[string]any{"detail": "home layout changed; reload before editing"})
 			return
 		}
@@ -311,6 +329,7 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	shape := s.homeEditShapeFromSnapshot(exists, snapshot)
+	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("ETag", s.fileETag("home", exists, snapshot))
 	writeJSON(w, 200, shape)
 }
