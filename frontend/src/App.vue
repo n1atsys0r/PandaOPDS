@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/sidebar";
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
 import LoginForm from "@/components/LoginForm.vue";
+import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
 import {
   SunIcon as Sun,
   MoonIcon as Moon,
@@ -73,6 +74,43 @@ function formatBytes(bytes) {
 const s = useApp();
 onMounted(s.init);
 onBeforeUnmount(s.destroy);
+
+function cycleTheme() {
+  const current = s.theme.value || "system";
+  if (current === "system") {
+    s.setTheme("dark");
+  } else if (current === "dark") {
+    s.setTheme("light");
+  } else {
+    s.setTheme("system");
+  }
+}
+
+const themeMeta = computed(() => {
+  const t = s.theme.value || "system";
+  if (t === "dark") {
+    return {
+      name: "dark",
+      label: "深色模式",
+      nextLabel: "浅色模式",
+      icon: Moon,
+    };
+  }
+  if (t === "light") {
+    return {
+      name: "light",
+      label: "浅色模式",
+      nextLabel: "自动模式",
+      icon: Sun,
+    };
+  }
+  return {
+    name: "system",
+    label: "自动模式",
+    nextLabel: "深色模式",
+    icon: ThemeAutoIcon,
+  };
+});
 const groups = computed(() => {
   let f = s.config.value?.fields || {};
   let map = {
@@ -218,35 +256,17 @@ const previewItems = computed(() => {
   </div>
   <SidebarProvider v-else class="app-layout" style="--sidebar-width: 17.5rem">
     <Sidebar collapsible="offcanvas" variant="inset">
-      <SidebarHeader class="brand-header border-b border-sidebar-border/60 p-4">
-        <div class="flex items-center gap-3">
-          <div class="size-8 rounded-lg bg-foreground text-background flex items-center justify-center font-bold text-sm shadow-xs select-none">
-            P
-          </div>
-          <div class="flex flex-col gap-0.5 leading-none">
-            <span class="font-semibold text-sm tracking-tight text-foreground">PandaOPDS</span>
-            <span class="text-xs text-muted-foreground">管理控制台</span>
-          </div>
-        </div>
+      <SidebarHeader class="brand-header px-5 py-4">
+        <span class="font-bold text-base tracking-tight text-foreground select-none">
+          PandaOPDS
+        </span>
       </SidebarHeader>
       <AppSidebarNav :page="s.page.value" @navigate="s.route" />
-      <SidebarFooter class="sidebar-footer border-t border-sidebar-border/60 p-3 space-y-2">
-        <div class="flex items-center justify-between text-xs text-muted-foreground w-full">
-          <div class="flex items-center gap-2">
-            <span
-              class="size-2 rounded-full"
-              :class="s.status.value?.app?.config_ok ? 'bg-emerald-500' : 'bg-amber-500'"
-            ></span>
-            <span class="font-medium text-foreground">
-              {{ s.status.value?.app?.config_ok ? "服务就绪" : "待检查" }}
-            </span>
-          </div>
-          <span class="font-mono text-[11px] opacity-75">
-            {{ s.status.value?.app?.version ? 'v' + s.status.value.app.version : 'Admin' }}
-          </span>
-        </div>
+      <SidebarFooter
+        v-if="s.authToken.value || s.status.value?.app?.auth_enabled"
+        class="sidebar-footer border-t border-sidebar-border/60 p-3"
+      >
         <Button
-          v-if="s.authToken.value || s.status.value?.app?.auth_enabled"
           variant="ghost"
           size="xs"
           class="w-full justify-start text-xs text-muted-foreground hover:text-foreground h-7 px-2 gap-1.5"
@@ -258,11 +278,10 @@ const previewItems = computed(() => {
     </Sidebar>
     <SidebarInset class="webui-inset">
       <header class="site-header">
-        <SidebarTrigger aria-label="切换导航菜单" />
-        <Separator orientation="vertical" class="header-separator" />
+        <SidebarTrigger aria-label="切换导航菜单" class="-ml-1" />
+        <Separator orientation="vertical" class="header-separator h-4 my-auto self-center shrink-0" />
         <div class="breadcrumb">
-          <span>管理控制台</span><span class="breadcrumb-divider">/</span>
-          <b>{{
+          <span class="breadcrumb-title font-semibold text-sm text-foreground tracking-tight">{{
             s.page.value === "dashboard"
               ? "概览"
               : s.page.value === "config"
@@ -270,43 +289,18 @@ const previewItems = computed(() => {
                 : s.page.value === "home"
                   ? "首页编排"
                   : "归档与收藏"
-          }}</b>
+          }}</span>
         </div>
         <div class="header-actions">
-          <div class="themes" role="group" aria-label="主题模式">
-            <Button
-              v-for="[name, I, label] in [
-                ['light', Sun, '浅色主题'],
-                ['system', Monitor, '跟随系统'],
-                ['dark', Moon, '深色主题'],
-              ]"
-              :key="name"
-              variant="ghost"
-              size="icon-sm"
-              :class="{ 'is-current': s.theme.value === name }"
-              @click="s.setTheme(name)"
-              :aria-label="label"
-              :aria-pressed="s.theme.value === name"
-              :title="label"
-            >
-              <component :is="I" :size="16" />
-            </Button>
-          </div>
           <Button
             variant="ghost"
             size="icon-sm"
-            @click="
-              s.page.value === 'dashboard'
-                ? s.loadStatus()
-                : s.page.value === 'archive'
-                  ? s.loadArchives()
-                  : s.page.value === 'home'
-                    ? s.loadHome()
-                    : s.loadConfig()
-            "
-            aria-label="刷新"
+            class="size-8 text-muted-foreground hover:text-foreground"
+            @click="cycleTheme"
+            :title="`主题：${themeMeta.label}（点击切换至${themeMeta.nextLabel}）`"
+            :aria-label="`主题：${themeMeta.label}，点击切换`"
           >
-            <RefreshCw :size="16" :class="{ 'animate-spin': s.busy.value }" />
+            <component :is="themeMeta.icon" class="size-4" />
           </Button>
         </div>
       </header>
@@ -357,9 +351,6 @@ const previewItems = computed(() => {
               <h1 class="text-2xl font-bold tracking-tight text-foreground">服务概览</h1>
               <p class="text-sm text-muted-foreground mt-1">查看上游站点状态、出站请求与多级缓存负载。</p>
             </div>
-            <Button variant="outline" size="sm" class="gap-1.5 h-8 text-xs font-medium" @click="s.loadStatus">
-              <RefreshCw :size="13" :class="{ 'animate-spin': s.busy.value }" />刷新状态
-            </Button>
           </div>
 
           <div class="metrics">
@@ -1055,9 +1046,6 @@ const previewItems = computed(() => {
               <h1>归档与收藏</h1>
               <p>归档操作可能消耗账户 GP；每次开始前会明确确认。</p>
             </div>
-            <Button variant="outline" @click="s.loadArchives">
-              <RefreshCw />刷新
-            </Button>
           </div>
           <div class="archive-stats">
             <Badge variant="secondary"
@@ -1349,7 +1337,6 @@ const previewItems = computed(() => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <footer class="app-footer">本地服务管理界面　·　PandaOPDS</footer>
     </SidebarInset>
   </SidebarProvider>
 </template>

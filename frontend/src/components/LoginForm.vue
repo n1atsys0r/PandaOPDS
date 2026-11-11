@@ -6,7 +6,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -19,10 +18,12 @@ const username = ref("");
 const password = ref("");
 const errorMessage = ref("");
 const loading = ref(false);
+const showForgotTip = ref(false);
+const showOAuthTip = ref(false);
 
 async function handleLogin() {
   if (!username.value.trim() || !password.value) {
-    errorMessage.value = "请输入管理员用户名与密码";
+    errorMessage.value = "Please enter your email/username and password.";
     return;
   }
   loading.value = true;
@@ -30,86 +31,118 @@ async function handleLogin() {
   try {
     const ok = await s.login(username.value.trim(), password.value);
     if (!ok) {
-      errorMessage.value = s.loginError?.value || "用户名或密码错误，请重试";
+      errorMessage.value = s.loginError?.value || "Invalid credentials. Please try again.";
     }
   } catch (err) {
-    errorMessage.value = err.message || "登录请求失败，请检查网络或配置";
+    errorMessage.value = err.message || "Failed to sign in. Please verify network or server config.";
   } finally {
     loading.value = false;
   }
 }
+
+function handleOAuthClick() {
+  showOAuthTip.value = !showOAuthTip.value;
+}
 </script>
 
 <template>
-  <Card class="w-full shadow-md border-border/80 bg-card">
-    <CardHeader class="space-y-1 pb-4">
-      <div class="flex items-center gap-2 mb-2">
-        <div class="size-7 rounded-md bg-foreground text-background flex items-center justify-center font-bold text-xs select-none shadow-xs">
-          P
-        </div>
-        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-mono">
-          PandaOPDS
-        </span>
-      </div>
-      <CardTitle class="text-xl font-bold tracking-tight text-foreground">
-        登录管理控制台
-      </CardTitle>
-      <CardDescription class="text-xs text-muted-foreground">
-        输入管理员凭据（HTTP Basic Auth）以访问系统配置与服务仪表盘
-      </CardDescription>
-    </CardHeader>
-    <CardContent>
-      <form @submit.prevent="handleLogin" class="space-y-4">
-        <Alert v-if="errorMessage" variant="destructive" class="py-2.5 px-3">
-          <CircleAlert class="size-4 shrink-0 text-destructive" />
-          <AlertDescription class="text-xs">{{ errorMessage }}</AlertDescription>
-        </Alert>
+  <div class="flex flex-col gap-6">
+    <Card class="rounded-xl border border-border bg-card text-card-foreground shadow-sm py-0 gap-0">
+      <CardHeader class="flex flex-col gap-1.5 p-6 pb-4">
+        <CardTitle class="text-2xl font-bold tracking-tight text-foreground">
+          Login to your account
+        </CardTitle>
+        <CardDescription class="text-sm text-muted-foreground mt-1.5">
+          Enter your email below to login to your account
+        </CardDescription>
+      </CardHeader>
+      <CardContent class="p-6 pt-0">
+        <form @submit.prevent="handleLogin">
+          <div class="flex flex-col gap-6">
+            <Alert v-if="errorMessage" variant="destructive" class="py-2.5 px-3">
+              <CircleAlert class="size-4 shrink-0 text-destructive" />
+              <AlertDescription class="text-xs">{{ errorMessage }}</AlertDescription>
+            </Alert>
 
-        <div class="space-y-1.5">
-          <label class="text-xs font-medium text-foreground leading-none">
-            用户名
-          </label>
-          <Input
-            v-model="username"
-            type="text"
-            autocomplete="username"
-            placeholder="admin"
-            autofocus
-            required
-            :disabled="loading"
-          />
-        </div>
+            <div class="grid gap-2">
+              <label for="email" class="text-sm font-medium leading-none text-foreground select-none">
+                Email
+              </label>
+              <Input
+                id="email"
+                v-model="username"
+                type="text"
+                autocomplete="username"
+                placeholder="m@example.com"
+                required
+                :disabled="loading"
+                class="h-9"
+              />
+            </div>
 
-        <div class="space-y-1.5">
-          <div class="flex items-center justify-between">
-            <label class="text-xs font-medium text-foreground leading-none">
-              密码
-            </label>
+            <div class="grid gap-2">
+              <div class="flex items-center">
+                <label for="password" class="text-sm font-medium leading-none text-foreground select-none">
+                  Password
+                </label>
+                <a
+                  href="#"
+                  class="ml-auto inline-block text-sm text-muted-foreground underline-offset-4 hover:underline hover:text-foreground cursor-pointer select-none"
+                  @click.prevent="showForgotTip = !showForgotTip"
+                >
+                  Forgot your password?
+                </a>
+              </div>
+              <Input
+                id="password"
+                v-model="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                :disabled="loading"
+                class="h-9"
+              />
+              <p v-if="showForgotTip" class="text-xs text-muted-foreground mt-1 bg-muted/60 p-2.5 rounded-md border border-border leading-relaxed">
+                💡 管理员凭据由部署环境变量 <code>ADMIN_USER</code> 和 <code>ADMIN_PASS</code> 控制。若遗忘请在部署环境检查或修改配置。
+              </p>
+            </div>
+
+            <Button
+              type="submit"
+              class="w-full h-9 font-medium text-sm shadow-xs"
+              :disabled="loading"
+            >
+              <RefreshCw v-if="loading" class="size-3.5 mr-2 animate-spin" />
+              {{ loading ? "Signing in..." : "Login" }}
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              class="w-full h-9 font-medium text-sm shadow-xs -mt-3"
+              @click="handleOAuthClick"
+            >
+              Login with Google
+            </Button>
+
+            <p v-if="showOAuthTip" class="text-xs text-muted-foreground -mt-3 bg-muted/60 p-2.5 rounded-md border border-border text-center leading-relaxed">
+              Google 账户单点登录未启用。当前仅支持 HTTP Basic Auth 管理员凭据认证。
+            </p>
+
+            <div class="text-center text-sm text-muted-foreground">
+              Don't have an account?
+              <a
+                href="https://github.com/chock/PandaOPDS#configuration"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline underline-offset-4 text-foreground font-medium ml-1"
+              >
+                Sign up
+              </a>
+            </div>
           </div>
-          <Input
-            v-model="password"
-            type="password"
-            autocomplete="current-password"
-            placeholder="••••••••"
-            required
-            :disabled="loading"
-          />
-        </div>
-
-        <Button
-          type="submit"
-          class="w-full h-9 font-medium text-sm mt-2"
-          :disabled="loading"
-        >
-          <RefreshCw v-if="loading" class="size-3.5 mr-2 animate-spin" />
-          {{ loading ? "验证中..." : "登录" }}
-        </Button>
-      </form>
-    </CardContent>
-    <CardFooter class="pt-0 pb-4 justify-center">
-      <p class="text-[11px] text-muted-foreground">
-        受保护的本地服务 · 凭据将安全保存在本地浏览器会话中
-      </p>
-    </CardFooter>
-  </Card>
+        </form>
+      </CardContent>
+    </Card>
+  </div>
 </template>
