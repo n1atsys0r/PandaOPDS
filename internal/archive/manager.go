@@ -34,6 +34,7 @@ type Manager struct {
 	wg       sync.WaitGroup
 	jobs     map[string]context.CancelFunc
 	jobDone  map[string]chan struct{}
+	jobRoots map[string]string
 	progress map[string]int64
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -43,13 +44,17 @@ type ArchiverUnavailableError struct{ Detail string }
 
 func (e *ArchiverUnavailableError) Error() string { return e.Detail }
 
+type VersionUpdateConflictError struct{ Detail string }
+
+func (e *VersionUpdateConflictError) Error() string { return e.Detail }
+
 func NewManager(cfg config.Settings, c *eh.Client, s *eh.Service, store *Store) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	n := cfg.ArchiveDownloadConcurrency
 	if n < 1 {
 		n = 5
 	}
-	return &Manager{Settings: cfg, Client: c, Service: s, Store: store, slots: make(chan struct{}, n), jobs: map[string]context.CancelFunc{}, jobDone: map[string]chan struct{}{}, progress: map[string]int64{}, ctx: ctx, cancel: cancel}
+	return &Manager{Settings: cfg, Client: c, Service: s, Store: store, slots: make(chan struct{}, n), jobs: map[string]context.CancelFunc{}, jobDone: map[string]chan struct{}{}, jobRoots: map[string]string{}, progress: map[string]int64{}, ctx: ctx, cancel: cancel}
 }
 func (m *Manager) Close() {
 	m.cancel()
@@ -82,6 +87,10 @@ func (m *Manager) adoptLegacyPart(ctx context.Context, gid int, token string) (s
 		return part, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
+	}
+	rootGID, rootToken, managed := m.Store.RootIdentity(gid, token)
+	if managed && (rootGID != gid || rootToken != token) {
+		return part, nil
 	}
 	legacy := filepath.Join(m.Store.dir(gid, token), partName)
 	if _, err := os.Stat(legacy); err == nil {
@@ -419,6 +428,9 @@ func (m *Manager) match(opts []option, quality string) option {
 func (m *Manager) Start(ctx context.Context, gid int, token, quality string, force bool) (map[string]any, error) {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
+	if rootGID, rootToken, ok := m.Store.RootIdentity(gid, token); ok && rootGID == gid && rootToken == token {
+		gid, token = m.Store.ResolveActive(gid, token)
+	}
 	if !m.HasIPB() {
 		return nil, &ArchiverUnavailableError{Detail: "archiver requires IPB cookies (IPB_MEMBER_ID + IPB_PASS_HASH)"}
 	}
@@ -441,6 +453,9 @@ func (m *Manager) Start(ctx context.Context, gid int, token, quality string, for
 			v["reason"] = "already_archived"
 			return v, nil
 		}
+	}
+	if err := m.Store.CanStart(gid, token); err != nil {
+		return nil, err
 	}
 	page, e := m.fetchPage(ctx, gid, token)
 	if e != nil {
@@ -498,11 +513,160 @@ func (m *Manager) Start(ctx context.Context, gid int, token, quality string, for
 	m.mu.Lock()
 	m.jobs[k] = cancel
 	m.jobDone[k] = done
+	rootGID, rootToken, _ := m.Store.RootIdentity(gid, token)
+	m.jobRoots[k] = key(rootGID, rootToken)
 	m.mu.Unlock()
 	m.wg.Add(1)
 	go func() { defer m.wg.Done(); m.run(taskCtx, gid, token, done) }()
 	_ = ctx
 	return m.Status(gid, token), nil
+}
+
+// StartVersionUpdate submits an archive for the gdata current version while
+// keeping the original shelf identity stable. maxGP is an optional UI quote
+// cap; nil is reserved for configured background updates.
+func (m *Manager) StartVersionUpdate(ctx context.Context, rootGID int, rootToken string, targetGID int, targetToken string, maxGP *int) (map[string]any, error) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	conflict := func(message string) (map[string]any, error) {
+		return nil, &VersionUpdateConflictError{Detail: message}
+	}
+	if !m.HasIPB() {
+		return nil, &ArchiverUnavailableError{Detail: "archiver requires IPB cookies (IPB_MEMBER_ID + IPB_PASS_HASH)"}
+	}
+	if currentGID, currentToken := m.Store.CurrentUpdate(rootGID, rootToken); currentGID != targetGID || currentToken != targetToken {
+		return conflict("target is stale; refresh the gallery version links")
+	}
+	activeGID, activeToken := m.Store.ResolveActive(rootGID, rootToken)
+	if existing := m.Store.Get(targetGID, targetToken); existing != nil && existing["is_version_update"] == true && existing["submit_attempted"] == true {
+		if toInt(existing["root_gid"]) != rootGID || toString(existing["root_token"]) != rootToken || toInt(existing["source_gid"]) != activeGID || toString(existing["source_token"]) != activeToken {
+			return conflict("a previous paid attempt exists for this target from a different active version")
+		}
+		if toString(existing["download_url"]) == "" {
+			return conflict("a previous submission attempt has no reusable status URL; inspect the upstream archiver before taking any further action")
+		}
+		rootKey := key(rootGID, rootToken)
+		jobKey := key(targetGID, targetToken)
+		m.mu.Lock()
+		if m.jobs[jobKey] == nil {
+			busy := false
+			for _, jobRoot := range m.jobRoots {
+				if jobRoot == rootKey {
+					busy = true
+					break
+				}
+			}
+			if !busy {
+				taskCtx, cancel := context.WithCancel(m.ctx)
+				done := make(chan struct{})
+				m.jobs[jobKey], m.jobDone[jobKey], m.jobRoots[jobKey] = cancel, done, rootKey
+				m.wg.Add(1)
+				go func() { defer m.wg.Done(); m.run(taskCtx, targetGID, targetToken, done) }()
+			}
+		}
+		m.mu.Unlock()
+		return m.Status(rootGID, rootToken), nil
+	}
+	if err := m.Store.CanAddVersion(rootGID, rootToken, targetGID, targetToken); err != nil {
+		return conflict(err.Error())
+	}
+	old := m.Store.Get(activeGID, activeToken)
+	if old == nil || old["status"] != "ready" {
+		return conflict("active archive is not ready")
+	}
+	tier := toString(old["or"])
+	if tier == "" {
+		return conflict("active archive tier is unknown")
+	}
+	rootKey := key(rootGID, rootToken)
+	m.mu.Lock()
+	for _, jobRoot := range m.jobRoots {
+		if jobRoot == rootKey {
+			m.mu.Unlock()
+			return conflict("an archive task is already running for this shelf")
+		}
+	}
+	m.mu.Unlock()
+	page, err := m.fetchPage(ctx, targetGID, targetToken)
+	if err != nil {
+		return nil, err
+	}
+	var selected option
+	for _, candidate := range page.Options {
+		if strings.EqualFold(candidate.Or, tier) {
+			selected = candidate
+			break
+		}
+	}
+	if selected.Or == "" {
+		return conflict("active archive tier is unavailable for the target version")
+	}
+	if !selected.Available {
+		return conflict("active archive tier is not available for the target version")
+	}
+	if !selected.priceKnown {
+		return conflict("unable to determine the target archive price; refusing to submit")
+	}
+	chargedGP := selected.GPPrice
+	if selected.Unlocked {
+		chargedGP = 0
+	}
+	if maxGP != nil && chargedGP > *maxGP {
+		return conflict("target archive price exceeds the confirmed GP limit")
+	}
+	if err := m.Store.CanAddVersion(rootGID, rootToken, targetGID, targetToken); err != nil {
+		return conflict(err.Error())
+	}
+	if currentGID, currentToken := m.Store.CurrentUpdate(rootGID, rootToken); currentGID != targetGID || currentToken != targetToken {
+		return conflict("target became stale before submission")
+	}
+	if err := os.MkdirAll(filepath.Dir(m.stagingPart(targetGID, targetToken)), 0o755); err != nil {
+		return nil, err
+	}
+	// Persist the paid-operation attempt before POST. A restart or uncertain
+	// response must never resubmit this target automatically.
+	_, err = m.Store.Upsert(targetGID, targetToken, map[string]any{
+		"is_version_update": true,
+		"root_gid":          rootGID, "root_token": rootToken,
+		"source_gid": activeGID, "source_token": activeToken,
+		"submit_attempted": true, "submitted_at": float64(time.Now().Unix()),
+		"title":   firstNonEmpty(page.Title, toString(old["title"])),
+		"quality": selected.Label, "or": selected.Or, "gp_price": chargedGP,
+		"status": "submitting", "error": nil,
+	})
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{"dltype": {selected.Or}, "dlcheck": {selected.DLCheck}}
+	submitted, _, err := m.Client.PostFormOnce(ctx, m.archiverURL(targetGID, targetToken), form, eh.KindHTML)
+	if err != nil {
+		_, _ = m.Store.Upsert(targetGID, targetToken, map[string]any{"status": "failed", "error": "archive update submission outcome uncertain; automatic retry suppressed: " + err.Error()})
+		return nil, err
+	}
+	result := parseArchiver(string(submitted), m.archiverURL(targetGID, targetToken))
+	if result.Error != "" {
+		_, _ = m.Store.Upsert(targetGID, targetToken, map[string]any{"status": "failed", "error": result.Error})
+		return nil, errors.New(result.Error)
+	}
+	if result.URL == "" {
+		_, _ = m.Store.Upsert(targetGID, targetToken, map[string]any{"status": "failed", "error": "archive update submission returned no status URL; automatic retry suppressed"})
+		return nil, errors.New("archive submission returned no status URL")
+	}
+	_, err = m.Store.Upsert(targetGID, targetToken, map[string]any{"title": firstNonEmpty(result.Title, page.Title), "download_url": result.URL, "status": "pending", "error": nil})
+	if err != nil {
+		return nil, err
+	}
+	jobKey := key(targetGID, targetToken)
+	taskCtx, cancel := context.WithCancel(m.ctx)
+	done := make(chan struct{})
+	m.mu.Lock()
+	m.jobs[jobKey] = cancel
+	m.jobDone[jobKey] = done
+	m.jobRoots[jobKey] = rootKey
+	m.mu.Unlock()
+	m.wg.Add(1)
+	go func() { defer m.wg.Done(); m.run(taskCtx, targetGID, targetToken, done) }()
+	return m.Status(rootGID, rootToken), nil
 }
 func firstNonEmpty(a, b string) string {
 	if a != "" {
@@ -517,15 +681,40 @@ func (m *Manager) Status(gid int, token string) map[string]any {
 	}
 	k := key(gid, token)
 	m.mu.Lock()
+	rootGID, rootToken := toInt(v["root_gid"]), toString(v["root_token"])
+	if rootGID <= 0 || rootToken == "" {
+		rootGID, rootToken = gid, token
+	}
+	rootKey := key(rootGID, rootToken)
 	active := m.jobs[k] != nil
 	n := m.progress[k]
+	if !active {
+		for jobKey, jobRoot := range m.jobRoots {
+			if jobRoot == rootKey {
+				active = true
+				if n == 0 {
+					n = m.progress[jobKey]
+				}
+				break
+			}
+		}
+	}
 	m.mu.Unlock()
+	for _, field := range []string{versionsName, "activation_pending", "upgrade_backup", "submit_attempted", "submitted_at", "source_gid", "source_token"} {
+		delete(v, field)
+	}
 	v["active"] = active
 	if n == 0 {
 		n = toInt64(v["bytes"])
 	}
 	v["bytes_downloaded"] = n
-	if st, err := os.Stat(m.stagingPart(gid, token)); err == nil {
+	stageGID, stageToken := gid, token
+	if update, ok := v["version_update"].(map[string]any); ok && active {
+		if targetGID, targetToken := toInt(update["gid"]), toString(update["token"]); targetGID > 0 && targetToken != "" {
+			stageGID, stageToken = targetGID, targetToken
+		}
+	}
+	if st, err := os.Stat(m.stagingPart(stageGID, stageToken)); err == nil {
 		v["part_size"] = st.Size()
 	}
 	return v
@@ -536,16 +725,35 @@ func (m *Manager) run(ctx context.Context, gid int, token string, done chan stru
 		delete(m.jobs, key(gid, token))
 		delete(m.progress, key(gid, token))
 		delete(m.jobDone, key(gid, token))
+		delete(m.jobRoots, key(gid, token))
 		close(done)
 		m.mu.Unlock()
 	}()
-	_, snapshotErr := m.snapshot(ctx, gid, token, false)
-	if e := m.awaitReady(ctx, gid, token); e != nil {
-		if ctx.Err() != nil {
+	state := m.Store.Get(gid, token)
+	if state == nil {
+		return
+	}
+	rootGID, rootToken := toInt(state["root_gid"]), toString(state["root_token"])
+	if rootGID <= 0 || rootToken == "" {
+		rootGID, rootToken = gid, token
+	}
+	versionUpdate := state["is_version_update"] == true
+	if versionUpdate && state["status"] == "ready" {
+		m.activateVersionUpdate(ctx, rootGID, rootToken, gid, token)
+		return
+	}
+	var snapshotErr error
+	if !versionUpdate {
+		_, snapshotErr = m.snapshot(ctx, gid, token, false)
+	}
+	if state["status"] != "zipping" {
+		if e := m.awaitReady(ctx, gid, token); e != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			m.fail(gid, token, e.Error())
 			return
 		}
-		m.fail(gid, token, e.Error())
-		return
 	}
 	select {
 	case m.slots <- struct{}{}:
@@ -553,12 +761,14 @@ func (m *Manager) run(ctx context.Context, gid int, token string, done chan stru
 		return
 	}
 	defer func() { <-m.slots }()
-	if e := m.download(ctx, gid, token); e != nil {
-		if ctx.Err() != nil {
+	if state["status"] != "zipping" {
+		if e := m.download(ctx, gid, token); e != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			m.fail(gid, token, e.Error())
 			return
 		}
-		m.fail(gid, token, e.Error())
-		return
 	}
 	if e := m.finalize(ctx, gid, token); e != nil {
 		_ = os.Remove(m.stagingPart(gid, token))
@@ -568,8 +778,29 @@ func (m *Manager) run(ctx context.Context, gid int, token string, done chan stru
 		m.fail(gid, token, e.Error())
 		return
 	}
+	if versionUpdate {
+		m.activateVersionUpdate(ctx, rootGID, rootToken, gid, token)
+		return
+	}
 	if snapshotErr != nil {
 		_, _ = m.snapshot(ctx, gid, token, true)
+	}
+}
+
+func (m *Manager) activateVersionUpdate(ctx context.Context, rootGID int, rootToken string, gid int, token string) {
+	snapshot, cover, hasCover, coverMime, err := m.captureSnapshot(ctx, gid, token, true)
+	if err != nil {
+		_, _ = m.Store.Upsert(gid, token, map[string]any{"activation_error": err.Error(), "error": err.Error()})
+		return
+	}
+	snapshot["cover_mime"] = coverMime
+	saved := toInt64(snapshot["saved_at"])
+	if _, err = m.Store.Upsert(gid, token, map[string]any{"metadata_at": saved, "title": toString(snapshot["title"]), "activation_error": nil}); err != nil {
+		_, _ = m.Store.Upsert(gid, token, map[string]any{"activation_error": err.Error()})
+		return
+	}
+	if err = m.Store.ActivateVersion(rootGID, rootToken, gid, token, snapshot, cover, hasCover); err != nil {
+		_, _ = m.Store.Upsert(gid, token, map[string]any{"activation_error": err.Error(), "error": err.Error()})
 	}
 }
 func (m *Manager) awaitReady(ctx context.Context, gid int, token string) error {
@@ -674,7 +905,10 @@ func (m *Manager) finalize(ctx context.Context, gid int, token string) error {
 	if e != nil {
 		return fmt.Errorf("archive zip failed validation: %w", e)
 	}
-	target := filepath.Join(m.Store.dir(gid, token), zipName)
+	target := m.Store.archivePath(gid, token)
+	if target == "" {
+		return errors.New("archive root ownership conflict")
+	}
 	if e = os.MkdirAll(filepath.Dir(target), 0o755); e != nil {
 		return e
 	}
@@ -809,6 +1043,9 @@ func (r *contextReader) Read(p []byte) (int, error) {
 }
 func (m *Manager) fail(gid int, token, message string) {
 	meta := m.Store.Get(gid, token)
+	if meta == nil {
+		return
+	}
 	backup, _ := meta["upgrade_backup"].(map[string]any)
 	if len(backup) > 0 {
 		if _, e := os.Stat(filepath.Join(m.Store.dir(gid, token), zipName)); e == nil {
@@ -826,20 +1063,36 @@ func (m *Manager) fail(gid int, token, message string) {
 }
 func (m *Manager) RecoverInterruptedUpgrades() int {
 	rolled := 0
-	for _, entry := range m.Store.Entries() {
+	for _, entry := range m.Store.RecoveryEntries() {
 		st := fmt.Sprint(entry["status"])
-		if st != "pending" && st != "downloading" && st != "zipping" {
-			continue
-		}
 		backup, _ := entry["upgrade_backup"].(map[string]any)
+		versionUpdate := entry["is_version_update"] == true
 		gid := toInt(entry["gid"])
 		token := fmt.Sprint(entry["token"])
-		_ = os.Remove(filepath.Join(m.Store.dir(gid, token), zipName+".publish.tmp"))
-		if len(backup) == 0 {
-			// Preserve a partial file for Range continuation, but make a
-			// restart-interrupted task retryable through the regular start API.
-			// A zipping task may have already transformed .part from 7z to ZIP,
-			// so that byte stream cannot safely continue against the hath URL.
+		archivePath := m.Store.archivePath(gid, token)
+		if archivePath == "" {
+			continue
+		}
+		_ = os.Remove(archivePath + ".publish.tmp")
+		if len(backup) > 0 && !versionUpdate {
+			if _, e := os.Stat(archivePath); e != nil {
+				continue
+			}
+			patch := map[string]any{"status": "ready", "error": "upgrade interrupted by restart; rolled back", "upgrade_backup": map[string]any{}}
+			for _, field := range []string{"or", "quality", "gp_price", "download_url", "page_count", "bytes", "total_bytes"} {
+				if value, ok := backup[field]; ok {
+					patch[field] = value
+				}
+			}
+			_, _ = m.Store.Upsert(gid, token, patch)
+			_ = os.RemoveAll(filepath.Dir(m.stagingPart(gid, token)))
+			_ = os.Remove(filepath.Join(m.Store.dir(gid, token), partName))
+			rolled++
+			continue
+		}
+		if !versionUpdate {
+			// Preserve the established non-version recovery path: a resumable
+			// partial remains available, but the user can retry through Start.
 			stageDir := filepath.Dir(m.stagingPart(gid, token))
 			_ = os.Remove(m.stagingPart(gid, token) + ".migrate.tmp")
 			if st == "zipping" {
@@ -849,42 +1102,73 @@ func (m *Manager) RecoverInterruptedUpgrades() int {
 			_, _ = m.Store.Upsert(gid, token, map[string]any{"status": "failed", "error": "archive task interrupted by restart"})
 			continue
 		}
-		if _, e := os.Stat(filepath.Join(m.Store.dir(gid, token), zipName)); e != nil {
+		if st == "submitting" || toString(entry["download_url"]) == "" {
+			message := "archive task interrupted before a reusable status URL was saved"
+			if entry["submit_attempted"] == true {
+				message = "archive submission outcome is unknown; inspect the upstream archiver before retrying"
+			}
+			_, _ = m.Store.Upsert(gid, token, map[string]any{"status": "failed", "error": message})
 			continue
 		}
-		patch := map[string]any{"status": "ready", "error": "upgrade interrupted by restart; rolled back", "upgrade_backup": map[string]any{}}
-		for _, k := range []string{"or", "quality", "gp_price", "download_url", "page_count", "bytes", "total_bytes"} {
-			if v, ok := backup[k]; ok {
-				patch[k] = v
-			}
+		rootGID, rootToken := toInt(entry["root_gid"]), toString(entry["root_token"])
+		if rootGID <= 0 || rootToken == "" {
+			rootGID, rootToken, _ = m.Store.RootIdentity(gid, token)
 		}
-		_, _ = m.Store.Upsert(gid, token, patch)
-		_ = os.RemoveAll(filepath.Dir(m.stagingPart(gid, token)))
-		_ = os.Remove(filepath.Join(m.Store.dir(gid, token), partName))
-		rolled++
+		rootKey := key(rootGID, rootToken)
+		jobKey := key(gid, token)
+		m.mu.Lock()
+		if m.jobs[jobKey] == nil {
+			taskCtx, cancel := context.WithCancel(m.ctx)
+			done := make(chan struct{})
+			m.jobs[jobKey], m.jobDone[jobKey], m.jobRoots[jobKey] = cancel, done, rootKey
+			m.wg.Add(1)
+			go func() { defer m.wg.Done(); m.run(taskCtx, gid, token, done) }()
+		}
+		m.mu.Unlock()
 	}
 	return rolled
 }
 func (m *Manager) Remove(gid int, token string) bool {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
-	k := key(gid, token)
+	rootGID, rootToken, _ := m.Store.RootIdentity(gid, token)
+	rootKey := key(rootGID, rootToken)
+	if rootGID <= 0 || rootToken == "" {
+		rootKey = key(gid, token)
+	}
 	m.mu.Lock()
-	done := m.jobDone[k]
-	if cancel := m.jobs[k]; cancel != nil {
-		cancel()
+	dones := []chan struct{}{}
+	for jobKey, jobRoot := range m.jobRoots {
+		if jobKey == rootKey || jobRoot == rootKey {
+			if cancel := m.jobs[jobKey]; cancel != nil {
+				cancel()
+			}
+			if done := m.jobDone[jobKey]; done != nil {
+				dones = append(dones, done)
+			}
+		}
 	}
 	m.mu.Unlock()
-	if done != nil {
+	for _, done := range dones {
 		<-done
 	}
 	m.mu.Lock()
-	delete(m.progress, k)
+	for jobKey, jobRoot := range m.jobRoots {
+		if jobRoot == rootKey {
+			delete(m.progress, jobKey)
+		}
+	}
 	m.mu.Unlock()
-	_ = os.RemoveAll(filepath.Dir(m.stagingPart(gid, token)))
+	for _, identity := range m.Store.Identities(rootGID, rootToken) {
+		stageGID, _ := strconv.Atoi(identity[0])
+		_ = os.RemoveAll(filepath.Dir(m.stagingPart(stageGID, identity[1])))
+	}
 	return m.Store.Remove(gid, token)
 }
 func (m *Manager) Refresh(ctx context.Context, gid int, token string) (map[string]any, error) {
+	if rootGID, rootToken, ok := m.Store.RootIdentity(gid, token); ok && rootGID == gid && rootToken == token {
+		gid, token = m.Store.ResolveActive(gid, token)
+	}
 	meta := m.Store.Get(gid, token)
 	if meta == nil {
 		return nil, errors.New("no archive entry to refresh (start first)")
@@ -895,42 +1179,73 @@ func (m *Manager) Snapshot(ctx context.Context, gid int, token string, force boo
 	if m.Store.Get(gid, token) == nil {
 		return nil, errors.New("no archive entry to refresh metadata (start an archive first)")
 	}
+	if rootGID, rootToken, ok := m.Store.RootIdentity(gid, token); ok && rootGID == gid && rootToken == token {
+		gid, token = m.Store.ResolveActive(gid, token)
+	}
 	return m.snapshot(ctx, gid, token, force)
 }
 func (m *Manager) snapshot(ctx context.Context, gid int, token string, force bool) (map[string]any, error) {
-	meta, e := m.Service.GetMetadata(ctx, gid, token, force)
-	if e != nil {
-		return nil, e
+	payload, cover, hasCover, coverMime, err := m.captureSnapshot(ctx, gid, token, force)
+	if err != nil {
+		return nil, err
 	}
-	coverMime := ""
+	if hasCover {
+		_ = m.Store.WriteCover(gid, token, cover)
+	}
+	payload["cover_mime"] = coverMime
+	saved := toInt64(payload["saved_at"])
+	if err = m.Store.WriteMetadata(gid, token, payload); err != nil {
+		return nil, err
+	}
+	meta, _ := m.Service.GetMetadata(ctx, gid, token, false)
+	_, err = m.Store.Upsert(gid, token, map[string]any{"metadata_at": saved, "title": meta.Title})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"gid": gid, "token": token, "title": meta.Title, "title_jpn": meta.TitleJPN, "category": meta.Category, "rating": meta.Rating, "filecount": meta.Filecount, "filesize": meta.Filesize, "posted": meta.Posted, "uploader": meta.Uploader, "expunged": meta.Expunged, "cover_mime": coverMime, "saved_at": saved}, nil
+}
+
+func (m *Manager) captureSnapshot(ctx context.Context, gid int, token string, force bool) (map[string]any, []byte, bool, string, error) {
+	meta, err := m.Service.GetMetadata(ctx, gid, token, force)
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+	cover, coverMime, hasCover := []byte(nil), "", false
 	if meta.Thumb != "" {
-		if b, mime, x := m.Service.FetchCoverBytes(ctx, meta.Thumb); x == nil {
-			_ = m.Store.WriteCover(gid, token, b)
-			coverMime = mime
+		if b, mime, fetchErr := m.Service.FetchCoverBytes(ctx, meta.Thumb); fetchErr == nil {
+			cover, coverMime, hasCover = b, mime, true
 		}
 	}
 	payload := map[string]any{}
 	b, _ := json.Marshal(meta)
 	_ = json.Unmarshal(b, &payload)
-	saved := float64(time.Now().Unix())
-	payload["gid"] = gid
-	payload["token"] = token
-	payload["saved_at"] = saved
+	payload["gid"], payload["token"] = gid, token
+	payload["saved_at"] = float64(time.Now().Unix())
 	payload["cover_mime"] = coverMime
-	if e = m.Store.WriteMetadata(gid, token, payload); e != nil {
-		return nil, e
-	}
-	_, e = m.Store.Upsert(gid, token, map[string]any{"metadata_at": saved})
-	if e != nil {
-		return nil, e
-	}
-	return map[string]any{"gid": gid, "token": token, "title": meta.Title, "title_jpn": meta.TitleJPN, "category": meta.Category, "rating": meta.Rating, "filecount": meta.Filecount, "filesize": meta.Filesize, "posted": meta.Posted, "uploader": meta.Uploader, "expunged": meta.Expunged, "cover_mime": coverMime, "saved_at": saved}, nil
+	return payload, cover, hasCover, coverMime, nil
 }
+
 func (m *Manager) Metadata(gid int, token string) (map[string]any, error) {
+	if rootGID, rootToken, ok := m.Store.RootIdentity(gid, token); ok && rootGID == gid && rootToken == token {
+		gid, token = m.Store.ResolveActive(gid, token)
+	}
 	return m.Store.ReadMetadata(gid, token)
 }
-func (m *Manager) Cover(gid int, token string) ([]byte, bool) { return m.Store.Cover(gid, token) }
-func (m *Manager) ListEntries() []map[string]any              { return m.Store.Entries() }
+func (m *Manager) Cover(gid int, token string) ([]byte, bool) {
+	if rootGID, rootToken, ok := m.Store.RootIdentity(gid, token); ok && rootGID == gid && rootToken == token {
+		gid, token = m.Store.ResolveActive(gid, token)
+	}
+	return m.Store.Cover(gid, token)
+}
+func (m *Manager) ListEntries() []map[string]any {
+	out := m.Store.Entries()
+	for _, entry := range out {
+		for _, field := range []string{versionsName, "activation_pending", "upgrade_backup", "submit_attempted", "submitted_at", "source_gid", "source_token"} {
+			delete(entry, field)
+		}
+	}
+	return out
+}
 func (m *Manager) Stats() map[string]any {
 	stats := m.Store.Stats()
 	var stagingBytes int64

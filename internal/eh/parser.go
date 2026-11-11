@@ -794,6 +794,13 @@ func ParseGData(body []byte) ([]GalleryMetadata, error) {
 			Uploader     string          `json:"uploader"`
 			Torrentcount json.RawMessage `json:"torrentcount"`
 			Expunged     bool            `json:"expunged"`
+			Error        string          `json:"error"`
+			ParentGID    json.RawMessage `json:"parent_gid"`
+			ParentKey    string          `json:"parent_key"`
+			FirstGID     json.RawMessage `json:"first_gid"`
+			FirstKey     string          `json:"first_key"`
+			CurrentGID   json.RawMessage `json:"current_gid"`
+			CurrentKey   string          `json:"current_key"`
 		} `json:"gmetadata"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -801,6 +808,11 @@ func ParseGData(body []byte) ([]GalleryMetadata, error) {
 	}
 	out := make([]GalleryMetadata, 0, len(raw.GMetadata))
 	for i, v := range raw.GMetadata {
+		// The API can reject individual entries while still returning metadata for
+		// the rest of a batch. Rejected entries must never become version records.
+		if v.Error != "" {
+			continue
+		}
 		gid, err := gdataInt(v.GID, strconv.IntSize)
 		if err != nil {
 			return nil, fmt.Errorf("gmetadata[%d].gid: %w", i, err)
@@ -825,7 +837,19 @@ func ParseGData(body []byte) ([]GalleryMetadata, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gmetadata[%d].torrentcount: %w", i, err)
 		}
-		m := GalleryMetadata{GID: int(gid), Token: v.Token, Title: v.Title, TitleJPN: v.TitleJPN, Category: v.Category, Thumb: v.Thumb, Rating: rating, Tags: map[string][]GalleryTag{}, Filecount: int(filecount), Filesize: filesize, Posted: posted, Uploader: v.Uploader, Torrentcount: int(torrentcount), Expunged: v.Expunged}
+		parentGID, err := gdataInt(v.ParentGID, strconv.IntSize)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].parent_gid: %w", i, err)
+		}
+		firstGID, err := gdataInt(v.FirstGID, strconv.IntSize)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].first_gid: %w", i, err)
+		}
+		currentGID, err := gdataInt(v.CurrentGID, strconv.IntSize)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].current_gid: %w", i, err)
+		}
+		m := GalleryMetadata{GID: int(gid), Token: v.Token, Title: v.Title, TitleJPN: v.TitleJPN, Category: v.Category, Thumb: v.Thumb, Rating: rating, Tags: map[string][]GalleryTag{}, Filecount: int(filecount), Filesize: filesize, Posted: posted, Uploader: v.Uploader, Torrentcount: int(torrentcount), Expunged: v.Expunged, ParentGID: int(parentGID), ParentKey: v.ParentKey, FirstGID: int(firstGID), FirstKey: v.FirstKey, CurrentGID: int(currentGID), CurrentKey: v.CurrentKey}
 		for _, tag := range v.Tags {
 			var ns, key string
 			switch item := tag.(type) {

@@ -18,7 +18,7 @@ import (
 	"pandaopds/internal/home"
 )
 
-var configWireToEnv = map[string]string{"eh_site": "EH_SITE", "ipb_member_id": "IPB_MEMBER_ID", "ipb_pass_hash": "IPB_PASS_HASH", "igneous": "IGNEOUS", "public_base_url": "PUBLIC_BASE_URL", "pse_page_base": "PSE_PAGE_BASE", "opds_acq_detail": "OPDS_ACQ_DETAIL", "tag_status_filter": "TAG_STATUS_FILTER", "tag_translation_enabled": "TAG_TRANSLATION_ENABLED", "comments_enabled": "COMMENTS_ENABLED", "image_cache_enabled": "IMAGE_CACHE_ENABLED", "cache_max_gb": "CACHE_MAX_GB", "favorites_sync_interval_seconds": "FAVORITES_SYNC_INTERVAL_SECONDS"}
+var configWireToEnv = map[string]string{"eh_site": "EH_SITE", "ipb_member_id": "IPB_MEMBER_ID", "ipb_pass_hash": "IPB_PASS_HASH", "igneous": "IGNEOUS", "public_base_url": "PUBLIC_BASE_URL", "pse_page_base": "PSE_PAGE_BASE", "opds_acq_detail": "OPDS_ACQ_DETAIL", "tag_status_filter": "TAG_STATUS_FILTER", "tag_translation_enabled": "TAG_TRANSLATION_ENABLED", "comments_enabled": "COMMENTS_ENABLED", "image_cache_enabled": "IMAGE_CACHE_ENABLED", "cache_max_gb": "CACHE_MAX_GB", "favorites_sync_interval_seconds": "FAVORITES_SYNC_INTERVAL_SECONDS", "archive_update_interval_days": "ARCHIVE_UPDATE_INTERVAL_DAYS", "archive_auto_update": "ARCHIVE_AUTO_UPDATE"}
 
 func readSnapshot(path string) (bool, []byte, error) {
 	b, e := os.ReadFile(path)
@@ -50,6 +50,9 @@ func sameSnapshot(path string, exists bool, b []byte) bool {
 	return err == nil && exists == nowExists && string(now) == string(b)
 }
 func settingEnvLocked(k string) bool {
+	if k == "ARCHIVE_UPDATE_INTERVAL_DAYS" || k == "ARCHIVE_AUTO_UPDATE" {
+		return false
+	}
 	if k == "IPB_MEMBER_ID" || k == "IPB_PASS_HASH" {
 		_, a := os.LookupEnv("IPB_MEMBER_ID")
 		_, b := os.LookupEnv("IPB_PASS_HASH")

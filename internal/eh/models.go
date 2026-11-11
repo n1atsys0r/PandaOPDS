@@ -10,8 +10,12 @@ type GalleryTag struct {
 func (t GalleryTag) String() string { return t.Namespace + ":" + t.Key }
 
 type GalleryListItem struct {
-	GID         int          `json:"gid"`
-	Token       string       `json:"token"`
+	GID   int    `json:"gid"`
+	Token string `json:"token"`
+	// ActiveGID and ActiveToken identify the current archive version while GID
+	// and Token remain the stable public identity of the original gallery.
+	ActiveGID   int          `json:"-"`
+	ActiveToken string       `json:"-"`
 	Title       string       `json:"title"`
 	Category    string       `json:"category"`
 	CoverURL    string       `json:"cover_url"`
@@ -64,6 +68,8 @@ type GalleryVersion struct {
 }
 
 type DetailPageInfo struct {
+	ActiveGID     int              `json:"-"`
+	ActiveToken   string           `json:"-"`
 	ImageNoFrom   int              `json:"image_no_from"`
 	ImageNoTo     int              `json:"image_no_to"`
 	ImageCount    int              `json:"image_count"`
@@ -110,6 +116,17 @@ type GalleryMetadata struct {
 	Uploader     string                  `json:"uploader"`
 	Torrentcount int                     `json:"torrentcount"`
 	Expunged     bool                    `json:"expunged"`
+	ParentGID    int                     `json:"parent_gid,omitempty"`
+	ParentKey    string                  `json:"parent_key,omitempty"`
+	FirstGID     int                     `json:"first_gid,omitempty"`
+	FirstKey     string                  `json:"first_key,omitempty"`
+	CurrentGID   int                     `json:"current_gid,omitempty"`
+	CurrentKey   string                  `json:"current_key,omitempty"`
+}
+
+type GalleryRef struct {
+	GID   int    `json:"gid"`
+	Token string `json:"token"`
 }
 
 func (m GalleryMetadata) Language() string {

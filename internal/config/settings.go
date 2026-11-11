@@ -36,6 +36,8 @@ type Settings struct {
 	Facets                                                                            []Facet
 	ArchiveDir, ArchiveQuality                                                        string
 	ArchiveDownloadConcurrency                                                        int
+	ArchiveUpdateIntervalSeconds                                                      int
+	ArchiveAutoUpdate                                                                 bool
 	FavoritesSyncIntervalSeconds                                                      float64
 	FavoritesSyncArchive                                                              bool
 	FavoritesSyncCategories, FavoritesSyncExcludes                                    []int
@@ -123,6 +125,7 @@ func loadWithEditableValues(fileValues map[string]any) Settings {
 		ImageProxyHosts: defaultCSV(base("IMAGE_PROXY_HOSTS", ""), []string{"ehgt.org", "s.exhentai.org"}), EHProfile: base("EH_PROFILE", "PandaOPDS"),
 		HomeConfigPath: base("HOME_CONFIG", "./config/home.toml"), Facets: parseFacets(os.Getenv("FACETS")),
 		ArchiveDir: base("ARCHIVE_DIR", "./archives"), ArchiveQuality: defaultString(strings.ToLower(base("ARCHIVE_QUALITY", "original")), "original"), ArchiveDownloadConcurrency: intEnv("ARCHIVE_DOWNLOAD_CONCURRENCY", 5),
+		ArchiveUpdateIntervalSeconds: 7 * 86400,
 		FavoritesSyncIntervalSeconds: floatEnv("FAVORITES_SYNC_INTERVAL_SECONDS", 3600), FavoritesSyncArchive: boolEnv("FAVORITES_SYNC_ARCHIVE", false),
 		FavoritesSyncCategories: parseIDs(os.Getenv("FAVORITES_SYNC_CATEGORIES"), false), FavoritesSyncExcludes: parseIDs(os.Getenv("FAVORITES_SYNC_CATEGORIES"), true),
 		FavoritesSyncState: base("FAVORITES_SYNC_STATE", defaultStatePath("favorites_sync.json")), FavoritesSyncMatchThreshold: intEnv("FAVORITES_SYNC_MATCH_THRESHOLD", 5), FavoritesSyncMaxPages: intEnv("FAVORITES_SYNC_MAX_PAGES", 50),

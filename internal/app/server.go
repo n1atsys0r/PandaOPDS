@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -36,6 +37,9 @@ type Server struct {
 	settingsPath string
 	editMu       sync.Mutex
 	editKey      []byte
+
+	stopArchiveUpdates context.CancelFunc
+	archiveUpdatesDone chan struct{}
 }
 
 func New(settings config.Settings, logger *log.Logger) (*Server, error) {
@@ -64,11 +68,16 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 	state := favorites.NewState(settings.FavoritesSyncState)
 	s.Favorites = favorites.NewSyncer(settings, service, s.Archives, state)
 	s.Favorites.Start()
+	s.startArchiveVersionChecks()
 	s.register()
 	return s, nil
 }
 func (s *Server) Handler() http.Handler { return recoverMiddleware(s.basicAuth(s.mux)) }
 func (s *Server) Close() error {
+	if s.stopArchiveUpdates != nil {
+		s.stopArchiveUpdates()
+		<-s.archiveUpdatesDone
+	}
 	if s.Favorites != nil {
 		s.Favorites.Stop()
 	}
@@ -109,6 +118,7 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/archive/{gid}/{token}/metadata", s.archiveMetadata)
 	m.HandleFunc("POST /api/archive/{gid}/{token}/metadata/refresh", s.archiveMetadataRefresh)
 	m.HandleFunc("POST /api/archive/{gid}/{token}/refresh", s.archiveRefresh)
+	m.HandleFunc("POST /api/archive/{gid}/{token}/update", s.archiveUpdate)
 	m.HandleFunc("DELETE /api/archive/{gid}/{token}", s.archiveDelete)
 	m.HandleFunc("GET /api/archive/{gid}/{token}", s.archiveStatus)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/cover", s.archiveCover)

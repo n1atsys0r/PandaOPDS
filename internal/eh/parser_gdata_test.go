@@ -16,6 +16,16 @@ func TestParseGDataNumericValuesAcceptNumbersAndStrings(t *testing.T) {
 	}
 }
 
+func TestParseGDataVersionFieldsAndPerItemErrors(t *testing.T) {
+	got, err := ParseGData([]byte(`{"gmetadata":[{"gid":"12","token":"abc","parent_gid":"9","parent_key":"pk","first_gid":8,"first_key":"fk","current_gid":"12","current_key":"ck"},{"gid":"13","token":"bad","error":"gallery does not exist"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ParentGID != 9 || got[0].ParentKey != "pk" || got[0].FirstGID != 8 || got[0].FirstKey != "fk" || got[0].CurrentGID != 12 || got[0].CurrentKey != "ck" {
+		t.Fatalf("unexpected parsed metadata: %+v", got)
+	}
+}
+
 func TestParseGDataTagsAcceptStringAndPairEntries(t *testing.T) {
 	got, err := ParseGData([]byte(`{"gmetadata":[{"tags":["female:twintails","unscoped",":empty-namespace","language:english:variant",["artist","alice"],["female","ponytail"],17,["malformed"]]}]}`))
 	if err != nil {

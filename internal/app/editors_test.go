@@ -71,6 +71,51 @@ func TestConfigEditorRequiresETagAndKeepsActiveSnapshot(t *testing.T) {
 	}
 }
 
+func TestArchiveEditorPersistsFileOnlySettingsForRestart(t *testing.T) {
+	t.Setenv("ARCHIVE_UPDATE_INTERVAL_DAYS", "2")
+	t.Setenv("ARCHIVE_AUTO_UPDATE", "true")
+	t.Setenv("ARCHIVE_UPDATE_INTERVAL_SECONDS", "0")
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	active := config.Settings{ArchiveUpdateIntervalSeconds: 7 * 86400}
+	s := &Server{Settings: active, settingsPath: p, editKey: []byte("test-only-etag-key")}
+	get := httptest.NewRecorder()
+	s.configEdit(get, httptest.NewRequest(http.MethodGet, "/api/config/edit", nil))
+	var shape map[string]any
+	if err := json.Unmarshal(get.Body.Bytes(), &shape); err != nil {
+		t.Fatal(err)
+	}
+	fields := shape["fields"].(map[string]any)
+	for _, key := range []string{"archive_update_interval_days", "archive_auto_update"} {
+		field := fields[key].(map[string]any)
+		if field["source"] != "default" || field["locked"] != false {
+			t.Fatalf("%s incorrectly env-locked: %#v", key, field)
+		}
+	}
+	patch := httptest.NewRequest(http.MethodPatch, "/api/config/edit", strings.NewReader(`{"archive_update_interval_days":0,"archive_auto_update":true}`))
+	patch.Header.Set("Content-Type", "application/json")
+	patch.Header.Set("If-Match", get.Header().Get("ETag"))
+	ok := httptest.NewRecorder()
+	s.configEdit(ok, patch)
+	if ok.Code != 200 {
+		t.Fatalf("PATCH status=%d body=%s", ok.Code, ok.Body.String())
+	}
+	restarted := config.LoadWithConfigPath(p)
+	if restarted.ArchiveUpdateIntervalSeconds != 0 || !restarted.ArchiveAutoUpdate {
+		t.Fatalf("restarted interval=%d auto=%v", restarted.ArchiveUpdateIntervalSeconds, restarted.ArchiveAutoUpdate)
+	}
+	if strings.Contains(string(mustRead(t, p)), "ARCHIVE_UPDATE_INTERVAL_SECONDS") {
+		t.Fatal("legacy seconds key persisted")
+	}
+	bad := httptest.NewRequest(http.MethodPatch, "/api/config/edit", strings.NewReader(`{"archive_update_interval_days":1.25}`))
+	bad.Header.Set("Content-Type", "application/json")
+	bad.Header.Set("If-Match", ok.Header().Get("ETag"))
+	invalid := httptest.NewRecorder()
+	s.configEdit(invalid, bad)
+	if invalid.Code != 400 {
+		t.Fatalf("fractional interval status=%d", invalid.Code)
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

@@ -63,15 +63,20 @@ type ArchiveReader interface {
 	GetMetadataSnapshot(gid int, token string) (map[string]any, bool)
 	PageCount(gid int, token string) int
 }
+type archiveVersionResolver interface {
+	ResolveActive(gid int, token string) (int, string)
+}
 type ArchiveInfo struct {
-	GID        int    `json:"gid"`
-	Token      string `json:"token"`
-	Title      string `json:"title,omitempty"`
-	PageCount  int    `json:"page_count"`
-	CreatedAt  int64  `json:"created_at"`
-	Quality    string `json:"quality,omitempty"`
-	Status     string `json:"status"`
-	MetadataAt int64  `json:"metadata_at,omitempty"`
+	GID         int    `json:"gid"`
+	Token       string `json:"token"`
+	ActiveGID   int    `json:"-"`
+	ActiveToken string `json:"-"`
+	Title       string `json:"title,omitempty"`
+	PageCount   int    `json:"page_count"`
+	CreatedAt   int64  `json:"created_at"`
+	Quality     string `json:"quality,omitempty"`
+	Status      string `json:"status"`
+	MetadataAt  int64  `json:"metadata_at,omitempty"`
 }
 
 func NewService(cfg config.Settings, transport http.RoundTripper) *Service {
@@ -247,10 +252,23 @@ func (s *Service) Toplist(ctx context.Context, period string, page int) (Gallery
 	return v, nil
 }
 func (s *Service) GetDetail(ctx context.Context, gid int, token string) (DetailPageInfo, error) {
-	key := fmt.Sprintf("detail:%d:%s", gid, token)
+	activeGID, activeToken, _ := s.ResolveArchiveVersion(gid, token)
+	if activeGID <= 0 || activeToken == "" {
+		activeGID, activeToken = gid, token
+	}
+	key := fmt.Sprintf("detail:%d:%s", activeGID, activeToken)
+	// Prefer the switched version's local snapshot before cache or upstream I/O.
+	if (activeGID != gid || activeToken != token) && s.archive != nil {
+		if snap, found := s.archive.GetMetadataSnapshot(activeGID, activeToken); found {
+			d := detailFromSnapshot(snap, s.archive.PageCount(activeGID, activeToken))
+			d.ActiveGID, d.ActiveToken = activeGID, activeToken
+			return d, nil
+		}
+	}
 	s.mu.Lock()
 	if v, ok := lookup(s.details, key); ok {
 		s.mu.Unlock()
+		v.ActiveGID, v.ActiveToken = activeGID, activeToken
 		return v, nil
 	}
 	s.mu.Unlock()
@@ -260,23 +278,39 @@ func (s *Service) GetDetail(ctx context.Context, gid int, token string) (DetailP
 	s.mu.Lock()
 	if v, ok := lookup(s.details, key); ok {
 		s.mu.Unlock()
+		v.ActiveGID, v.ActiveToken = activeGID, activeToken
 		return v, nil
 	}
 	s.mu.Unlock()
-	d, err := s.getDetailPage(ctx, gid, token, 0)
-	if err != nil && s.archive != nil && s.archiveReady(gid, token) {
-		if snap, ok := s.archive.GetMetadataSnapshot(gid, token); ok {
-			d = detailFromSnapshot(snap, s.archive.PageCount(gid, token))
+	d, err := s.getDetailPage(ctx, activeGID, activeToken, 0)
+	if err != nil && s.archive != nil && s.archiveReady(activeGID, activeToken) {
+		if snap, ok := s.archive.GetMetadataSnapshot(activeGID, activeToken); ok {
+			d = detailFromSnapshot(snap, s.archive.PageCount(activeGID, activeToken))
 			err = nil
 		}
 	}
 	if err != nil {
 		return DetailPageInfo{}, err
 	}
+	d.ActiveGID, d.ActiveToken = activeGID, activeToken
 	s.mu.Lock()
 	put(s.details, key, d, time.Duration(s.Settings.PageURLTTLSeconds)*time.Second)
 	s.mu.Unlock()
 	return d, nil
+}
+
+// ResolveArchiveVersion returns the active version for a managed original
+// gallery. The public identity should remain gid/token.
+func (s *Service) ResolveArchiveVersion(gid int, token string) (int, string, bool) {
+	resolver, ok := s.archive.(archiveVersionResolver)
+	if !ok {
+		return gid, token, false
+	}
+	activeGID, activeToken := resolver.ResolveActive(gid, token)
+	if activeGID <= 0 || activeToken == "" {
+		return gid, token, false
+	}
+	return activeGID, activeToken, true
 }
 
 // GetMyTags lazily refreshes the account's tag-style map. A stale snapshot is
@@ -1034,7 +1068,15 @@ func (s *Service) ArchivedGalleries(page int) []GalleryListItem {
 	}
 	items := []GalleryListItem{}
 	for _, a := range s.archive.ListReady(page, 100) {
-		snap, ok := s.archive.GetMetadataSnapshot(a.GID, a.Token)
+		activeGID, activeToken := a.ActiveGID, a.ActiveToken
+		if activeGID <= 0 || activeToken == "" {
+			var found bool
+			activeGID, activeToken, found = s.ResolveArchiveVersion(a.GID, a.Token)
+			if !found {
+				activeGID, activeToken = a.GID, a.Token
+			}
+		}
+		snap, ok := s.archive.GetMetadataSnapshot(activeGID, activeToken)
 		title := a.Title
 		category := ""
 		rating := float64(0)
@@ -1072,7 +1114,7 @@ func (s *Service) ArchivedGalleries(page int) []GalleryListItem {
 		if posted := toInt64(snap["posted"]); ok && posted > 0 {
 			publishTime = time.Unix(posted, 0).UTC().Format("2006-01-02 15:04")
 		}
-		items = append(items, GalleryListItem{GID: a.GID, Token: a.Token, Title: title, Category: category, PageCount: &count, Rating: rating, PublishTime: publishTime, Language: languageFromTags(tags), Tags: tags})
+		items = append(items, GalleryListItem{GID: a.GID, Token: a.Token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: category, PageCount: &count, Rating: rating, PublishTime: publishTime, Language: languageFromTags(tags), Tags: tags})
 	}
 	return items
 }

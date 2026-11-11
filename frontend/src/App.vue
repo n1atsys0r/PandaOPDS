@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -26,6 +26,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -61,6 +62,8 @@ import {
   GlobeIcon as Globe,
   ArrowUpRightIcon as ArrowUpRight,
   LogOutIcon as LogOut,
+  TagIcon as Tag,
+  BookmarkIcon as Bookmark,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
 
@@ -129,6 +132,7 @@ const groups = computed(() => {
       "cache_max_gb",
       "favorites_sync_interval_seconds",
     ],
+    归档: ["archive_update_interval_days", "archive_auto_update"],
   };
   return Object.entries(map)
     .map(([title, keys]) => ({
@@ -151,6 +155,8 @@ const labels = {
   image_cache_enabled: "图片缓存",
   cache_max_gb: "图片缓存上限（GB）",
   favorites_sync_interval_seconds: "收藏同步间隔（秒）",
+  archive_update_interval_days: "归档版本检查周期（天）",
+  archive_auto_update: "自动更新归档",
 };
 const secret = (k) => ["ipb_member_id", "ipb_pass_hash", "igneous"].includes(k);
 const boolean = (k) =>
@@ -158,6 +164,7 @@ const boolean = (k) =>
     "tag_translation_enabled",
     "comments_enabled",
     "image_cache_enabled",
+    "archive_auto_update",
   ].includes(k) || typeof s.config.value?.fields?.[k]?.active === "boolean";
 const edit = (k, v) => s.setField(k, v);
 const lockedReason = (key) => {
@@ -244,6 +251,222 @@ const previewItems = computed(() => {
   }
   return items;
 });
+
+const EH_CATEGORIES = [
+  { key: "Doujinshi", label: "Doujinshi", color: "#fc4e4e" },
+  { key: "Manga", label: "Manga", color: "#fcb417" },
+  { key: "Artist CG", label: "Artist CG", color: "#dde500" },
+  { key: "Game CG", label: "Game CG", color: "#05bf0b" },
+  { key: "Western", label: "Western", color: "#14e723" },
+  { key: "Non-H", label: "Non-H", color: "#68c9de" },
+  { key: "Image Set", label: "Image Set", color: "#5050d7" },
+  { key: "Cosplay", label: "Cosplay", color: "#9755f5" },
+  { key: "Asian Porn", label: "Asian Porn", color: "#fe93ff" },
+  { key: "Misc", label: "Misc", color: "#9e9e9e" },
+];
+
+const createArchiveDialogOpen = ref(false);
+const selectedStatus = ref("all"); // "all" | "updates" | "downloading" | "failed"
+const selectedCategory = ref("all"); // "all" | EH category key
+const selectedFavcat = ref("all"); // "all" | "unfavorited" | "favorited" | "0".."9"
+const archiveSearch = ref("");
+
+function openCreateArchiveDialog() {
+  s.archiveInput.value = "";
+  s.quote.value = null;
+  s.selectedQuality.value = "";
+  createArchiveDialogOpen.value = true;
+}
+
+function closeCreateArchiveDialog() {
+  createArchiveDialogOpen.value = false;
+  s.archiveInput.value = "";
+  s.quote.value = null;
+  s.selectedQuality.value = "";
+}
+
+async function confirmAndStartArchive() {
+  await s.startArchive();
+  createArchiveDialogOpen.value = false;
+}
+
+async function handleQuoteArchive(a) {
+  await s.quoteArchiveFor(a);
+  if (s.quote.value) s.confirmArchive.value = true;
+}
+
+async function handleQuoteUpdate(a) {
+  await s.quoteUpdateFor(a);
+  if (s.quote.value) s.confirmArchive.value = true;
+}
+
+function resetFilters() {
+  selectedStatus.value = "all";
+  selectedCategory.value = "all";
+  selectedFavcat.value = "all";
+  archiveSearch.value = "";
+}
+
+const isFiltered = computed(() => {
+  return (
+    selectedStatus.value !== "all" ||
+    (selectedCategory.value !== "all" && selectedCategory.value !== "") ||
+    (selectedFavcat.value !== "all" && selectedFavcat.value !== "") ||
+    Boolean(archiveSearch.value.trim())
+  );
+});
+
+const statusCounts = computed(() => {
+  let updates = 0;
+  let downloading = 0;
+  let failed = 0;
+  const dlStatuses = ["downloading", "zipping", "pending", "submitting"];
+  for (const a of s.archives.value || []) {
+    if (a.update_available) updates++;
+    if (
+      dlStatuses.includes(a.status) ||
+      dlStatuses.includes(a.version_update?.status)
+    ) {
+      downloading++;
+    }
+    if (a.status === "failed" || a.version_update?.status === "failed") {
+      failed++;
+    }
+  }
+  return {
+    all: s.archives.value?.length || 0,
+    updates,
+    downloading,
+    failed,
+  };
+});
+
+const categoryCounts = computed(() => {
+  const counts = {};
+  for (const cat of EH_CATEGORIES) counts[cat.key] = 0;
+  for (const a of s.archives.value || []) {
+    const c = a.metadata?.category;
+    if (c) {
+      const match = EH_CATEGORIES.find(
+        (cat) => cat.key.toLowerCase() === c.toLowerCase(),
+      );
+      if (match) counts[match.key]++;
+    }
+  }
+  return counts;
+});
+
+const favcatList = computed(() => {
+  const counts = {};
+  for (let i = 0; i < 10; i++) counts[i] = 0;
+  for (const a of s.archives.value || []) {
+    if (a.is_favorited && a.favcat != null) {
+      const id = Number(a.favcat);
+      if (counts[id] !== undefined) counts[id]++;
+    }
+  }
+  const cats = s.favcats.value || [];
+  const list = [];
+  for (let i = 0; i < 10; i++) {
+    const found = cats.find((c) => Number(c.id) === i);
+    list.push({
+      id: i,
+      name: found?.name || `收藏夹 ${i}`,
+      count: counts[i] || 0,
+    });
+  }
+  return list;
+});
+
+const unfavoritedCount = computed(() => {
+  return (s.archives.value || []).filter((a) => !a.is_favorited).length;
+});
+
+const favoritedCount = computed(() => {
+  return (s.archives.value || []).filter((a) => a.is_favorited).length;
+});
+
+const categoryLabel = computed(() => {
+  if (!selectedCategory.value || selectedCategory.value === "all") {
+    return "全部分类";
+  }
+  const found = EH_CATEGORIES.find(
+    (c) => c.key.toLowerCase() === selectedCategory.value.toLowerCase(),
+  );
+  return found ? found.label : selectedCategory.value;
+});
+
+const favcatLabel = computed(() => {
+  if (!selectedFavcat.value || selectedFavcat.value === "all") {
+    return "全部收藏";
+  }
+  if (selectedFavcat.value === "unfavorited") return "未收藏";
+  if (selectedFavcat.value === "favorited") return "已收藏";
+  const id = Number(selectedFavcat.value);
+  const found = favcatList.value.find((c) => c.id === id);
+  return found ? `${found.id}: ${found.name}` : `收藏夹 ${id}`;
+});
+
+const filteredArchives = computed(() => {
+  let list = s.archives.value || [];
+
+  // 1. 状态维度
+  if (selectedStatus.value === "updates") {
+    list = list.filter((a) => Boolean(a.update_available));
+  } else if (selectedStatus.value === "downloading") {
+    const dlStatuses = ["downloading", "zipping", "pending", "submitting"];
+    list = list.filter(
+      (a) =>
+        dlStatuses.includes(a.status) ||
+        dlStatuses.includes(a.version_update?.status),
+    );
+  } else if (selectedStatus.value === "failed") {
+    list = list.filter(
+      (a) => a.status === "failed" || a.version_update?.status === "failed",
+    );
+  }
+
+  // 2. 分类维度
+  if (selectedCategory.value && selectedCategory.value !== "all") {
+    const target = selectedCategory.value.toLowerCase();
+    list = list.filter(
+      (a) => (a.metadata?.category || "").toLowerCase() === target,
+    );
+  }
+
+  // 3. 收藏维度
+  if (selectedFavcat.value === "unfavorited") {
+    list = list.filter((a) => !a.is_favorited);
+  } else if (selectedFavcat.value === "favorited") {
+    list = list.filter((a) => a.is_favorited);
+  } else if (selectedFavcat.value !== "all" && selectedFavcat.value !== "") {
+    const targetFavcat = Number(selectedFavcat.value);
+    list = list.filter(
+      (a) => a.is_favorited && Number(a.favcat) === targetFavcat,
+    );
+  }
+
+  // 4. 搜索维度
+  const q = archiveSearch.value.trim().toLowerCase();
+  if (q) {
+    list = list.filter((a) => {
+      const title = (a.title || "").toLowerCase();
+      const titleJpn = (a.metadata?.title_jpn || "").toLowerCase();
+      const titleEn = (a.metadata?.title || "").toLowerCase();
+      const gid = String(a.gid || "");
+      const uploader = (a.metadata?.uploader || "").toLowerCase();
+      return (
+        title.includes(q) ||
+        titleJpn.includes(q) ||
+        titleEn.includes(q) ||
+        gid.includes(q) ||
+        uploader.includes(q)
+      );
+    });
+  }
+
+  return list;
+});
 </script>
 <template>
   <div
@@ -288,7 +511,7 @@ const previewItems = computed(() => {
                 ? "设置"
                 : s.page.value === "home"
                   ? "首页编排"
-                  : "归档与收藏"
+                  : "归档"
           }}</span>
         </div>
         <div class="header-actions">
@@ -633,6 +856,8 @@ const previewItems = computed(() => {
                           ? "配置文件"
                           : "默认值")
                 }}</small>
+                <small v-if="key === 'archive_update_interval_days'">0 关闭周期检查；仅写入 settings.toml。</small>
+                <small v-if="key === 'archive_auto_update'">启用后自动购买新版归档，可能消耗 GP；仅写入 settings.toml。</small>
               </div>
               <div class="control">
                 <label v-if="boolean(key)" class="switch"
@@ -696,10 +921,12 @@ const previewItems = computed(() => {
                   :type="
                     secret(key)
                       ? 'password'
-                      : key === 'cache_max_gb'
+                      : key === 'cache_max_gb' || key === 'archive_update_interval_days'
                         ? 'number'
                         : 'text'
                   "
+                  :min="key === 'archive_update_interval_days' ? 0 : undefined"
+                  :step="key === 'archive_update_interval_days' ? 1 : undefined"
                   :model-value="s.form.value[key] ?? ''"
                   :placeholder="
                     secret(key)
@@ -1039,118 +1266,197 @@ const previewItems = computed(() => {
             </Card>
           </div></template
         >
-        <template v-if="s.page.value === 'archive'"
-          ><div class="heading">
+        <template v-if="s.page.value === 'archive'">
+          <div class="heading">
             <div>
               <small>本地存档</small>
-              <h1>归档与收藏</h1>
+              <h1>归档</h1>
               <p>归档操作可能消耗账户 GP；每次开始前会明确确认。</p>
             </div>
           </div>
-          <div class="archive-stats">
-            <Badge variant="secondary"
-              >归档项目
-              {{
-                s.archiveStats.value.entries ?? s.archives.value.length
-              }}</Badge
-            >
-            <Badge
-              v-for="(count, status) in s.archiveStats.value.by_status || {}"
-              :key="status"
-              variant="outline"
-              >{{ status }} · {{ count }}</Badge
-            >
-          </div>
-          <Card class="panel">
-            <CardHeader class="panel-header">
-              <CardTitle role="heading" aria-level="2">新建归档</CardTitle>
-              <CardDescription>
-              输入画廊 URL、archiver URL 或 gid token。归档需要已配置 IPB
-              登录态和星会员资格。
-              </CardDescription>
-            </CardHeader>
-            <CardContent class="panel-body">
-            <div
-              v-if="!s.status.value?.site?.has_ipb"
-              class="inline-alert"
-            >
-              <Alert variant="destructive" class="credential-alert">
-                <CircleAlert />
-                <AlertDescription>
-                  未检测到完整的 IPB 登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。
-                </AlertDescription>
-              </Alert>
-            </div>
-            <div class="create">
-              <Input
-                v-model="s.archiveInput.value"
-                placeholder="https://e-hentai.org/g/123456/abcdef/ 或 gid token"
-              /><Button
-                variant="outline"
-                :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
-                @click="s.getQuote"
+          <div class="archive-action-bar">
+            <!-- 左侧分段器：全部 / 可更新 / 下载中 / 失败 -->
+            <div class="segmented-control" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                class="segment-btn"
+                :class="{ active: selectedStatus === 'all' }"
+                @click="selectedStatus = 'all'"
               >
-                <Search />查询报价
+                <span>全部</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="segment-btn"
+                :class="{ active: selectedStatus === 'updates' }"
+                @click="selectedStatus = 'updates'"
+              >
+                <span>可更新</span>
+                <span
+                  v-if="statusCounts.updates > 0"
+                  class="segment-badge segment-badge-warn"
+                >
+                  {{ statusCounts.updates }}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="segment-btn"
+                :class="{ active: selectedStatus === 'downloading' }"
+                @click="selectedStatus = 'downloading'"
+              >
+                <span>下载中</span>
+                <span
+                  v-if="statusCounts.downloading > 0"
+                  class="segment-badge segment-badge-active"
+                >
+                  {{ statusCounts.downloading }}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="segment-btn"
+                :class="{ active: selectedStatus === 'failed' }"
+                @click="selectedStatus = 'failed'"
+              >
+                <span>失败</span>
+                <span
+                  v-if="statusCounts.failed > 0"
+                  class="segment-badge segment-badge-destructive"
+                >
+                  {{ statusCounts.failed }}
+                </span>
+              </button>
+            </div>
+
+            <!-- 右侧控件区：搜索 + 2个Menu picker + 新建归档 -->
+            <div class="action-bar-right">
+              <div class="toolbar-search-box">
+                <Search class="size-3.5 search-icon text-muted-foreground" />
+                <Input
+                  v-model="archiveSearch"
+                  placeholder="搜索画廊..."
+                  class="toolbar-search-input"
+                />
+                <button
+                  v-if="archiveSearch"
+                  type="button"
+                  class="search-clear-btn"
+                  @click="archiveSearch = ''"
+                  aria-label="清除搜索"
+                >
+                  <X class="size-3" />
+                </button>
+              </div>
+
+              <!-- Menu Picker 1: 全部分类 (Category) -->
+              <Select v-model="selectedCategory">
+                <SelectTrigger size="sm" class="menu-picker-trigger">
+                  <Tag class="size-3.5 text-muted-foreground shrink-0" />
+                  <SelectValue :placeholder="categoryLabel">
+                    <span class="menu-picker-label">{{ categoryLabel }}</span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectItem value="all">
+                    <span class="font-medium">全部分类</span>
+                  </SelectItem>
+                  <SelectItem
+                    v-for="cat in EH_CATEGORIES"
+                    :key="cat.key"
+                    :value="cat.key"
+                  >
+                    <span class="inline-flex items-center gap-1.5">
+                      <span class="cat-dot" :style="{ backgroundColor: cat.color }"></span>
+                      <span>{{ cat.label }}</span>
+                      <span class="text-xs text-muted-foreground font-mono">({{ categoryCounts[cat.key] || 0 }})</span>
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              <!-- Menu Picker 2: 全部收藏 (Favcat) -->
+              <Select v-model="selectedFavcat">
+                <SelectTrigger size="sm" class="menu-picker-trigger">
+                  <Bookmark class="size-3.5 text-muted-foreground shrink-0" />
+                  <SelectValue :placeholder="favcatLabel">
+                    <span class="menu-picker-label">{{ favcatLabel }}</span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectItem value="all">
+                    <span class="font-medium">全部收藏</span>
+                  </SelectItem>
+                  <SelectItem value="unfavorited">
+                    <span class="inline-flex items-center gap-1.5">
+                      <span>未收藏</span>
+                      <span class="text-xs text-muted-foreground font-mono">({{ unfavoritedCount }})</span>
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="favorited">
+                    <span class="inline-flex items-center gap-1.5">
+                      <span>已收藏</span>
+                      <span class="text-xs text-muted-foreground font-mono">({{ favoritedCount }})</span>
+                    </span>
+                  </SelectItem>
+                  <SelectSeparator class="my-1" />
+                  <SelectItem
+                    v-for="cat in favcatList"
+                    :key="cat.id"
+                    :value="String(cat.id)"
+                  >
+                    <span class="inline-flex items-center gap-1.5">
+                      <span>{{ cat.id }}: {{ cat.name }}</span>
+                      <span class="text-xs text-muted-foreground font-mono">({{ cat.count }})</span>
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Button
+                v-if="isFiltered"
+                variant="ghost"
+                size="xs"
+                class="h-8 text-xs text-muted-foreground hover:text-foreground px-2"
+                @click="resetFilters"
+              >
+                重置
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 gap-1.5 font-medium shadow-xs"
+                @click="openCreateArchiveDialog"
+              >
+                <Plus class="size-3.5" />新建归档
               </Button>
             </div>
-            <div v-if="s.quote.value" class="quote">
-              <b>{{ s.quote.value.title || "报价已获取（不会扣除 GP）" }}</b
-              ><span v-if="s.quote.value.gp_balance">
-                · 账户余额
-                {{ s.quote.value.gp_balance.toLocaleString() }} GP</span
-              >
-              <div class="quote-pick">
-                <label class="quality-label">
-                  <span>画质档</span>
-                  <Select v-model="s.selectedQuality.value">
-                    <SelectTrigger class="quality-select">
-                      <SelectValue placeholder="选择画质档" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem
-                        v-for="o in (s.quote.value.options || []).filter(
-                          (x) => x.available,
-                        )"
-                        :key="o.or"
-                        :value="o.or"
-                      >
-                      {{ o.label }}{{ o.unlocked ? "（已解锁）" : "" }} ·
-                      {{
-                        o.gp_price
-                          ? o.gp_price.toLocaleString() + " GP"
-                          : "Free"
-                      }}{{ o.size ? " · " + o.size : "" }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </label>
-                <Button
-                  @click="s.openArchiveConfirm"
-                  :disabled="!s.selectedQuality.value"
-                  >确认档位并开始</Button
-                >
-              </div>
-              <small v-if="s.quote.value.options?.some((o) => !o.available)"
-                >不可用档：{{
-                  s.quote.value.options
-                    .filter((o) => !o.available)
-                    .map((o) => o.label)
-                    .join("、")
-                }}</small
-              >
-            </div>
-            </CardContent>
-          </Card>
+          </div>
           <div class="section-title">
             <h2>归档图库</h2>
-            <span>{{ s.archives.value.length }} 个项目</span>
+            <span>{{
+              isFiltered
+                ? `显示 ${filteredArchives.length} / ${s.archives.value.length} 个项目`
+                : `${s.archives.value.length} 个项目`
+            }}</span>
           </div>
           <div v-if="!s.archives.value.length" class="panel empty">
             当前没有归档项目。
           </div>
-          <div class="gallery">
+          <div v-else-if="!filteredArchives.length" class="panel empty">
+            <p>没有符合当前筛选条件的归档项目。</p>
+            <Button variant="link" size="sm" @click="resetFilters"
+              >清除所有筛选条件</Button
+            >
+          </div>
+          <div v-else class="gallery">
             <Card
-              v-for="a in s.archives.value"
+              v-for="a in filteredArchives"
               :key="a.gid + '/' + a.token"
               class="gallery-card"
             >
@@ -1198,7 +1504,11 @@ const previewItems = computed(() => {
                 <Button as-child variant="link" size="sm">
                 <a
                   :href="
-                    'https://e-hentai.org/g/' + a.gid + '/' + a.token + '/'
+                    'https://e-hentai.org/g/' +
+                    (a.active_gid || a.gid) +
+                    '/' +
+                    (a.active_token || a.token) +
+                    '/'
                   "
                   target="_blank"
                   rel="noopener noreferrer"
@@ -1208,15 +1518,28 @@ const previewItems = computed(() => {
                 ><Button
                   variant="link"
                   size="sm"
+                  v-if="a.update_available"
+                  :disabled="
+                    s.busy.value ||
+                    !s.status.value?.site?.has_ipb ||
+                    ['submitting', 'pending', 'downloading', 'zipping'].includes(
+                      a.version_update?.status,
+                    )
+                  "
+                  @click="handleQuoteUpdate(a)"
+                >更新版本</Button
+                ><Button
+                  variant="link"
+                  size="sm"
                   v-if="a.status === 'failed'"
-                  @click="s.quoteArchiveFor(a)"
+                  @click="handleQuoteArchive(a)"
                 >
                   报价并重试</Button
                 ><Button variant="destructive" size="sm" @click="s.requestDelete(a)">删除归档</Button>
               </div>
               <div class="gallery-actions">
                 <Select
-                  :model-value="String(a.favcat ?? '')"
+                  :model-value="a.favcat != null ? String(a.favcat) : ''"
                   @update:model-value="
                     s.favorite(
                       a,
@@ -1226,10 +1549,12 @@ const previewItems = computed(() => {
                   "
                 >
                   <SelectTrigger class="favorite-select">
-                    <SelectValue placeholder="选择收藏分类" />
+                    <SelectValue placeholder="选择收藏分类">
+                      {{ a.favcat != null ? (a.favcat_name || `收藏夹 ${a.favcat}`) : '选择收藏分类' }}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="cat in s.favcats.value" :key="cat.id" :value="String(cat.id)">
+                  <SelectContent position="popper">
+                    <SelectItem v-for="cat in favcatList" :key="cat.id" :value="String(cat.id)">
                       {{ cat.id }}: {{ cat.name }}
                     </SelectItem>
                   </SelectContent>
@@ -1243,7 +1568,9 @@ const previewItems = computed(() => {
                   移除收藏
                 </Button>
               </div>
-              <small v-if="a.error" class="archive-error">{{ a.error }}</small>
+              <small v-if="a.error || a.version_update?.error" class="archive-error">
+                {{ a.error || a.version_update.error }}
+              </small>
             </Card>
           </div></template
         >
@@ -1251,10 +1578,12 @@ const previewItems = computed(() => {
       <AlertDialog v-model:open="s.confirmArchive.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认开始归档</AlertDialogTitle>
+            <AlertDialogTitle>{{ s.quoteAction.value === "update" ? "确认更新归档版本" : "确认开始归档" }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{
-                s.quoteAction.value === "refresh"
+                s.quoteAction.value === "update"
+                  ? "将使用现有归档的画质档请求新版本。若该档位未解锁，可能消耗 GP，请核对报价后确认。"
+                  : s.quoteAction.value === "refresh"
                   ? "重试会重新向上游请求归档。未解锁档位可能消耗 GP，请核对画质档和报价。"
                   : "归档任务会请求上游。未解锁档位会消耗你的账户 GP，请核对档位和价格。"
               }}
@@ -1279,7 +1608,7 @@ const previewItems = computed(() => {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button @click="s.startArchive">确认开始归档</Button></AlertDialogAction>
+            <AlertDialogAction as-child><Button :disabled="s.busy.value" @click="s.startArchive">{{ s.quoteAction.value === "update" ? "确认更新版本" : "确认开始归档" }}</Button></AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1334,6 +1663,92 @@ const previewItems = computed(() => {
           <AlertDialogFooter>
             <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
             <AlertDialogAction as-child><Button variant="destructive" @click="s.confirmFavoriteRemoval">移除收藏</Button></AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog v-model:open="createArchiveDialogOpen">
+        <AlertDialogContent class="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>新建画廊归档</AlertDialogTitle>
+            <AlertDialogDescription>
+              输入画廊 URL、archiver URL 或 gid token。归档需要已配置 IPB
+              登录态和星会员资格。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div class="space-y-3 my-2 text-left">
+            <div v-if="!s.status.value?.site?.has_ipb" class="inline-alert">
+              <Alert variant="destructive">
+                <CircleAlert class="size-4" />
+                <AlertDescription class="text-xs">
+                  未检测到完整的 IPB 登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。
+                </AlertDescription>
+              </Alert>
+            </div>
+            <div class="flex gap-2">
+              <Input
+                v-model="s.archiveInput.value"
+                placeholder="https://e-hentai.org/g/123456/abcdef/ 或 gid token"
+                @keydown.enter.prevent="s.getQuote('start')"
+                class="text-xs flex-1"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="!s.status.value?.site?.has_ipb || s.busy.value || !s.archiveInput.value.trim()"
+                @click="s.getQuote('start')"
+              >
+                <Search class="size-3.5" />查询报价
+              </Button>
+            </div>
+            <div v-if="s.quote.value" class="rounded-md border border-border bg-muted/40 p-3 space-y-2">
+              <div class="font-medium text-foreground text-xs line-clamp-2">
+                {{ s.quote.value.title || "报价已获取" }}
+              </div>
+              <div v-if="s.quote.value.gp_balance" class="text-muted-foreground text-[11px]">
+                账户余额：{{ s.quote.value.gp_balance.toLocaleString() }} GP
+              </div>
+              <div class="flex items-center gap-2 pt-1">
+                <label class="text-xs text-muted-foreground shrink-0">画质档</label>
+                <Select v-model="s.selectedQuality.value">
+                  <SelectTrigger class="h-8 text-xs flex-1">
+                    <SelectValue placeholder="选择画质档" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="o in (s.quote.value.options || []).filter(
+                        (x) => x.available,
+                      )"
+                      :key="o.or"
+                      :value="o.or"
+                    >
+                      {{ o.label }}{{ o.unlocked ? "（已解锁）" : "" }} ·
+                      {{
+                        o.gp_price
+                          ? o.gp_price.toLocaleString() + " GP"
+                          : "Free"
+                      }}{{ o.size ? " · " + o.size : "" }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p class="text-[11px] text-amber-600 dark:text-amber-400">
+                归档任务会请求上游。未解锁档位会消耗账户 GP，请核对档位和价格。
+              </p>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel as-child>
+              <Button variant="outline" size="sm" @click="closeCreateArchiveDialog">取消</Button>
+            </AlertDialogCancel>
+            <AlertDialogAction as-child>
+              <Button
+                size="sm"
+                :disabled="!s.quote.value || !s.selectedQuality.value || s.busy.value"
+                @click="confirmAndStartArchive"
+              >
+                确认开始归档
+              </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

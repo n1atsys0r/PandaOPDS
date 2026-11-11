@@ -1037,6 +1037,196 @@
   margin-top: 0.25rem;
 }
 
+/* Archive action bar & segmented control */
+.archive-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 1.25rem;
+  flex-wrap: wrap;
+}
+
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.25rem;
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  border: none;
+}
+
+.segment-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.segment-btn:hover {
+  color: var(--foreground);
+}
+
+.segment-btn.active {
+  background: var(--background);
+  border-color: var(--border);
+  color: var(--foreground);
+  font-weight: 600;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
+.dark .segment-btn.active {
+  background: transparent;
+  border-color: oklch(1 0 0 / 0.24);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+.segment-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.125rem;
+  padding: 0 0.35rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  background: rgb(0 0 0 / 0.08);
+  color: var(--foreground);
+  font-feature-settings: "tnum";
+  line-height: 1;
+}
+
+.segment-btn.active .segment-badge {
+  background: rgb(0 0 0 / 0.11);
+  color: var(--foreground);
+}
+
+.dark .segment-badge {
+  background: rgb(255 255 255 / 0.15);
+  color: var(--foreground);
+}
+
+.dark .segment-btn.active .segment-badge {
+  background: rgb(255 255 255 / 0.22);
+  color: #ffffff;
+}
+
+.segment-badge-warn {
+  background: oklch(0.92 0.08 70);
+  color: oklch(0.4 0.12 70);
+}
+
+.dark .segment-badge-warn {
+  background: oklch(0.32 0.07 70);
+  color: oklch(0.88 0.1 70);
+}
+
+.segment-badge-active {
+  background: oklch(0.9 0.09 230);
+  color: oklch(0.35 0.14 230);
+}
+
+.dark .segment-badge-active {
+  background: oklch(0.32 0.08 230);
+  color: oklch(0.85 0.12 230);
+}
+
+.segment-badge-destructive {
+  background: oklch(0.92 0.1 25);
+  color: oklch(0.45 0.18 25);
+}
+
+.dark .segment-badge-destructive {
+  background: oklch(0.38 0.12 25);
+  color: oklch(0.9 0.14 25);
+}
+
+.action-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.toolbar-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 11rem;
+}
+
+.toolbar-search-box .search-icon {
+  position: absolute;
+  left: 0.625rem;
+  pointer-events: none;
+}
+
+.toolbar-search-input {
+  height: 2rem !important;
+  padding-left: 2rem !important;
+  padding-right: 1.625rem !important;
+  font-size: 0.75rem !important;
+}
+
+.menu-picker-trigger {
+  height: 2rem !important;
+  padding-inline: 0.65rem 0.5rem !important;
+  gap: 0.4rem !important;
+  font-size: 0.8125rem !important;
+  background: var(--background) !important;
+  min-width: 6.5rem;
+}
+
+.menu-picker-label {
+  display: inline-block;
+  min-width: 0;
+  font-weight: 500;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border: none;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 9999px;
+}
+
+.search-clear-btn:hover {
+  color: var(--foreground);
+}
+
 @media (max-width: 1100px) {
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1172,5 +1362,31 @@
 
   .gallery-actions {
     justify-content: flex-start;
+  }
+
+  .archive-action-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .segmented-control {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .segment-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .action-bar-right {
+    width: 100%;
+  }
+
+  .toolbar-search-box {
+    width: 100%;
+    max-width: 100%;
   }
 }

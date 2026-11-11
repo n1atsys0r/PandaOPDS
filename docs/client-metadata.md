@@ -121,7 +121,7 @@
 | 字段 | 类型 | 说明 | 条件 |
 |---|---|---|---|
 | `title` | string | 干净标题（已剥离 `[...]`/`(...)` 标记；作者见 `authors` 字段） | 恒有 |
-| `identifier` | string | `urn:ehentai:gallery:{gid}:{token}` | 恒有 |
+| `identifier` | string | `urn:ehentai:gallery:{gid}:{token}`，归档条目沿用首次归档的 gid/token | 恒有 |
 | `modified` | string | 上传时间 ISO8601（UTC） | 恒有 |
 | `authors` | [ {`name`} ] | 作者（从标题 `[Author]` 括号解析，见 §3.6）；上传者本人见详情文档 `x:uploader` | 非空时 |
 | `author` | [ {`name`} ] | RWPM 单数形式，与 `authors` 并存（Stump/Readium 解析器只认 `author`） | 非空时 |
@@ -174,6 +174,8 @@
 - **`OPDS_ACQ_DETAIL=false`（默认，direct）**：acquisition 直接指向图片流——客户端点击即读，**零二次请求**。不输出指向详情文档的 acquisition（详情文档仍可访问，客户端由 identifier 中的 gid/token 拼 URL）。
 - **`OPDS_ACQ_DETAIL=true`（detail）**：acquisition 指向详情文档——客户端二次请求详情（完整元数据）后再读。
 - 未知页数时（无 `page_count`）：`direct` 模式不输出 acquisition/stream；`detail` 模式保留指向详情文档的 acquisition（无 `numberOfItems`）。
+
+归档条目切换到新版后，详情入口仍用原条目的 gid/token，图片流和封面链接使用实际版本的 gid/token。已发布的旧图片流地址继续指向旧版。
 
 | rel | href | type | 附加 |
 |---|---|---|---|

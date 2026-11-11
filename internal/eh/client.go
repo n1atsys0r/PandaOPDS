@@ -34,6 +34,9 @@ type Client struct {
 	Throttle     *Throttle
 	sessionReady bool
 	sessionMu    *contextMutex
+	gdataMu      *contextMutex
+	gdataLast    time.Time
+	gdataCount   int
 }
 
 func NewClient(cfg config.Settings, transport http.RoundTripper, throttle *Throttle) *Client {
@@ -55,7 +58,7 @@ func NewClient(cfg config.Settings, transport http.RoundTripper, throttle *Throt
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	return &Client{cfg: cfg, HTTP: &http.Client{Transport: transport, Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)), Jar: jar}, Throttle: throttle, sessionMu: newContextMutex()}
+	return &Client{cfg: cfg, HTTP: &http.Client{Transport: transport, Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)), Jar: jar}, Throttle: throttle, sessionMu: newContextMutex(), gdataMu: newContextMutex()}
 }
 func (c *Client) BaseURL() string { return "https://" + c.cfg.SiteHost() }
 func (c *Client) EstablishSession(ctx context.Context) error {
@@ -336,18 +339,101 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	return n, e
 }
 func (c *Client) GData(ctx context.Context, gid int, token string) (GalleryMetadata, error) {
-	body, _, e := c.PostJSON(ctx, "https://api.e-hentai.org/api.php", map[string]any{"method": "gdata", "gidlist": [][]any{{gid, token}}, "namespace": 1}, KindAPI)
-	if e != nil {
-		return GalleryMetadata{}, e
+	items, err := c.GDataBatch(ctx, []GalleryRef{{GID: gid, Token: token}})
+	if err != nil {
+		return GalleryMetadata{}, err
 	}
-	m, e := ParseGData(body)
-	if e != nil {
-		return GalleryMetadata{}, e
+	for _, item := range items {
+		if item.GID == gid && item.Token == token {
+			return item, nil
+		}
 	}
-	if len(m) == 0 {
-		return GalleryMetadata{}, errors.New("gdata returned no metadata")
+	return GalleryMetadata{}, errors.New("gdata returned no matching metadata")
+}
+
+// GDataBatch fetches metadata for up to 25 galleries per upstream request.
+// Results are restricted to exact requested (gid, token) pairs so malformed or
+// unexpected upstream rows cannot be mistaken for a gallery version.
+func (c *Client) GDataBatch(ctx context.Context, refs []GalleryRef) ([]GalleryMetadata, error) {
+	if len(refs) == 0 {
+		return []GalleryMetadata{}, nil
 	}
-	return m[0], nil
+	wanted := make(map[GalleryRef]bool, len(refs))
+	for _, ref := range refs {
+		wanted[ref] = true
+	}
+	var result []GalleryMetadata
+	for start := 0; start < len(refs); start += 25 {
+		end := start + 25
+		if end > len(refs) {
+			end = len(refs)
+		}
+		gidlist := make([][]any, 0, end-start)
+		for _, ref := range refs[start:end] {
+			gidlist = append(gidlist, []any{ref.GID, ref.Token})
+		}
+		body, _, err := c.gdataPostJSON(ctx, map[string]any{"method": "gdata", "gidlist": gidlist, "namespace": 1})
+		if err != nil {
+			return result, err
+		}
+		items, err := ParseGData(body)
+		if err != nil {
+			return result, err
+		}
+		for _, item := range items {
+			if wanted[GalleryRef{GID: item.GID, Token: item.Token}] {
+				result = append(result, item)
+			}
+		}
+	}
+	return result, nil
+}
+
+// gdataPostJSON spaces all metadata dispatches across this client, including
+// concurrent batches and single-gallery requests, without pacing unrelated API calls.
+func (c *Client) gdataPostJSON(ctx context.Context, payload any) ([]byte, http.Header, error) {
+	if err := c.gdataMu.Lock(ctx); err != nil {
+		return nil, nil, err
+	}
+	defer c.gdataMu.Unlock()
+	wait, nextCount := gdataDispatchSchedule(time.Now(), c.gdataLast, c.gdataCount)
+	if wait > 0 {
+		if err := sleepContext(ctx, wait); err != nil {
+			return nil, nil, err
+		}
+	}
+	c.gdataLast = time.Now()
+	c.gdataCount = nextCount
+	return c.PostJSON(ctx, "https://api.e-hentai.org/api.php", payload, KindAPI)
+}
+
+const (
+	gdataMinSpacing  = 1250 * time.Millisecond
+	gdataBurstWindow = 5 * time.Second
+	gdataBurstLimit  = 4
+)
+
+// gdataDispatchSchedule returns the wait before the next dispatch and the
+// burst count to record at that dispatch. Callers serialize access to its state.
+func gdataDispatchSchedule(now, last time.Time, count int) (time.Duration, int) {
+	if last.IsZero() || now.Sub(last) >= gdataBurstWindow {
+		return 0, 1
+	}
+	wait := maxDuration(0, gdataMinSpacing-now.Sub(last))
+	if count >= gdataBurstLimit {
+		cooldown := maxDuration(0, gdataBurstWindow-now.Sub(last))
+		if cooldown > wait {
+			return cooldown, 1
+		}
+	}
+	return wait, count + 1
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 func (c *Client) APIURL() string {
 	if c.cfg.EHSite == "exhentai" {

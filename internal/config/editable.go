@@ -8,11 +8,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
 
-var editableKeys = []string{"EH_SITE", "IPB_MEMBER_ID", "IPB_PASS_HASH", "IGNEOUS", "PUBLIC_BASE_URL", "PSE_PAGE_BASE", "OPDS_ACQ_DETAIL", "TAG_STATUS_FILTER", "TAG_TRANSLATION_ENABLED", "COMMENTS_ENABLED", "IMAGE_CACHE_ENABLED", "CACHE_MAX_GB", "FAVORITES_SYNC_INTERVAL_SECONDS"}
+var editableKeys = []string{"EH_SITE", "IPB_MEMBER_ID", "IPB_PASS_HASH", "IGNEOUS", "PUBLIC_BASE_URL", "PSE_PAGE_BASE", "OPDS_ACQ_DETAIL", "TAG_STATUS_FILTER", "TAG_TRANSLATION_ENABLED", "COMMENTS_ENABLED", "IMAGE_CACHE_ENABLED", "CACHE_MAX_GB", "FAVORITES_SYNC_INTERVAL_SECONDS", "ARCHIVE_UPDATE_INTERVAL_DAYS", "ARCHIVE_AUTO_UPDATE"}
 
 func EditablePath() string {
 	if p := os.Getenv("SETTINGS_CONFIG"); p != "" {
@@ -65,6 +66,12 @@ func DecodeEditableFile(b []byte) (map[string]any, error) {
 
 func ApplyEditableOverrides(s Settings, raw map[string]any) Settings {
 	for _, key := range editableKeys {
+		if key == "ARCHIVE_UPDATE_INTERVAL_DAYS" || key == "ARCHIVE_AUTO_UPDATE" { // File-only settings: same-named env vars have no effect.
+			if v, ok := raw[key]; ok {
+				_ = setEditableValue(&s, key, v)
+			}
+			continue
+		}
 		if _, ok := os.LookupEnv(key); ok {
 			continue
 		}
@@ -126,6 +133,10 @@ func EditableValue(s Settings, k string) any {
 		return s.CacheMaxGB
 	case "FAVORITES_SYNC_INTERVAL_SECONDS":
 		return s.FavoritesSyncIntervalSeconds
+	case "ARCHIVE_UPDATE_INTERVAL_DAYS":
+		return s.ArchiveUpdateIntervalSeconds / 86400
+	case "ARCHIVE_AUTO_UPDATE":
+		return s.ArchiveAutoUpdate
 	}
 	return nil
 }
@@ -136,7 +147,7 @@ func ValidateEditableValue(k string, v any) error {
 			return fmt.Errorf("%s must be a string", k)
 		}
 	}
-	if k == "OPDS_ACQ_DETAIL" || k == "TAG_TRANSLATION_ENABLED" || k == "COMMENTS_ENABLED" || k == "IMAGE_CACHE_ENABLED" {
+	if k == "OPDS_ACQ_DETAIL" || k == "TAG_TRANSLATION_ENABLED" || k == "COMMENTS_ENABLED" || k == "IMAGE_CACHE_ENABLED" || k == "ARCHIVE_AUTO_UPDATE" {
 		if _, ok := v.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean", k)
 		}
@@ -146,6 +157,15 @@ func ValidateEditableValue(k string, v any) error {
 		case int64, float64:
 		default:
 			return fmt.Errorf("PSE_PAGE_BASE must be an integer")
+		}
+	}
+	if k == "ARCHIVE_UPDATE_INTERVAL_DAYS" {
+		n, ok := archiveDaysValue(v)
+		if !ok {
+			return fmt.Errorf("ARCHIVE_UPDATE_INTERVAL_DAYS must be a whole integer")
+		}
+		if n < 0 || n > archiveMaxDays() {
+			return fmt.Errorf("ARCHIVE_UPDATE_INTERVAL_DAYS is out of range")
 		}
 	}
 	if k == "CACHE_MAX_GB" || k == "FAVORITES_SYNC_INTERVAL_SECONDS" {
@@ -267,10 +287,43 @@ func setEditableValue(s *Settings, k string, v any) error {
 			}
 		}
 		s.FavoritesSyncIntervalSeconds = n
+	case "ARCHIVE_UPDATE_INTERVAL_DAYS":
+		n, ok := archiveDaysValue(v)
+		if !ok || n > archiveMaxDays() {
+			return fmt.Errorf("invalid archive update interval")
+		}
+		s.ArchiveUpdateIntervalSeconds = int(n) * 86400
+	case "ARCHIVE_AUTO_UPDATE":
+		b, e := boolean()
+		s.ArchiveAutoUpdate = b
+		return e
 	default:
 		return fmt.Errorf("unknown settings key %q", k)
 	}
 	return nil
+}
+
+func archiveDaysValue(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, n >= 0 && n <= archiveMaxDays()
+	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) || math.Trunc(n) != n || n < 0 || n > float64(archiveMaxDays()) {
+			return 0, false
+		}
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
+
+func archiveMaxDays() int64 {
+	maxIntDays := int64(math.MaxInt / int(86400))
+	maxDurationDays := int64(math.MaxInt64 / int64(24*time.Hour))
+	if maxDurationDays < maxIntDays {
+		return maxDurationDays
+	}
+	return maxIntDays
 }
 
 func WriteEditableFile(path string, values map[string]any) error {

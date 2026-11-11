@@ -311,8 +311,14 @@ async function getQuote(action = "start", target = null) {
     ).data;
     if (state.archiveInput.trim() !== input)
       throw Error("报价已过期，因为输入内容发生了变化。请重新查询。");
-    const option = (result.options || []).find((item) => item.available);
+    const option = (result.options || []).find((item) => item.available &&
+      (action !== "update" || String(item.or) === String(target.root.quality)));
     if (!option) throw Error(result.error || "没有可用的画质档");
+    if (action === "update") {
+      result.options = result.options.filter(
+        (item) => String(item.or) === String(target.root.quality),
+      );
+    }
     state.quote = result;
     state.quoteFor = input;
     state.selectedQuality = option.or;
@@ -321,6 +327,15 @@ async function getQuote(action = "start", target = null) {
 function quoteArchiveFor(a) {
   state.archiveInput = a.gid + " " + a.token;
   return getQuote("refresh", { gid: a.gid, token: a.token });
+}
+function quoteUpdateFor(a) {
+  const target = a.update_available;
+  if (!target || !target.gid || !target.token) return;
+  state.archiveInput = a.gid + " " + a.token;
+  return getQuote("update", {
+    root: { gid: a.gid, token: a.token, quality: a.or },
+    target: { gid: target.gid, token: target.token },
+  });
 }
 function openArchiveConfirm() {
   if (!state.quote || state.quoteFor !== state.archiveInput.trim())
@@ -334,30 +349,52 @@ function openArchiveConfirm() {
   state.confirmArchive = true;
 }
 async function startArchive() {
-  const p = state.quoteTarget || parseInput();
+  const update = state.quoteAction === "update";
+  const p = update ? state.quoteTarget?.target : state.quoteTarget || parseInput();
   const option = state.quote?.options?.find(
     (o) => o.available && String(o.or) === String(state.selectedQuality),
   );
-  if (!p || !option || state.quoteFor !== state.archiveInput.trim())
+  if (!p || !option || state.quoteFor !== state.archiveInput.trim() || (update && (!state.quoteTarget?.root || String(option.or) !== String(state.quoteTarget.root.quality))))
     return (state.error = "报价已过期或画质档无效，请重新查询。");
   state.confirmArchive = false;
   const quality = state.selectedQuality;
   state.quote = null;
   state.quoteFor = "";
   await run(async () => {
-    const result = await api(
-      "/api/archive/" + p.gid + "/" + p.token + "/start",
-      {
+    if (update) {
+      const target = state.quoteTarget.target;
+      const root = state.quoteTarget.root;
+      let maxGP = 0;
+      if (!option.unlocked) {
+        maxGP = Number(option.gp_price);
+        if (
+          option.gp_price == null ||
+          option.gp_price === "" ||
+          !Number.isFinite(maxGP) ||
+          maxGP < 0
+        )
+          return (state.error = "报价中的 GP 金额无效，请重新查询。");
+      }
+      await api("/api/archive/" + root.gid + "/" + root.token + "/update", {
         method: "POST",
-        body: JSON.stringify({
-          quality,
-          force: state.quoteAction === "refresh",
-        }),
-      },
-    );
-    state.notice = result.data.skipped
-      ? "该画廊已归档，未重复提交任务。"
-      : "归档任务已提交";
+        body: JSON.stringify({ gid: target.gid, token: target.token, max_gp: maxGP }),
+      });
+      state.notice = "版本更新任务已提交";
+    } else {
+      const result = await api(
+        "/api/archive/" + p.gid + "/" + p.token + "/start",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            quality,
+            force: state.quoteAction === "refresh",
+          }),
+        },
+      );
+      state.notice = result.data.skipped
+        ? "该画廊已归档，未重复提交任务。"
+        : "归档任务已提交";
+    }
     state.quote = null;
     state.quoteFor = "";
     state.quoteTarget = null;
@@ -543,6 +580,7 @@ export function useApp() {
     loadCategories,
     getQuote,
     quoteArchiveFor,
+    quoteUpdateFor,
     openArchiveConfirm,
     startArchive,
     askClearCache,

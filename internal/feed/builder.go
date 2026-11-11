@@ -140,17 +140,21 @@ func (b Builder) OpenSearch(path string) string {
 func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query string, next string, facets []AtomFacet) string {
 	entries := make([]AtomEntry, 0, len(items))
 	for _, item := range items {
+		activeGID, activeToken := item.GID, item.Token
+		if item.ActiveGID > 0 && item.ActiveToken != "" {
+			activeGID, activeToken = item.ActiveGID, item.ActiveToken
+		}
 		clean, authors := parseTitle(item.Title)
 		entry := AtomEntry{ID: fmt.Sprintf("urn:ehentai:gallery:%d:%s", item.GID, item.Token), Title: clean, Updated: iso(item.PublishTime), Category: &AtomCategory{Term: item.Category, Label: item.Category, Scheme: "http://e-hentai.org"}}
 		if len(authors) > 0 {
 			entry.Author = &AtomAuthor{Name: strings.Join(authors, ", ")}
 		}
-		links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", item.GID, item.Token)), Type: "image/jpeg"}, {Rel: RelAcquisition, Href: b.Href(fmt.Sprintf("/opds/v1.2/gallery/%d/%s/chapters", item.GID, item.Token)), Type: MIMEAtomAcq}}
+		links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), Type: "image/jpeg"}, {Rel: RelAcquisition, Href: b.Href(fmt.Sprintf("/opds/v1.2/gallery/%d/%s/chapters", item.GID, item.Token)), Type: MIMEAtomAcq}}
 		if item.PageCount != nil && *item.PageCount > 0 {
 			count := *item.PageCount
-			links = append(links, AtomLink{Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", item.GID, item.Token)), Type: MIMEImage, Count: &count})
+			links = append(links, AtomLink{Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken)), Type: MIMEImage, Count: &count})
 		}
-		links = append(links, AtomLink{Rel: RelAlternate, Href: b.Upstream(item.GID, item.Token), Type: "text/html", Title: b.Settings.SiteHost()})
+		links = append(links, AtomLink{Rel: RelAlternate, Href: b.Upstream(activeGID, activeToken), Type: "text/html", Title: b.Settings.SiteHost()})
 		entry.Links = links
 		entries = append(entries, entry)
 	}
@@ -181,6 +185,25 @@ func (b Builder) AtomChapter(gid int, token, title, updated, author, category st
 	}
 	return b.atomFeed(title, iso(""), []AtomEntry{e}, nil)
 }
+func (b Builder) AtomChapterVersion(gid int, token string, item eh.GalleryListItem, title, author string) string {
+	activeGID, activeToken := item.ActiveGID, item.ActiveToken
+	if activeGID <= 0 || activeToken == "" {
+		activeGID, activeToken = gid, token
+	}
+	var count *int
+	if item.PageCount != nil {
+		count = item.PageCount
+	}
+	links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), Type: "image/jpeg"}, {Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken)), Type: MIMEImage, Count: count}, {Rel: RelAlternate, Href: b.Upstream(activeGID, activeToken), Type: "text/html", Title: b.Settings.SiteHost()}}
+	e := AtomEntry{ID: fmt.Sprintf("urn:ehentai:gallery:%d:%s", gid, token), Title: "Chapter 1: " + title, Updated: iso(item.PublishTime), Links: links}
+	if author != "" {
+		e.Author = &AtomAuthor{Name: author}
+	}
+	if item.Category != "" {
+		e.Category = &AtomCategory{Term: item.Category, Label: item.Category, Scheme: "http://e-hentai.org"}
+	}
+	return b.atomFeed(title, iso(""), []AtomEntry{e}, nil)
+}
 
 func (b Builder) Publication(item eh.GalleryListItem, detail bool) map[string]any {
 	title, authors := parseTitle(item.Title)
@@ -196,9 +219,16 @@ func (b Builder) Publication(item eh.GalleryListItem, detail bool) map[string]an
 	if item.PageCount != nil {
 		count = *item.PageCount
 	}
-	return b.publication(item.GID, item.Token, title, iso(item.PublishTime), authors, item.Language, count, subjects, extra, detail)
+	activeGID, activeToken := item.ActiveGID, item.ActiveToken
+	if activeGID <= 0 || activeToken == "" {
+		activeGID, activeToken = item.GID, item.Token
+	}
+	return b.publicationVersion(item.GID, item.Token, activeGID, activeToken, title, iso(item.PublishTime), authors, item.Language, count, subjects, extra, detail)
 }
 func (b Builder) publication(gid int, token, title, modified string, authors []string, language string, count int, subjects []map[string]any, extra map[string]any, detail bool) map[string]any {
+	return b.publicationVersion(gid, token, gid, token, title, modified, authors, language, count, subjects, extra, detail)
+}
+func (b Builder) publicationVersion(gid int, token string, activeGID int, activeToken string, title, modified string, authors []string, language string, count int, subjects []map[string]any, extra map[string]any, detail bool) map[string]any {
 	identifier := fmt.Sprintf("urn:ehentai:gallery:%d:%s", gid, token)
 	md := map[string]any{"title": title, "identifier": identifier, "modified": modified}
 	if len(authors) > 0 {
@@ -225,7 +255,7 @@ func (b Builder) publication(gid int, token, title, modified string, authors []s
 		md[k] = v
 	}
 	links := []map[string]any{}
-	stream := b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", gid, token))
+	stream := b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken))
 	props := map[string]any(nil)
 	if count > 0 {
 		props = map[string]any{"numberOfItems": count}
@@ -241,12 +271,12 @@ func (b Builder) publication(gid int, token, title, modified string, authors []s
 			links = append(links, b.Link(RelStream, stream, MIMEImage, "", props))
 		}
 	}
-	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(gid, token), "text/html", b.Settings.SiteHost(), nil))
-	pub := map[string]any{"context": []any{RWPMContext, map[string]string{"x": VocabularyIRI}}, "metadata": md, "links": links, "images": []map[string]string{{"href": b.Href(fmt.Sprintf("/image/%d/%s/thumb", gid, token)), "type": "image/jpeg"}}}
+	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil))
+	pub := map[string]any{"context": []any{RWPMContext, map[string]string{"x": VocabularyIRI}}, "metadata": md, "links": links, "images": []map[string]string{{"href": b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), "type": "image/jpeg"}}}
 	if detail && count > 0 {
 		reading := []map[string]any{}
 		for p := b.Settings.PSEPageBase; p < b.Settings.PSEPageBase+count; p++ {
-			reading = append(reading, map[string]any{"href": b.Href(fmt.Sprintf("/stream/%d/%s/page/%d", gid, token, p)), "type": MIMEImage, "properties": map[string]any{"x:thumbnail": map[string]string{"href": b.Href(fmt.Sprintf("/image/%d/%s/page/%d/thumb", gid, token, p)), "type": "image/jpeg"}}})
+			reading = append(reading, map[string]any{"href": b.Href(fmt.Sprintf("/stream/%d/%s/page/%d", activeGID, activeToken, p)), "type": MIMEImage, "properties": map[string]any{"x:thumbnail": map[string]string{"href": b.Href(fmt.Sprintf("/image/%d/%s/page/%d/thumb", activeGID, activeToken, p)), "type": "image/jpeg"}}})
 		}
 		pub["readingOrder"] = reading
 	}
@@ -403,22 +433,28 @@ func BuildSubjects(tags []eh.GalleryTag, category string, categoryFirst bool) []
 	return (Builder{}).Subjects(tags, category, categoryFirst)
 }
 func (b Builder) DetailLinks(gid int, token, title string, count int) []map[string]any {
+	return b.DetailLinksVersion(gid, token, gid, token, title, count)
+}
+func (b Builder) DetailLinksVersion(gid int, token string, activeGID int, activeToken, title string, count int) []map[string]any {
 	props := map[string]any(nil)
 	if count > 0 {
 		props = map[string]any{"numberOfItems": count}
 	}
-	stream := b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", gid, token))
+	stream := b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken))
 	links := []map[string]any{}
 	if count > 0 {
 		links = append(links, b.Link(RelAcquisition, stream, MIMEImage, title, props), b.Link(RelStream, stream, MIMEImage, "", props))
 	}
-	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(gid, token), "text/html", b.Settings.SiteHost(), nil))
+	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil))
 	return links
 }
 func (b Builder) ReadingOrder(gid int, token string, count int) []map[string]any {
+	return b.ReadingOrderVersion(gid, token, gid, token, count)
+}
+func (b Builder) ReadingOrderVersion(gid int, token string, activeGID int, activeToken string, count int) []map[string]any {
 	out := []map[string]any{}
 	for p := b.Settings.PSEPageBase; p < b.Settings.PSEPageBase+count; p++ {
-		out = append(out, map[string]any{"href": b.Href(fmt.Sprintf("/stream/%d/%s/page/%d", gid, token, p)), "type": MIMEImage, "properties": map[string]any{"x:thumbnail": map[string]string{"href": b.Href(fmt.Sprintf("/image/%d/%s/page/%d/thumb", gid, token, p)), "type": "image/jpeg"}}})
+		out = append(out, map[string]any{"href": b.Href(fmt.Sprintf("/stream/%d/%s/page/%d", activeGID, activeToken, p)), "type": MIMEImage, "properties": map[string]any{"x:thumbnail": map[string]string{"href": b.Href(fmt.Sprintf("/image/%d/%s/page/%d/thumb", activeGID, activeToken, p)), "type": "image/jpeg"}}})
 	}
 	return out
 }

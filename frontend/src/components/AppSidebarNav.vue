@@ -45,7 +45,7 @@ function navigate(page) {
               :is-active="props.page === 'archive'"
               @click="navigate('archive')"
             >
-              <Archive /><span>归档与收藏</span>
+              <Archive /><span>归档</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

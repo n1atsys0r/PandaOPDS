@@ -262,7 +262,12 @@ func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 	if len(authors) > 0 {
 		author = strings.Join(authors, ", ")
 	}
-	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomChapter(gid, token, title, d.PublishTime, author, d.Category, d.ImageCount)))
+	activeGID, activeToken := d.ActiveGID, d.ActiveToken
+	if activeGID <= 0 || activeToken == "" {
+		activeGID, activeToken = gid, token
+	}
+	item := eh.GalleryListItem{GID: gid, Token: token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: d.Category, PublishTime: d.PublishTime, PageCount: &d.ImageCount}
+	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomChapterVersion(gid, token, item, title, author)))
 }
 
 func (s *Server) searchXML20(w http.ResponseWriter, r *http.Request) {
@@ -692,7 +697,11 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 	}
 	title, authors := feed.ParseDetailTitle(d.Title, d.TitleJPN)
 	count := d.ImageCount
-	if s.Store.IsReady(gid, token) {
+	activeGID, activeToken := d.ActiveGID, d.ActiveToken
+	if activeGID <= 0 || activeToken == "" {
+		activeGID, activeToken = gid, token
+	}
+	if activeGID == gid && activeToken == token && s.Store.IsReady(gid, token) {
 		if n := s.Store.PageCount(gid, token); n > 0 {
 			count = n
 		}
@@ -721,7 +730,7 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 	if note := newerVersionsNote(d.NewerVersions, s.builder().Href); note != "" {
 		extra["x:note"] = note
 	}
-	item := eh.GalleryListItem{GID: gid, Token: token, Title: title, PageCount: &count, Language: d.Language, PublishTime: d.PublishTime, Tags: d.Tags, Category: d.Category}
+	item := eh.GalleryListItem{GID: gid, Token: token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, PageCount: &count, Language: d.Language, PublishTime: d.PublishTime, Tags: d.Tags, Category: d.Category}
 	pub := s.builder().Publication(item, true)
 	metadata := pub["metadata"].(map[string]any)
 	metadata["title"] = title
@@ -762,9 +771,9 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 		}
 		metadata["x:reviews"] = reviews
 	}
-	pub["links"] = s.builder().DetailLinks(gid, token, title, count)
+	pub["links"] = s.builder().DetailLinksVersion(gid, token, activeGID, activeToken, title, count)
 	if count > 0 {
-		pub["readingOrder"] = s.builder().ReadingOrder(gid, token, count)
+		pub["readingOrder"] = s.builder().ReadingOrderVersion(gid, token, activeGID, activeToken, count)
 	}
 	return pub, nil
 }

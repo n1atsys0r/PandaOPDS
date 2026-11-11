@@ -13,14 +13,14 @@ defineOptions({ inheritAttrs: false });
 
 const props = defineProps({
   forceMount: { type: Boolean, required: false },
-  position: { type: String, required: false, default: "item-aligned" },
+  position: { type: String, required: false, default: "popper" },
   bodyLock: { type: Boolean, required: false },
   loop: { type: Boolean, required: false },
   memoDependencies: { type: Array, required: false },
   side: { type: null, required: false },
-  sideOffset: { type: Number, required: false },
+  sideOffset: { type: Number, required: false, default: 4 },
   sideFlip: { type: Boolean, required: false },
-  align: { type: null, required: false, default: "center" },
+  align: { type: null, required: false, default: "start" },
   alignOffset: { type: Number, required: false },
   alignFlip: { type: Boolean, required: false },
   avoidCollisions: { type: Boolean, required: false },
@@ -76,7 +76,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
         :data-position="position"
         :class="
           cn(
-            'data-[position=popper]:h-(--reka-select-trigger-height) data-[position=popper]:w-full data-[position=popper]:min-w-(--reka-select-trigger-width)',
+            'p-1',
+            position === 'popper' &&
+              'w-full min-w-(--reka-select-trigger-width)',
           )
         "
       >

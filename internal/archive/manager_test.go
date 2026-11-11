@@ -153,7 +153,7 @@ func TestFinalizeFailurePreservesPublishedArchive(t *testing.T) {
 	if _, err := store.Upsert(8, "keep", map[string]any{"status": "downloading"}); err != nil {
 		t.Fatal(err)
 	}
-	old := filepath.Join(store.dir(8, "keep"), zipName)
+	old := store.archivePath(8, "keep")
 	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestFinalizePublishesValidatedZIPFromStaging(t *testing.T) {
 	if err := m.finalize(context.Background(), 10, "new"); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(store.dir(10, "new"), zipName)
+	target := store.archivePath(10, "new")
 	r, err := zip.OpenReader(target)
 	if err != nil {
 		t.Fatalf("published archive is not a ZIP: %v", err)
@@ -369,6 +369,68 @@ func TestStartRefusesUnknownTierPriceBeforeSubmit(t *testing.T) {
 	}
 }
 
+func TestVersionUpdateEnforcesPriceCapAndNeverResubmitsTarget(t *testing.T) {
+	temp := t.TempDir()
+	page := `<html><body><h1>Target gallery</h1><div class="tier"><div>Download Cost: 100 GP</div><form action="/archiver.php"><input name="dltype" value="org"><input name="dlcheck" value="Download Original Archive"></form></div></body></html>`
+	replay := &archiveReplay{apiStarted: make(chan struct{}), apiRelease: make(chan struct{}), page: page}
+	cfg := config.Settings{IPBMemberID: "123", IPBPassHash: "secret", EHSite: "e-hentai", TimeoutSeconds: 4, Retries: 0, CacheDir: filepath.Join(temp, "cache"), ArchiveDir: filepath.Join(temp, "archives"), ArchiveQuality: "original"}
+	service := eh.NewService(cfg, replay)
+	defer service.Close()
+	store, err := NewStore(cfg.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Upsert(51, "root-token", map[string]any{"status": "ready", "title": "Original", "or": "org", "quality": "Original", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(51, "root-token"), "old.jpg", "old-page")
+	if err = store.WriteMetadata(51, "root-token", map[string]any{"gid": 51, "token": "root-token", "title": "Original", "current_gid": 52, "current_key": "new-token"}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(cfg, service.Client, service, store)
+	defer manager.Close()
+	cap := 99
+	if _, err = manager.StartVersionUpdate(context.Background(), 51, "root-token", 52, "new-token", &cap); err == nil {
+		t.Fatal("update exceeding the confirmed GP cap was accepted")
+	} else {
+		var conflict *VersionUpdateConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("price cap error type=%T, want VersionUpdateConflictError", err)
+		}
+	}
+	if got := replay.posts.Load(); got != 0 {
+		t.Fatalf("price-capped update submitted %d paid requests", got)
+	}
+	if got := store.Get(52, "new-token"); got != nil {
+		t.Fatalf("price-capped target was persisted before submission: %#v", got)
+	}
+
+	cap = 100
+	status, err := manager.StartVersionUpdate(context.Background(), 51, "root-token", 52, "new-token", &cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := replay.posts.Load(); got != 1 {
+		t.Fatalf("archive submit attempts=%d, want 1", got)
+	}
+	target := store.Get(52, "new-token")
+	if target == nil || target["submit_attempted"] != true || target["status"] != "pending" {
+		t.Fatalf("paid attempt was not persisted with the status URL: %#v", target)
+	}
+	if status["status"] != "ready" || toInt(status["active_gid"]) != 51 || !status["active"].(bool) {
+		t.Fatalf("update changed or obscured the existing active shelf: %#v", status)
+	}
+	if _, err = manager.StartVersionUpdate(context.Background(), 51, "root-token", 52, "new-token", &cap); err != nil {
+		t.Fatal(err)
+	}
+	if got := replay.posts.Load(); got != 1 {
+		t.Fatalf("same target was resubmitted %d times", got)
+	}
+	if _, ok := status[versionsName]; ok {
+		t.Fatal("public archive status exposed the embedded version history")
+	}
+}
+
 func TestInterruptedTierUpgradeRestoresReadyArchiveOnRestart(t *testing.T) {
 	temp := t.TempDir()
 	cfg := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, CacheDir: filepath.Join(temp, "cache"), ArchiveDir: filepath.Join(temp, "archives")}
@@ -376,7 +438,11 @@ func TestInterruptedTierUpgradeRestoresReadyArchiveOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archivePath := filepath.Join(store.dir(9, "upgrade"), zipName)
+	backup := map[string]any{"or": "res", "quality": "Resample", "gp_price": 300, "download_url": "old-url", "page_count": 1, "total_bytes": int64(200)}
+	if _, err := store.Upsert(9, "upgrade", map[string]any{"status": "downloading", "or": "org", "quality": "Original", "upgrade_backup": backup}); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := store.archivePath(9, "upgrade")
 	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -398,11 +464,10 @@ func TestInterruptedTierUpgradeRestoresReadyArchiveOnRestart(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	backup := map[string]any{"or": "res", "quality": "Resample", "gp_price": 300, "download_url": "old-url", "page_count": 1, "total_bytes": int64(200)}
-	if _, err := store.Upsert(9, "upgrade", map[string]any{"status": "downloading", "or": "org", "quality": "Original", "upgrade_backup": backup}); err != nil {
+	part := filepath.Join(cfg.CacheDir, eh.ArchiveStagingDirName, "9", "upgrade", partName)
+	if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	part := filepath.Join(store.dir(9, "upgrade"), partName)
 	if err := os.WriteFile(part, []byte("new partial tier"), 0o600); err != nil {
 		t.Fatal(err)
 	}

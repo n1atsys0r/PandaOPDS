@@ -3064,6 +3064,63 @@
         }
       }
     },
+    "/api/archive/{gid}/{token}/update": {
+      "post": {
+        "tags": ["archive"],
+        "summary": "Update an archive to its discovered gallery version",
+        "operationId": "archive_update",
+        "description": "Confirm the discovered gallery version and a maximum GP charge. The original archive remains readable during the update.",
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1 }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^[0-9a-fA-F]+$" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["gid", "token", "max_gp"],
+                "properties": {
+                  "gid": { "type": "integer", "minimum": 1 },
+                  "token": { "type": "string", "pattern": "^[0-9a-fA-F]+$" },
+                  "max_gp": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Archive update status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ArchiveStatus" }
+              }
+            }
+          },
+          "401": { "description": "Basic authentication required when configured" },
+          "403": { "description": "Archiver access is unavailable" },
+          "404": { "description": "Archive entry not found" },
+          "409": { "description": "The version, archive state, or quoted GP cap no longer permits the update" },
+          "415": { "description": "The update request must use application/json" },
+          "422": { "description": "Invalid archive identifier or update confirmation" },
+          "429": { "description": "Upstream rate limit reached" },
+          "502": { "description": "Archive submission or upstream response failed" },
+          "503": { "description": "Upstream is temporarily unavailable or rate limited" }
+        }
+      }
+    },
     "/api/archive/{gid}/{token}/refresh": {
       "post": {
         "tags": [
@@ -4174,6 +4231,17 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "properties": {
+                  "archive_update_interval_days": {
+                    "type": ["integer", "null"],
+                    "minimum": 0,
+                    "description": "Archive version check interval in days. The default is 7, 0 disables periodic checks, and null resets the default. Stored in settings.toml."
+                  },
+                  "archive_auto_update": {
+                    "type": ["boolean", "null"],
+                    "description": "Automatically download newer archive versions, which may spend GP. Defaults to false. Stored in settings.toml."
+                  }
+                },
                 "additionalProperties": true
               }
             }
@@ -4541,6 +4609,14 @@
           "active": {
             "type": "boolean"
           },
+          "active_gid": {
+            "type": "integer",
+            "description": "Gallery ID of the version currently served by this archive entry."
+          },
+          "active_token": {
+            "type": "string",
+            "description": "Gallery token of the version currently served by this archive entry."
+          },
           "download_url": {
             "type": [
               "string",
@@ -4558,6 +4634,25 @@
           },
           "reason": {
             "type": "string"
+          },
+          "update_available": {
+            "type": "object",
+            "description": "Latest known gallery version when it differs from the locally readable version.",
+            "required": ["gid", "token"],
+            "properties": {
+              "gid": { "type": "integer" },
+              "token": { "type": "string" }
+            }
+          },
+          "version_update": {
+            "type": "object",
+            "description": "Progress or failure of the latest attempted gallery version update.",
+            "properties": {
+              "gid": { "type": "integer" },
+              "token": { "type": "string" },
+              "status": { "type": "string" },
+              "error": { "type": ["string", "null"] }
+            }
           }
         }
       },
