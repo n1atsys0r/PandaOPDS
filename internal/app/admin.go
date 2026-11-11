@@ -97,7 +97,7 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 		}},
 		{"id": "identity", "title": "E-Hentai 身份与站点", "fields": []map[string]any{
 			field("eh_site", "站点", cfg.EHSite, false, true, "页面 host: "+cfg.SiteHost()),
-			field("ipb_member_id", "IPB Member ID", firstNonEmpty(cfg.IPBMemberID, "（未设置）"), false, true, "登录标识；未设置时 Watched/Favorites 导航不输出"),
+			field("ipb_member_id", "IPB Member ID", nil, true, cfg.IPBMemberID != "", "登录标识；未设置时 Watched/Favorites 导航不输出"),
 			field("ipb_pass_hash", "IPB Pass Hash", nil, true, cfg.IPBPassHash != "", "登录凭据，脱敏显示"),
 			field("igneous", "Ignéous 种子", nil, true, cfg.Igneous != "" && !strings.EqualFold(cfg.Igneous, "mystery"), "可选；exhentai 会话建立时自动下发，无需提供"),
 			field("nw", "NW（绕过 Offensive 警告）", cfg.NW, false, true, nil),
@@ -168,7 +168,7 @@ func (s *Server) cacheClear(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"cleared": removed, "enabled": s.Settings.ImageCacheEnabled})
 }
 func (s *Server) webPage(w http.ResponseWriter, r *http.Request) {
-	writeBytes(w, 200, "text/html; charset=utf-8", nil, webui.Page)
+	writeBytes(w, 200, "text/html; charset=utf-8", map[string]string{"Cache-Control": "no-cache"}, webui.Page)
 }
 func field(key, label string, value any, masked bool, set bool, note any) map[string]any {
 	var v any = value

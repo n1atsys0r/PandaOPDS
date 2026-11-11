@@ -4101,6 +4101,249 @@
         },
         "security": []
       }
+    },
+    "/api/config/edit": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Read editable runtime configuration",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Editor state; ETag header supports conditional writes",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or malformed persisted file"
+          },
+          "403": {
+            "description": "Admin Basic Auth required; exempt paths do not apply"
+          },
+          "412": {
+            "description": "If-Match is stale"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "401": {
+            "description": "Basic Auth credentials required when editor authentication is configured"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Persist configuration overrides for next restart",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Editor state; ETag header supports conditional writes",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or malformed persisted file"
+          },
+          "403": {
+            "description": "Admin Basic Auth required; exempt paths do not apply"
+          },
+          "412": {
+            "description": "If-Match is stale"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "401": {
+            "description": "Basic Auth credentials required when editor authentication is configured"
+          }
+        }
+      }
+    },
+    "/api/home/edit": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Read editable OPDS 2.0 home layout",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Editor state; ETag header supports conditional writes",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or malformed persisted file"
+          },
+          "403": {
+            "description": "Admin Basic Auth required; exempt paths do not apply"
+          },
+          "412": {
+            "description": "If-Match is stale"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "401": {
+            "description": "Basic Auth credentials required when editor authentication is configured"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Replace OPDS 2.0 home layout",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "groups",
+                  "sections"
+                ],
+                "properties": {
+                  "groups": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Editor state; ETag header supports conditional writes",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or malformed persisted file"
+          },
+          "403": {
+            "description": "Admin Basic Auth required; exempt paths do not apply"
+          },
+          "412": {
+            "description": "If-Match is stale"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "401": {
+            "description": "Basic Auth credentials required when editor authentication is configured"
+          }
+        }
+      }
     }
   },
   "components": {

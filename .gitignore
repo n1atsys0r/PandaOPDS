@@ -55,3 +55,10 @@ coverage.xml
 
 # Test artifacts
 .pytest_cache/
+
+# Vue/Vite frontend dependencies and generated bundle
+frontend/node_modules/
+app/webui/dist/
+
+# Runtime Go settings can contain account credentials
+/config/settings.toml

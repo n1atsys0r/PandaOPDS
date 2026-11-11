@@ -45,3 +45,7 @@ AGENTS.md
 
 # OS
 .DS_Store
+
+# Built in the frontend Docker stage
+frontend/node_modules
+app/webui/dist

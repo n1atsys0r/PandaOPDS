@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -11,9 +12,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"pandaopds/api"
+	"pandaopds/app/webui"
 	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
@@ -21,19 +24,23 @@ import (
 )
 
 type Server struct {
-	Settings    config.Settings
-	Service     *eh.Service
-	Store       *archive.Store
-	Archives    *archive.Manager
-	Favorites   *favorites.Syncer
-	Logger      *log.Logger
-	mux         *http.ServeMux
-	configOK    bool
-	configError any
+	Settings     config.Settings
+	Service      *eh.Service
+	Store        *archive.Store
+	Archives     *archive.Manager
+	Favorites    *favorites.Syncer
+	Logger       *log.Logger
+	mux          *http.ServeMux
+	configOK     bool
+	configError  any
+	settingsPath string
+	editMu       sync.Mutex
+	editKey      []byte
 }
 
 func New(settings config.Settings, logger *log.Logger) (*Server, error) {
-	s := &Server{Settings: settings, Logger: logger, mux: http.NewServeMux()}
+	editKey:=make([]byte,32);if _,err:=rand.Read(editKey);err!=nil{return nil,fmt.Errorf("initialize editor ETag key: %w",err)}
+	s := &Server{Settings: settings, Logger: logger, mux: http.NewServeMux(), settingsPath: config.EditablePath(),editKey:editKey}
 	if err := settings.Validate(); err != nil {
 		s.configOK = false
 		s.configError = err.Error()
@@ -113,14 +120,24 @@ func (s *Server) register() {
 	m.HandleFunc("POST /api/rating", s.rateGallery)
 	m.HandleFunc("GET /api/status", s.apiStatus)
 	m.HandleFunc("GET /api/config", s.apiConfig)
+	m.HandleFunc("GET /api/config/edit", s.configEdit)
+	m.HandleFunc("PATCH /api/config/edit", s.configEdit)
 	m.HandleFunc("GET /api/home", s.apiHome)
+	m.HandleFunc("GET /api/home/edit", s.homeEdit)
+	m.HandleFunc("PUT /api/home/edit", s.homeEdit)
 	m.HandleFunc("POST /api/cache/clear", s.cacheClear)
+	m.Handle("GET /webui-assets/assets/{name}", http.StripPrefix("/webui-assets/", http.FileServerFS(webui.Assets)))
 	m.HandleFunc("GET /{$}", s.webPage)
 }
 func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.Settings
-		if !cfg.AuthEnabled() || r.URL.Path == "/health" || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path) {
+		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit"
+		if editRoute && !cfg.AuthEnabled() {
+			writeJSON(w, 403, map[string]any{"detail": "admin Basic Auth is required for editing"})
+			return
+		}
+		if !editRoute && (!cfg.AuthEnabled() || r.URL.Path == "/health" || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path)) {
 			next.ServeHTTP(w, r)
 			return
 		}

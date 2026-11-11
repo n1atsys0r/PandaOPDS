@@ -780,34 +780,73 @@ func ParseImagePage(src string) (ImagePageInfo, error) {
 func ParseGData(body []byte) ([]GalleryMetadata, error) {
 	var raw struct {
 		GMetadata []struct {
-			GID          int     `json:"gid"`
-			Token        string  `json:"token"`
-			Title        string  `json:"title"`
-			TitleJPN     string  `json:"title_jpn"`
-			Category     string  `json:"category"`
-			Thumb        string  `json:"thumb"`
-			Rating       float64 `json:"rating"`
-			Tags         [][]any `json:"tags"`
-			Filecount    int     `json:"filecount"`
-			Filesize     int64   `json:"filesize"`
-			Posted       int64   `json:"posted"`
-			Uploader     string  `json:"uploader"`
-			Torrentcount int     `json:"torrentcount"`
-			Expunged     bool    `json:"expunged"`
+			GID          json.RawMessage `json:"gid"`
+			Token        string          `json:"token"`
+			Title        string          `json:"title"`
+			TitleJPN     string          `json:"title_jpn"`
+			Category     string          `json:"category"`
+			Thumb        string          `json:"thumb"`
+			Rating       json.RawMessage `json:"rating"`
+			Tags         []any           `json:"tags"`
+			Filecount    json.RawMessage `json:"filecount"`
+			Filesize     json.RawMessage `json:"filesize"`
+			Posted       json.RawMessage `json:"posted"`
+			Uploader     string          `json:"uploader"`
+			Torrentcount json.RawMessage `json:"torrentcount"`
+			Expunged     bool            `json:"expunged"`
 		} `json:"gmetadata"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, err
 	}
 	out := make([]GalleryMetadata, 0, len(raw.GMetadata))
-	for _, v := range raw.GMetadata {
-		m := GalleryMetadata{GID: v.GID, Token: v.Token, Title: v.Title, TitleJPN: v.TitleJPN, Category: v.Category, Thumb: v.Thumb, Rating: v.Rating, Tags: map[string][]GalleryTag{}, Filecount: v.Filecount, Filesize: v.Filesize, Posted: v.Posted, Uploader: v.Uploader, Torrentcount: v.Torrentcount, Expunged: v.Expunged}
-		for _, arr := range v.Tags {
-			if len(arr) < 2 {
+	for i, v := range raw.GMetadata {
+		gid, err := gdataInt(v.GID, strconv.IntSize)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].gid: %w", i, err)
+		}
+		rating, err := gdataFloat(v.Rating)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].rating: %w", i, err)
+		}
+		filecount, err := gdataInt(v.Filecount, strconv.IntSize)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].filecount: %w", i, err)
+		}
+		filesize, err := gdataInt(v.Filesize, 64)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].filesize: %w", i, err)
+		}
+		posted, err := gdataInt(v.Posted, 64)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].posted: %w", i, err)
+		}
+		torrentcount, err := gdataInt(v.Torrentcount, strconv.IntSize)
+		if err != nil {
+			return nil, fmt.Errorf("gmetadata[%d].torrentcount: %w", i, err)
+		}
+		m := GalleryMetadata{GID: int(gid), Token: v.Token, Title: v.Title, TitleJPN: v.TitleJPN, Category: v.Category, Thumb: v.Thumb, Rating: rating, Tags: map[string][]GalleryTag{}, Filecount: int(filecount), Filesize: filesize, Posted: posted, Uploader: v.Uploader, Torrentcount: int(torrentcount), Expunged: v.Expunged}
+		for _, tag := range v.Tags {
+			var ns, key string
+			switch item := tag.(type) {
+			case string:
+				if split := strings.IndexByte(item, ':'); split >= 0 {
+					ns, key = item[:split], item[split+1:]
+					if ns == "" {
+						ns = "temp"
+					}
+				} else {
+					ns, key = "temp", item
+				}
+			case []any:
+				if len(item) < 2 {
+					continue
+				}
+				ns, _ = item[0].(string)
+				key, _ = item[1].(string)
+			default:
 				continue
 			}
-			ns, _ := arr[0].(string)
-			key, _ := arr[1].(string)
 			if ns != "" && key != "" {
 				m.Tags[ns] = append(m.Tags[ns], GalleryTag{Namespace: ns, Key: key, Status: "confidence"})
 			}
@@ -815,6 +854,43 @@ func ParseGData(body []byte) ([]GalleryMetadata, error) {
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+func gdataNumber(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "0", nil
+	}
+	var s string
+	if raw[0] == '"' {
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return "", err
+		}
+	} else {
+		s = string(raw)
+	}
+	return s, nil
+}
+func gdataInt(raw json.RawMessage, bits int) (int64, error) {
+	s, err := gdataNumber(raw)
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseInt(s, 10, bits)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer %q: %w", s, err)
+	}
+	return v, nil
+}
+func gdataFloat(raw json.RawMessage) (float64, error) {
+	s, err := gdataNumber(raw)
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsInf(v, 0) || math.IsNaN(v) {
+		return 0, fmt.Errorf("invalid float %q", s)
+	}
+	return v, nil
 }
 
 func ParseFavoritesCategories(src string) map[int]string {

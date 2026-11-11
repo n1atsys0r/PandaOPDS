@@ -15,7 +15,7 @@ Compose 默认拉取发布镜像。升级运行 `docker compose pull && docker c
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-Compose 使用持久卷保存图片缓存与归档；模板文件说明了 `.env` 透传及自定义 env 文件用法。
+Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 挂载到 `/config`。要覆盖 `OPDS_ACQ_DETAIL`，请在 `.env` 或 Compose 覆盖文件中显式设置。
 
 ## 环境变量
 
@@ -25,6 +25,7 @@ Compose 使用持久卷保存图片缓存与归档；模板文件说明了 `.env
 |---|---:|---|
 | `EH_SITE` | `e-hentai` | 上游站点：`e-hentai` 或 `exhentai`。 |
 | `PORT` | `8000` | Go HTTP 服务监听端口（读取自进程环境变量）。 |
+| `SETTINGS_CONFIG` | 本地 `./config/settings.toml`，Docker `/config/settings.toml` | 网页可编辑配置的 TOML 文件路径。 |
 | `IPB_MEMBER_ID`, `IPB_PASS_HASH` | 空 | 可选登录 cookie；须成对提供以启用需登录功能。 |
 | `IGNEOUS` | 空 | 可选会话 cookie 种子；ExHentai 可在建立會話時取得 session cookie。 |
 | `NW`, `DATATAGS` | `1`, `1` | 上游 cookie 偏好：安全警告绕过与新版标签缩略图结构。 |
@@ -68,6 +69,12 @@ Compose 使用持久卷保存图片缓存与归档；模板文件说明了 `.env
 \* 若 `/config` 目录存在，三个状态文件的默认路径为 `/config/` 下同名文件。
 
 `.env.example` 目前列有 `LOG_LEVEL`，但当前 Go 二进制没有读取该变量，因此设置它不会改变日志行为。
+
+## 网页配置编辑器
+
+服务设置保存在 `SETTINGS_CONFIG` 指定的 TOML 文件。环境变量优先于文件，文件优先于 Go 默认值。编辑器分别显示当前运行值和下次启动生效值，环境变量覆盖的项目显示为只读。若任一 IPB 登录变量来自环境，整对凭据由环境管理。保存后需重启服务，凭据在页面上仅显示设置状态。
+
+配置和首页布局编辑均要求有效的 Basic Auth。认证豁免规则仅适用于常规接口，未配置 Basic Auth 的管理页提供只读视图。编辑接口的写请求接受同源 JSON，并要求使用读取时返回的 `ETag` 作为 `If-Match`。首页布局写入 `HOME_CONFIG` 指定的文件，旧文件备份为 `.bak`，下一次 OPDS 2.0 首页请求读取新布局。
 
 ## 反向代理
 

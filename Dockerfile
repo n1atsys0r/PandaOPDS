@@ -1,3 +1,10 @@
+FROM --platform=$BUILDPLATFORM node:24-alpine AS webui
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS build
 
 ARG TARGETOS
@@ -9,7 +16,8 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY api ./api
-COPY app/webui/page.html app/webui/assets.go ./app/webui/
+COPY app/webui/assets.go ./app/webui/
+COPY --from=webui /src/app/webui/dist ./app/webui/dist
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath -ldflags="-s -w" -o /out/pandaopds ./cmd/pandaopds
 RUN mkdir -p /out/config /out/data/cache /out/data/archives && chown -R 65532:65532 /out/config /out/data
@@ -23,7 +31,8 @@ COPY --from=build /out/data /data
 # volumes from earlier deployments remain writable without a migration.
 USER 0:0
 
-ENV HOME_CONFIG=/config/home.toml \
+ENV SETTINGS_CONFIG=/config/settings.toml \
+    HOME_CONFIG=/config/home.toml \
     HTML_INTERVAL_SECONDS=1.5 \
     MAX_CONCURRENCY=2 \
     IMAGE_MAX_CONCURRENCY=5 \

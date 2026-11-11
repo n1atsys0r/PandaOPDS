@@ -13,7 +13,18 @@ docker compose up -d
 
 Compose 默认拉取 GHCR 发布镜像；升级使用 `docker compose pull && docker compose up -d`。公开目录可不配置登录 cookie；Watched、Favorites、归档和收藏写操作需要成对的 `IPB_MEMBER_ID` 与 `IPB_PASS_HASH`。镜像缓存与归档数据保存在 Compose 卷中。
 
-本机访问 `http://127.0.0.1:8000/` 可查看管理页，`/docs` 是 Swagger UI，`/openapi.json` 是运行时 OpenAPI 文档。API 契约源文件位于 [`api/openapi.json`](api/openapi.json)。
+本机访问 `http://127.0.0.1:8000/` 可查看仪表盘和归档，并在启用 Basic Auth 后编辑服务设置与 OPDS 首页布局。`/docs` 是 Swagger UI，`/openapi.json` 是运行时 OpenAPI 文档。
+
+## 从源码构建
+
+从仓库根目录构建需要 Go 和 Node.js 24。
+
+```sh
+make webui
+go build ./cmd/pandaopds
+```
+
+Go 二进制内嵌前端资源。使用 Docker 构建时，镜像构建过程会自动打包前端。
 
 ## 安全与部署
 

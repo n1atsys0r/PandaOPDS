@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -51,13 +52,62 @@ type Settings struct {
 var defaultFacets = []Facet{{"Doujinshi", 1021}, {"Manga", 1019}, {"Artist CG", 1015}, {"Game CG", 1007}, {"Western", 991}, {"Non-H", 959}, {"Image Set", 895}, {"Cosplay", 767}, {"Asian Porn", 511}, {"Misc", 1022}}
 
 func Load() Settings {
+	return LoadWithConfigPath(os.Getenv("SETTINGS_CONFIG"))
+}
+
+// LoadWithConfigPath applies the persisted editable settings first; environment
+// variables remain authoritative. Empty path selects /config/settings.toml in
+// containers and ./config/settings.toml for local runs.
+func LoadWithConfigPath(path string) Settings {
+	if path == "" {
+		if st, err := os.Stat("/config"); err == nil && st.IsDir() {
+			path = "/config/settings.toml"
+		} else {
+			path = "./config/settings.toml"
+		}
+	}
+	fileValues, fileErr := readEditableFile(path)
+	if _, member := os.LookupEnv("IPB_MEMBER_ID"); member {
+		delete(fileValues, "IPB_MEMBER_ID")
+		delete(fileValues, "IPB_PASS_HASH")
+	}
+	if _, hash := os.LookupEnv("IPB_PASS_HASH"); hash {
+		delete(fileValues, "IPB_MEMBER_ID")
+		delete(fileValues, "IPB_PASS_HASH")
+	}
+	_ = fileErr // Startup retains Go defaults on malformed settings; admin editor reports the error.
+	return loadWithEditableValues(fileValues)
+}
+
+// LoadWithEditableValues evaluates an editor snapshot against Go defaults and environment values.
+func LoadWithEditableValues(fileValues map[string]any) Settings {
+	copyValues := make(map[string]any, len(fileValues))
+	for k, v := range fileValues {
+		copyValues[k] = v
+	}
+	fileValues = copyValues
+	if _, member := os.LookupEnv("IPB_MEMBER_ID"); member {
+		delete(fileValues, "IPB_MEMBER_ID")
+		delete(fileValues, "IPB_PASS_HASH")
+	}
+	if _, hash := os.LookupEnv("IPB_PASS_HASH"); hash {
+		delete(fileValues, "IPB_MEMBER_ID")
+		delete(fileValues, "IPB_PASS_HASH")
+	}
+	return loadWithEditableValues(fileValues)
+}
+
+func loadWithEditableValues(fileValues map[string]any) Settings {
 	base := func(name, fallback string) string {
 		if v, ok := os.LookupEnv(name); ok {
 			return strings.TrimSpace(v)
 		}
+		if v, ok := fileValues[name]; ok {
+			return fmt.Sprint(v)
+		}
 		return fallback
 	}
-	return Settings{
+	s := Settings{
 		AuthUsername: base("AUTH_USERNAME", ""), AuthPassword: base("AUTH_PASSWORD", ""),
 		AuthExemptPaths: csv(base("AUTH_EXEMPT_PATHS", "")), AuthExemptPrefixes: csv(base("AUTH_EXEMPT_PREFIXES", "")),
 		IPBMemberID: base("IPB_MEMBER_ID", ""), IPBPassHash: base("IPB_PASS_HASH", ""), Igneous: base("IGNEOUS", ""),
@@ -80,6 +130,8 @@ func Load() Settings {
 		TagTranslationEnabled: boolEnv("TAG_TRANSLATION_ENABLED", false), TagTranslationURL: base("TAG_TRANSLATION_URL", "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"),
 		TagTranslationIntervalSeconds: floatEnv("TAG_TRANSLATION_INTERVAL_SECONDS", 86400), TagTranslationState: base("TAG_TRANSLATION_STATE", defaultStatePath("tag_translation.json")),
 	}
+	s = ApplyEditableOverrides(s, fileValues)
+	return s
 }
 
 func (s Settings) SiteHost() string {

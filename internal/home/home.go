@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -42,6 +43,78 @@ func Default() Config {
 	}}
 }
 func intp(v int) *int { return &v }
+
+func Validate(c Config) error {
+	ids := map[string]bool{}
+	for _, g := range c.Groups {
+		if strings.TrimSpace(g.ID) == "" || ids[g.ID] {
+			return fmt.Errorf("group IDs must be nonempty and unique")
+		}
+		ids[g.ID] = true
+	}
+	for _, s := range c.Sections {
+		if s.Group != "" && !ids[s.Group] {
+			return fmt.Errorf("unknown group reference %q", s.Group)
+		}
+		if s.Kind != "publication" && s.Kind != "navigation" {
+			return fmt.Errorf("invalid section kind %q", s.Kind)
+		}
+		if s.Type != "preset" && s.Type != "search" {
+			return fmt.Errorf("invalid section type %q", s.Type)
+		}
+		if s.Type == "preset" {
+			if _, _, err := ResolvePreset(s.Query); err != nil {
+				return err
+			}
+		} else if s.Query == "" {
+			return fmt.Errorf("search query cannot be empty")
+		}
+		if s.Count != nil && *s.Count < 0 {
+			return fmt.Errorf("section count must be nonnegative")
+		}
+	}
+	return nil
+}
+func SaveSnapshot(path string, c Config, hadPrevious bool, previous []byte) error {
+	if err := Validate(c); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, err := toml.Marshal(c)
+	if err != nil {
+		return err
+	}
+	if hadPrevious {
+		if e := atomicWrite(path+".bak", previous); e != nil {
+			return e
+		}
+	}
+	return atomicWrite(path, b)
+}
+func atomicWrite(path string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".home-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err = f.Chmod(0o600); err == nil {
+		_, err = f.Write(b)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	ce := f.Close()
+	if err == nil {
+		err = ce
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
 func Load(path string) (Config, error) {
 	if path == "" {
 		return Default(), nil
@@ -50,10 +123,13 @@ func Load(path string) (Config, error) {
 	if e != nil {
 		return Default(), nil
 	}
-	var c Config
-	if _, e = toml.Decode(string(b), &c); e != nil {
+	c, e := decodeHome(b, false)
+	if e != nil {
 		return Default(), e
 	}
+	return normalize(c), nil
+}
+func normalize(c Config) Config {
 	for i := range c.Sections {
 		s := &c.Sections[i]
 		if s.Kind == "" {
@@ -77,6 +153,36 @@ func Load(path string) (Config, error) {
 		if c.Groups[i].Title == "" {
 			c.Groups[i].Title = c.Groups[i].ID
 		}
+	}
+	return c
+}
+
+func DecodeEditor(b []byte) (Config, error) {
+	raw, err := decodeHome(b, true)
+	if err != nil {
+		return Default(), err
+	}
+	counts := make([]*int, len(raw.Sections))
+	for i, s := range raw.Sections {
+		if s.Count != nil {
+			n := *s.Count
+			counts[i] = &n
+		}
+	}
+	c := normalize(raw)
+	for i := range c.Sections {
+		c.Sections[i].Count = counts[i]
+	}
+	return c, nil
+}
+func decodeHome(b []byte, strict bool) (Config, error) {
+	var c Config
+	md, err := toml.Decode(string(b), &c)
+	if err != nil {
+		return Default(), fmt.Errorf("invalid home configuration TOML")
+	}
+	if strict && len(md.Undecoded()) > 0 {
+		return Default(), fmt.Errorf("unknown home configuration field")
 	}
 	return c, nil
 }

@@ -45,3 +45,12 @@ and the JHenTai-derived material above, is reproduced in the repository:
 
    Upstream license text:
    https://raw.githubusercontent.com/EhTagTranslation/Database/master/LICENSE.md
+
+3. shadcn-vue
+   Source: https://github.com/unovue/shadcn-vue
+   License: MIT
+   Copyright: 2023 unovue
+
+   The Go administration UI uses components from the shadcn-vue registry.
+   The full license is distributed with the embedded Web UI assets and is
+   reproduced at frontend/public/assets/shadcn-vue-LICENSE.txt.

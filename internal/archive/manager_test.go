@@ -110,6 +110,10 @@ type archiveReplay struct {
 	uncertain  bool
 }
 
+type archiveRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f archiveRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func (rt *archiveReplay) RoundTrip(req *http.Request) (*http.Response, error) {
 	response := func(body string) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
@@ -296,5 +300,47 @@ func TestInterruptedTierUpgradeRestoresReadyArchiveOnRestart(t *testing.T) {
 	}
 	if restartedStore.PageCount(9, "upgrade") != 1 {
 		t.Fatal("old archive bytes did not remain readable after rollback")
+	}
+}
+
+func TestSnapshotSavesMetadataAndCoverFromQuotedGDataNumbers(t *testing.T) {
+	temp := t.TempDir()
+	cfg := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, Retries: 0, CacheDir: filepath.Join(temp, "cache"), ArchiveDir: filepath.Join(temp, "archives")}
+	thumb := "https://ehgt.org/cover.jpg"
+	service := eh.NewService(cfg, archiveRoundTripper(func(req *http.Request) (*http.Response, error) {
+		resp := func(body string, contentType string) *http.Response {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body)), Request: req}
+		}
+		if req.URL.Host == "api.e-hentai.org" {
+			return resp(`{"gmetadata":[{"gid":"41","token":"abc","title":"Quoted","thumb":"`+thumb+`","rating":"4.5","filecount":"6","filesize":"1234","posted":"1700000000","torrentcount":"2"}]}`, "application/json"), nil
+		}
+		if req.URL.String() == thumb {
+			return resp("cover-bytes", "image/jpeg"), nil
+		}
+		return resp("unexpected request", "text/plain"), nil
+	}))
+	defer service.Close()
+	store, err := NewStore(cfg.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(41, "abc", map[string]any{"or": "original"}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(cfg, service.Client, service, store)
+	defer manager.Close()
+	if _, err := manager.Snapshot(context.Background(), 41, "abc", true); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := manager.Metadata(41, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata["title"] != "Quoted" || metadata["filecount"] != float64(6) || metadata["filesize"] != float64(1234) {
+		t.Fatalf("unexpected snapshot metadata: %#v", metadata)
+	}
+	cover, ok := manager.Cover(41, "abc")
+	if !ok || string(cover) != "cover-bytes" {
+		t.Fatalf("cover saved = %q, %v", cover, ok)
 	}
 }

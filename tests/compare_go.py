@@ -226,6 +226,12 @@ def selected(value: dict, *keys: str) -> dict:
 
 def stable_body(path: str, response: httpx.Response, *, python_reference=False) -> object:
     mime = response.headers.get("content-type", "")
+    if path == "/" and response.status_code == 200:
+        from lxml import html
+
+        assert "text/html" in mime
+        assert "PandaOPDS" in html.fromstring(response.content).findtext(".//title", default="")
+        return "PandaOPDS administration page"
     if "json" not in mime:
         if "xml" in mime:
             from lxml import etree

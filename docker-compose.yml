@@ -37,7 +37,6 @@ services:
       CACHE_DIR: /data/cache
       ARCHIVE_DIR: /data/archives
       # --- deployment-level switches (.env may override; defaults shown here) ---
-      OPDS_ACQ_DETAIL: ${OPDS_ACQ_DETAIL:-false}   # false=acquisition→image stream; true=→detail doc
       FAVORITES_SYNC_ARCHIVE: ${FAVORITES_SYNC_ARCHIVE:-0}      # auto-archive new favorites (GP cost!)
       # --- throttling (ban-avoidance) ---
       # Recommended values are conservative: safe for multi-client / server
@@ -52,7 +51,7 @@ services:
     volumes:
       - cache-data:/data/cache
       - archive-data:/data/archives   # persistent GP archive masters
-      - ./config:/config          # home.toml lives here
+      - ./config:/config          # settings.toml and home.toml live here
 
 volumes:
   cache-data:

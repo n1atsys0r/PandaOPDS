@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -31,6 +32,15 @@ func TestRootWebUIUsesEmbeddedAssetFromAnyWorkingDirectory(t *testing.T) {
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "PandaOPDS") {
 		t.Fatalf("embedded web UI response status=%d body=%q", response.Code, response.Body.String())
+	}
+	script := regexp.MustCompile(`src="(/webui-assets/assets/[^"/]+\.js)"`).FindStringSubmatch(response.Body.String())
+	if len(script) != 2 {
+		t.Fatalf("embedded web UI does not reference a bundled script: %q", response.Body.String())
+	}
+	asset := httptest.NewRecorder()
+	server.Handler().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, script[1], nil))
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Header().Get("Content-Type"), "javascript") || asset.Body.Len() == 0 {
+		t.Fatalf("embedded script status=%d type=%q length=%d", asset.Code, asset.Header().Get("Content-Type"), asset.Body.Len())
 	}
 }
 

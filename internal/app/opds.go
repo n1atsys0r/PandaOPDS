@@ -54,6 +54,35 @@ func favoriteFacetTitle(names map[int]string, id int) string {
 	return fmt.Sprintf("Favorites %d", id)
 }
 
+func (s *Server) favoriteFacetNames(ctx context.Context, current map[int]string) map[int]string {
+	names := make(map[int]string, len(current)+10)
+	for id, name := range current {
+		names[id] = name
+	}
+	missing := false
+	for id := 0; id < 10; id++ {
+		if strings.TrimSpace(names[id]) == "" {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return names
+	}
+	upstream, err := s.Service.FavoriteCategories(ctx)
+	if err != nil {
+		return names
+	}
+	for id := 0; id < 10; id++ {
+		if strings.TrimSpace(names[id]) == "" {
+			if name := strings.TrimSpace(upstream[id]); name != "" {
+				names[id] = name
+			}
+		}
+	}
+	return names
+}
+
 func favoriteAtomFacets(builder feed.Builder, route, selected string, names map[int]string) []feed.AtomFacet {
 	facets := []feed.AtomFacet{{Title: "All", Href: builder.Href(favoriteFacetPath(route, "")), Group: "Favorite category", Active: selected == ""}}
 	for id := 0; id < 10; id++ {
@@ -171,7 +200,8 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	}
 	var facets []feed.AtomFacet
 	if query == "favorites" {
-		facets = favoriteAtomFacets(s.builder(), "/opds/v1.2/gallery", favcat, info.FavcatMap)
+		names := s.favoriteFacetNames(ctx, info.FavcatMap)
+		facets = favoriteAtomFacets(s.builder(), "/opds/v1.2/gallery", favcat, names)
 	}
 	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(info.Galleries, title, query, query, nextHref, facets)))
 }
@@ -339,7 +369,8 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		if selected == "" && strings.HasPrefix(query, "favorites:") {
 			selected = strings.TrimPrefix(query, "favorites:")
 		}
-		facets = favoriteJSONFacets(s.builder(), "/opds/v2.0/gallery", selected, info.FavcatMap)
+		names := s.favoriteFacetNames(ctx, info.FavcatMap)
+		facets = favoriteJSONFacets(s.builder(), "/opds/v2.0/gallery", selected, names)
 	} else if query != "popular" && query != "watched" {
 		facets = s.builder().CategoryFacets()
 	}

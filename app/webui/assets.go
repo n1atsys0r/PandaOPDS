@@ -1,9 +1,23 @@
 package webui
 
-import _ "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
-// Page is the existing single-file administration UI, embedded in the Go
-// binary so the service can run from any working directory.
-//
-//go:embed page.html
+//go:embed dist/index.html
 var Page []byte
+
+//go:embed dist
+var embedded embed.FS
+
+// Assets is the built Vite asset tree, rooted at dist for /webui-assets/ serving.
+var Assets fs.FS
+
+func init() {
+	var err error
+	Assets, err = fs.Sub(embedded, "dist")
+	if err != nil {
+		panic(err)
+	}
+}
