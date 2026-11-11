@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -38,6 +39,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
+import LoginForm from "@/components/LoginForm.vue";
 import {
   SunIcon as Sun,
   MoonIcon as Moon,
@@ -54,8 +56,20 @@ import {
   GripVerticalIcon as GripVertical,
   CircleCheckIcon as CircleCheck,
   CircleAlertIcon as CircleAlert,
+  HardDriveIcon as HardDrive,
+  GlobeIcon as Globe,
+  ArrowUpRightIcon as ArrowUpRight,
+  LogOutIcon as LogOut,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
 const s = useApp();
 onMounted(s.init);
 onBeforeUnmount(s.destroy);
@@ -194,20 +208,52 @@ const previewItems = computed(() => {
 });
 </script>
 <template>
-  <SidebarProvider class="app-layout" style="--sidebar-width: 17.5rem">
+  <div
+    v-if="s.authRequired.value"
+    class="flex min-h-svh w-full items-center justify-center p-6 md:p-10 bg-background"
+  >
+    <div class="w-full max-w-sm">
+      <LoginForm />
+    </div>
+  </div>
+  <SidebarProvider v-else class="app-layout" style="--sidebar-width: 17.5rem">
     <Sidebar collapsible="offcanvas" variant="inset">
-      <SidebarHeader class="brand-header">
-        <div class="brand">
-          <b class="brand-icon">P</b>
-          <span><strong>PandaOPDS</strong><small>管理控制台</small></span>
+      <SidebarHeader class="brand-header border-b border-sidebar-border/60 p-4">
+        <div class="flex items-center gap-3">
+          <div class="size-8 rounded-lg bg-foreground text-background flex items-center justify-center font-bold text-sm shadow-xs select-none">
+            P
+          </div>
+          <div class="flex flex-col gap-0.5 leading-none">
+            <span class="font-semibold text-sm tracking-tight text-foreground">PandaOPDS</span>
+            <span class="text-xs text-muted-foreground">管理控制台</span>
+          </div>
         </div>
       </SidebarHeader>
       <AppSidebarNav :page="s.page.value" @navigate="s.route" />
-      <SidebarFooter class="sidebar-footer">
-        <div class="side-bottom">
-          <Badge variant="outline"><span class="online"></span>本地服务管理</Badge>
-          <small>PandaOPDS · Admin</small>
+      <SidebarFooter class="sidebar-footer border-t border-sidebar-border/60 p-3 space-y-2">
+        <div class="flex items-center justify-between text-xs text-muted-foreground w-full">
+          <div class="flex items-center gap-2">
+            <span
+              class="size-2 rounded-full"
+              :class="s.status.value?.app?.config_ok ? 'bg-emerald-500' : 'bg-amber-500'"
+            ></span>
+            <span class="font-medium text-foreground">
+              {{ s.status.value?.app?.config_ok ? "服务就绪" : "待检查" }}
+            </span>
+          </div>
+          <span class="font-mono text-[11px] opacity-75">
+            {{ s.status.value?.app?.version ? 'v' + s.status.value.app.version : 'Admin' }}
+          </span>
         </div>
+        <Button
+          v-if="s.authToken.value || s.status.value?.app?.auth_enabled"
+          variant="ghost"
+          size="xs"
+          class="w-full justify-start text-xs text-muted-foreground hover:text-foreground h-7 px-2 gap-1.5"
+          @click="s.logout"
+        >
+          <LogOut class="size-3.5" />退出登录
+        </Button>
       </SidebarFooter>
     </Sidebar>
     <SidebarInset class="webui-inset">
@@ -260,179 +306,263 @@ const previewItems = computed(() => {
             "
             aria-label="刷新"
           >
-            <RefreshCw :size="17" />
+            <RefreshCw :size="16" :class="{ 'animate-spin': s.busy.value }" />
           </Button>
         </div>
       </header>
       <div class="page-content">
         <Alert v-if="s.notice.value" class="app-alert success-alert">
-          <CircleCheck />
-          <AlertDescription>{{ s.notice.value }}</AlertDescription>
+          <CircleCheck class="size-4 text-foreground" />
+          <AlertDescription class="text-sm">{{ s.notice.value }}</AlertDescription>
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label="关闭通知"
             @click="s.notice.value = ''"
-            ><X
+            ><X :size="14"
           /></Button>
         </Alert>
         <Alert v-if="s.error.value" variant="destructive" class="app-alert">
-          <CircleAlert />
-          <AlertDescription>{{ s.error.value }}</AlertDescription>
+          <CircleAlert class="size-4" />
+          <AlertDescription class="text-sm">{{ s.error.value }}</AlertDescription>
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label="关闭错误"
             @click="s.error.value = ''"
-            ><X
+            ><X :size="14"
           /></Button>
         </Alert>
-        <template v-if="s.page.value === 'dashboard'"
-          ><div class="heading">
+        <template v-if="s.page.value === 'dashboard'">
+          <div class="heading">
             <div>
-              <small>运行状态</small>
-              <h1>服务概览</h1>
-              <p>查看服务状态、请求活动与缓存使用情况。</p>
+              <div class="flex items-center gap-2 mb-2">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border border-border/80 bg-background text-foreground shadow-xs">
+                  <span
+                    class="size-1.5 rounded-full"
+                    :class="s.status.value?.app?.config_ok ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'"
+                  ></span>
+                  {{ s.status.value?.app?.config_ok ? "服务运行正常" : "配置需要检查" }}
+                </span>
+                <span
+                  v-if="s.status.value?.circuit?.state === 'open'"
+                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20"
+                >
+                  熔断器 OPEN
+                </span>
+                <span v-else class="text-xs text-muted-foreground hidden sm:inline">
+                  熔断器正常 · 15s 自动同步
+                </span>
+              </div>
+              <h1 class="text-2xl font-bold tracking-tight text-foreground">服务概览</h1>
+              <p class="text-sm text-muted-foreground mt-1">查看上游站点状态、出站请求与多级缓存负载。</p>
             </div>
-            <Button variant="outline" @click="s.loadStatus">
-              <RefreshCw />刷新状态
+            <Button variant="outline" size="sm" class="gap-1.5 h-8 text-xs font-medium" @click="s.loadStatus">
+              <RefreshCw :size="13" :class="{ 'animate-spin': s.busy.value }" />刷新状态
             </Button>
           </div>
-          <Card class="health">
-            <i :class="s.status.value?.app?.config_ok ? 'good' : 'warn'"></i>
-            <div>
-              <b>{{
-                s.status.value?.app?.config_ok ? "服务运行中" : "配置需要检查"
-              }}</b
-              ><small>状态每 15 秒自动更新</small>
-            </div>
-            <Badge variant="outline" class="health-badge">{{
-              s.status.value?.circuit?.state === "open"
-                ? "熔断器 OPEN"
-                : "熔断器正常"
-            }}</Badge>
-          </Card>
+
           <div class="metrics">
-            <Card class="metrics-card">
-              <Server /><small>上游站点</small
-              ><b>{{ s.status.value?.site?.site || "—" }}</b
-              ><span>{{ s.status.value?.site?.host || "—" }}</span>
+            <Card class="shadow-xs hover:shadow-sm transition-shadow">
+              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
+                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">上游站点</CardTitle>
+                <CardAction><Globe class="size-4 text-muted-foreground" /></CardAction>
+              </CardHeader>
+              <CardContent>
+                <div class="text-2xl font-bold tracking-tight text-foreground capitalize">
+                  {{ s.status.value?.site?.site || "—" }}
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground">
+                  <span class="inline-block size-1.5 rounded-full bg-emerald-500"></span>
+                  <span class="truncate font-mono">{{ s.status.value?.site?.host || "e-hentai.org" }}</span>
+                </div>
+              </CardContent>
             </Card>
-            <Card class="metrics-card">
-              <Activity /><small>出站请求</small
-              ><b>{{
-                Number(s.status.value?.throttle?.html_requests || 0) +
-                Number(s.status.value?.throttle?.api_requests || 0) +
-                Number(s.status.value?.throttle?.image_requests || 0)
-              }}</b
-              ><span>HTML · API · 图片</span>
+
+            <Card class="shadow-xs hover:shadow-sm transition-shadow">
+              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
+                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">出站请求总量</CardTitle>
+                <CardAction><Activity class="size-4 text-muted-foreground" /></CardAction>
+              </CardHeader>
+              <CardContent>
+                <div class="text-2xl font-bold tracking-tight font-mono text-foreground">
+                  {{
+                    Number(s.status.value?.throttle?.html_requests || 0) +
+                    Number(s.status.value?.throttle?.api_requests || 0) +
+                    Number(s.status.value?.throttle?.image_requests || 0)
+                  }}
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground font-mono">
+                  <span>HTML {{ s.status.value?.throttle?.html_requests || 0 }}</span>
+                  <span>·</span>
+                  <span>API {{ s.status.value?.throttle?.api_requests || 0 }}</span>
+                  <span>·</span>
+                  <span>图 {{ s.status.value?.throttle?.image_requests || 0 }}</span>
+                </div>
+              </CardContent>
             </Card>
-            <Card class="metrics-card">
-              <Database /><small>内存缓存</small
-              ><b
-                >{{ s.status.value?.memory_cache?.size ?? "—" }} /
-                {{ s.status.value?.memory_cache?.max_entries ?? "—" }}</b
-              ><span
-                >命中 {{ s.status.value?.memory_cache?.hits ?? 0 }} · 未命中
-                {{ s.status.value?.memory_cache?.misses ?? 0 }}</span
-              >
+
+            <Card class="shadow-xs hover:shadow-sm transition-shadow">
+              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
+                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">内存缓存</CardTitle>
+                <CardAction><Database class="size-4 text-muted-foreground" /></CardAction>
+              </CardHeader>
+              <CardContent>
+                <div class="flex items-baseline justify-between">
+                  <div class="text-2xl font-bold tracking-tight font-mono text-foreground">
+                    {{ s.status.value?.memory_cache?.size ?? 0 }}
+                    <span class="text-xs font-normal text-muted-foreground">/ {{ s.status.value?.memory_cache?.max_entries ?? 2000 }}</span>
+                  </div>
+                  <span class="text-xs font-medium text-muted-foreground font-mono">
+                    {{
+                      s.status.value?.memory_cache?.max_entries
+                        ? Math.round((Number(s.status.value?.memory_cache?.size || 0) / Number(s.status.value?.memory_cache?.max_entries)) * 100)
+                        : 0
+                    }}%
+                  </span>
+                </div>
+                <div class="w-full bg-muted rounded-full h-1.5 mt-2.5 overflow-hidden">
+                  <div
+                    class="bg-foreground h-full rounded-full transition-all duration-300"
+                    :style="{
+                      width: `${Math.min(100, s.status.value?.memory_cache?.max_entries ? Math.round((Number(s.status.value?.memory_cache?.size || 0) / Number(s.status.value?.memory_cache?.max_entries)) * 100) : 0)}%`
+                    }"
+                  ></div>
+                </div>
+                <div class="flex items-center justify-between mt-2 text-xs text-muted-foreground font-mono">
+                  <span>命中 {{ s.status.value?.memory_cache?.hits ?? 0 }}</span>
+                  <span>未命中 {{ s.status.value?.memory_cache?.misses ?? 0 }}</span>
+                </div>
+              </CardContent>
             </Card>
-            <Card class="metrics-card">
-              <Database /><small>磁盘图片缓存</small
-              ><b>{{
-                s.status.value?.disk_cache?.enabled ? "已启用" : "已关闭"
-              }}</b
-              ><span
-                >{{ s.status.value?.disk_cache?.entries ?? 0 }} 项 ·
-                {{ s.status.value?.disk_cache?.bytes ?? 0 }} bytes</span
-              >
+
+            <Card class="shadow-xs hover:shadow-sm transition-shadow">
+              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
+                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">磁盘图片缓存</CardTitle>
+                <CardAction><HardDrive class="size-4 text-muted-foreground" /></CardAction>
+              </CardHeader>
+              <CardContent>
+                <div class="flex items-baseline justify-between">
+                  <div class="text-2xl font-bold tracking-tight text-foreground">
+                    {{ s.status.value?.disk_cache?.enabled ? "已启用" : "已关闭" }}
+                  </div>
+                  <Button
+                    v-if="s.status.value?.disk_cache?.enabled"
+                    variant="ghost"
+                    size="xs"
+                    class="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                    @click="s.askClearCache"
+                    title="清理图片缓存"
+                  >
+                    <Trash2 class="size-3 mr-1" />清理
+                  </Button>
+                </div>
+                <div class="flex items-center justify-between mt-1.5 text-xs text-muted-foreground font-mono">
+                  <span>{{ s.status.value?.disk_cache?.entries ?? 0 }} 项条目</span>
+                  <span>{{ formatBytes(s.status.value?.disk_cache?.bytes ?? 0) }}</span>
+                </div>
+              </CardContent>
             </Card>
           </div>
+
           <div class="columns">
-            <Card class="panel">
-              <CardHeader class="panel-header">
-                <CardTitle role="heading" aria-level="2">运行详情</CardTitle>
-                <CardDescription>当前进程与访问配置</CardDescription>
+            <Card class="shadow-xs">
+              <CardHeader class="border-b border-border/50 pb-3">
+                <CardTitle class="text-base font-semibold text-foreground">运行详情</CardTitle>
+                <CardDescription class="text-xs text-muted-foreground">当前进程与上游连接协议配置</CardDescription>
               </CardHeader>
-              <CardContent class="panel-body">
-              <dl>
-                <div>
-                  <dt>版本</dt>
-                  <dd>{{ s.status.value?.app?.version || "—" }}</dd>
+              <CardContent class="pt-2">
+                <div class="divide-y divide-border/50 text-sm">
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">版本</span>
+                    <Badge variant="secondary" class="font-mono text-xs">
+                      v{{ s.status.value?.app?.version || "—" }}
+                    </Badge>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">外部 URL</span>
+                    <span class="font-mono text-xs text-foreground truncate max-w-[240px]">
+                      {{ s.status.value?.site?.public_base_url || "未设置（相对路径）" }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">IPB 登录状态</span>
+                    <Badge :variant="s.status.value?.site?.has_ipb ? 'outline' : 'secondary'" class="text-xs">
+                      {{ s.status.value?.site?.has_ipb ? "已配置凭据" : "未配置（游客模式）" }}
+                    </Badge>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">并发请求上限</span>
+                    <span class="font-mono text-xs font-medium text-foreground">
+                      {{ s.status.value?.throttle?.max_concurrency ?? "—" }} 线程
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">HTML 请求间隔</span>
+                    <span class="font-mono text-xs font-medium text-foreground">
+                      {{ s.status.value?.throttle?.html_interval_seconds ?? "—" }} 秒
+                    </span>
+                  </div>
+                  <div v-if="s.status.value?.circuit?.state === 'open'" class="flex items-center justify-between py-2.5 text-destructive">
+                    <span class="text-xs font-medium">熔断原因</span>
+                    <span class="text-xs font-mono">{{ s.status.value?.circuit?.reason }}</span>
+                  </div>
                 </div>
-                <div>
-                  <dt>外部 URL</dt>
-                  <dd>
-                    {{ s.status.value?.site?.public_base_url || "未设置" }}
-                  </dd>
-                </div>
-                <div>
-                  <dt>IPB 登录</dt>
-                  <dd>
-                    {{ s.status.value?.site?.has_ipb ? "已配置" : "未配置" }}
-                  </dd>
-                </div>
-                <div>
-                  <dt>并发上限</dt>
-                  <dd>
-                    {{ s.status.value?.throttle?.max_concurrency ?? "—" }}
-                  </dd>
-                </div>
-                <div>
-                  <dt>HTML 间隔</dt>
-                  <dd>
-                    {{ s.status.value?.throttle?.html_interval_seconds ?? "—" }}
-                    秒
-                  </dd>
-                </div>
-                <div v-if="s.status.value?.circuit?.state === 'open'">
-                  <dt>熔断原因</dt>
-                  <dd>{{ s.status.value?.circuit?.reason }}</dd>
-                </div>
-              </dl>
               </CardContent>
             </Card>
-            <Card class="panel">
-              <CardHeader class="panel-header">
-                <CardTitle role="heading" aria-level="2">首页布局</CardTitle>
-                <CardDescription>OPDS 首页内容来源</CardDescription>
+
+            <Card class="shadow-xs">
+              <CardHeader class="border-b border-border/50 pb-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <CardTitle class="text-base font-semibold text-foreground">首页布局</CardTitle>
+                    <CardDescription class="text-xs text-muted-foreground">OPDS 首页编排与展示来源</CardDescription>
+                  </div>
+                  <Button variant="ghost" size="xs" class="h-7 text-xs gap-1" @click="s.route('home')">
+                    进入编排 <ArrowUpRight :size="12" />
+                  </Button>
+                </div>
               </CardHeader>
-              <CardContent class="panel-body">
-              <dl>
-                <div>
-                  <dt>来源</dt>
-                  <dd>
-                    {{
-                      s.status.value?.home?.using_file
-                        ? "home.toml"
-                        : "内置默认"
-                    }}
-                  </dd>
+              <CardContent class="pt-2">
+                <div class="divide-y divide-border/50 text-sm">
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">内容来源</span>
+                    <Badge variant="outline" class="font-mono text-xs">
+                      {{ s.status.value?.home?.using_file ? "home.toml" : "内置默认" }}
+                    </Badge>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">配置文件路径</span>
+                    <span class="font-mono text-xs text-muted-foreground truncate max-w-[260px]" :title="s.status.value?.home?.path">
+                      {{ s.status.value?.home?.path || "—" }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">已配置分组 / 栏目</span>
+                    <span class="font-mono text-xs font-medium text-foreground">
+                      {{ s.status.value?.home?.groups ?? 0 }} 组 / {{ s.status.value?.home?.sections ?? 0 }} 栏目
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">OPDS 协议版本</span>
+                    <div class="flex items-center gap-1.5">
+                      <Badge variant="secondary" class="text-[10px] font-mono">v1.2</Badge>
+                      <Badge variant="secondary" class="text-[10px] font-mono">v2.0</Badge>
+                      <Badge variant="secondary" class="text-[10px] font-mono">OPDS-PSE</Badge>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between py-2.5">
+                    <span class="text-muted-foreground text-xs font-medium">服务自愈心跳</span>
+                    <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span class="size-1.5 rounded-full bg-emerald-500"></span>
+                      活跃中
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <dt>文件</dt>
-                  <dd>{{ s.status.value?.home?.path || "—" }}</dd>
-                </div>
-                <div>
-                  <dt>分组 / 栏目</dt>
-                  <dd>
-                    {{ s.status.value?.home?.groups ?? "—" }} /
-                    {{ s.status.value?.home?.sections ?? "—" }}
-                  </dd>
-                </div>
-              </dl>
-              <Button
-                variant="destructive"
-                size="sm"
-                class="cache-button"
-                @click="s.askClearCache"
-              >
-                <Trash2 />清理图片缓存
-              </Button>
               </CardContent>
             </Card>
-          </div></template
-        >
+          </div>
+        </template>
         <template v-if="s.page.value === 'config'"
           ><div class="heading">
             <div>

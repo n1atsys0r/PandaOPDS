@@ -126,6 +126,9 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/home/edit", s.homeEdit)
 	m.HandleFunc("PUT /api/home/edit", s.homeEdit)
 	m.HandleFunc("POST /api/cache/clear", s.cacheClear)
+	m.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	m.Handle("GET /webui-assets/assets/{name}", http.StripPrefix("/webui-assets/", http.FileServerFS(webui.Assets)))
 	m.HandleFunc("GET /{$}", s.webPage)
 }
@@ -137,7 +140,8 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 			writeJSON(w, 403, map[string]any{"detail": "admin Basic Auth is required for editing"})
 			return
 		}
-		if !editRoute && (!cfg.AuthEnabled() || r.URL.Path == "/health" || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path)) {
+		isWebUI := r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/webui-assets/") || r.URL.Path == "/favicon.ico"
+		if !editRoute && (!cfg.AuthEnabled() || r.URL.Path == "/health" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path)) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -146,7 +150,9 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		w.Header().Set("WWW-Authenticate", `Basic realm="PandaOPDS"`)
+		if r.Header.Get("X-Requested-With") != "XMLHttpRequest" && !strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("WWW-Authenticate", `Basic realm="PandaOPDS"`)
+		}
 		writeJSON(w, 401, map[string]any{"error": "unauthorized", "detail": "valid PandaOPDS credentials required"})
 	})
 }

@@ -38,7 +38,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		site["public_base_url"] = "（相对路径）"
 	}
 	th := map[string]any{"html_requests": counts["html"], "api_requests": counts["api"], "image_requests": counts["image"], "thumb_requests": counts["thumb"], "max_concurrency": s.Settings.MaxConcurrency, "image_max_concurrency": s.Settings.ImageMaxConcurrency, "thumb_max_concurrency": s.Settings.ThumbMaxConcurrency, "html_interval_seconds": s.Settings.HTMLIntervalSeconds}
-	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": len(homeCfg.Groups), "sections": len(homeCfg.Sections)}})
+	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": len(homeCfg.Groups), "sections": len(homeCfg.Sections)}})
 }
 func apiURL(site string) string {
 	if site == "exhentai" {

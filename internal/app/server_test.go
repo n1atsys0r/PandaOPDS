@@ -52,3 +52,55 @@ func loadTestSettings(base string) config.Settings {
 		ImageCacheEnabled: false, FavoritesSyncIntervalSeconds: 0,
 	}
 }
+
+func TestWebUIAuthBehavior(t *testing.T) {
+	base := t.TempDir()
+	settings := loadTestSettings(base)
+	settings.AuthUsername = "admin"
+	settings.AuthPassword = "password123"
+	server, err := New(settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/favicon.ico", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for /favicon.ico, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for /api/status, got %d", rec.Code)
+	}
+	if rec.Header().Get("WWW-Authenticate") != "" {
+		t.Fatalf("expected no WWW-Authenticate header on /api/status, got %q", rec.Header().Get("WWW-Authenticate"))
+	}
+
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for /opds/v1.2, got %d", rec.Code)
+	}
+	if rec.Header().Get("WWW-Authenticate") == "" {
+		t.Fatalf("expected WWW-Authenticate header on /opds/v1.2 for OPDS reader clients")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.SetBasicAuth("admin", "password123")
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for authenticated /api/status, got %d", rec.Code)
+	}
+}

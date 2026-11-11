@@ -4,6 +4,9 @@ const state = reactive({
   mobile: false,
   theme: localStorage.theme || "system",
   busy: false,
+  authRequired: false,
+  loginError: "",
+  authToken: localStorage.getItem("pandaopds_auth") || "",
   notice: "",
   error: "",
   status: null,
@@ -33,8 +36,11 @@ const state = reactive({
   layout: { groups: [], sections: [] },
 });
 async function api(path, opts = {}) {
+  const token = state.authToken || localStorage.getItem("pandaopds_auth");
   const headers = {
     Accept: "application/json",
+    "X-Requested-With": "XMLHttpRequest",
+    ...(token ? { Authorization: `Basic ${token}` } : {}),
     ...(opts.body ? { "Content-Type": "application/json" } : {}),
     ...(opts.headers || {}),
   };
@@ -45,6 +51,9 @@ async function api(path, opts = {}) {
     data = raw ? JSON.parse(raw) : {};
   } catch {
     data = { detail: raw };
+  }
+  if (r.status === 401) {
+    state.authRequired = true;
   }
   if (!r.ok)
     throw Object.assign(
@@ -463,6 +472,35 @@ function route(v) {
     loadStatus();
   }
 }
+async function login(username, password) {
+  const token = btoa(`${username}:${password}`);
+  state.busy = true;
+  state.loginError = "";
+  try {
+    const r = await api("/api/status", {
+      headers: { Authorization: `Basic ${token}` },
+    });
+    state.authToken = token;
+    localStorage.setItem("pandaopds_auth", token);
+    state.authRequired = false;
+    state.status = r.data;
+    state.loginError = "";
+    return true;
+  } catch (e) {
+    state.loginError = "用户名或密码错误，请重试";
+    return false;
+  } finally {
+    state.busy = false;
+  }
+}
+
+function logout() {
+  state.authToken = "";
+  localStorage.removeItem("pandaopds_auth");
+  state.status = null;
+  state.authRequired = true;
+}
+
 let timer, archiveTimer, media;
 function init() {
   media = matchMedia("(prefers-color-scheme: dark)");
@@ -470,10 +508,10 @@ function init() {
   media.addEventListener?.("change", applyTheme);
   loadStatus();
   timer = setInterval(() => {
-    if (state.page === "dashboard") loadStatus();
+    if (!state.authRequired && state.page === "dashboard") loadStatus();
   }, 15000);
   archiveTimer = setInterval(() => {
-    if (state.page === "archive") loadArchives();
+    if (!state.authRequired && state.page === "archive") loadArchives();
   }, 10000);
 }
 function destroy() {
@@ -486,6 +524,8 @@ export function useApp() {
     ...toRefs(state),
     route,
     setTheme,
+    login,
+    logout,
     loadStatus,
     loadConfig,
     loadHome,
