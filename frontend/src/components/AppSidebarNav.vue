@@ -1,6 +1,6 @@
 <script setup>
 import {
-  ArchiveIcon as Archive,
+  Package2Icon as Package2,
   LayoutDashboardIcon as LayoutDashboard,
   PanelsTopLeftIcon as PanelsTopLeft,
   SettingsIcon as Settings,
@@ -45,7 +45,7 @@ function navigate(page) {
               :is-active="props.page === 'archive'"
               @click="navigate('archive')"
             >
-              <Archive /><span>归档</span>
+              <Package2 /><span>归档</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

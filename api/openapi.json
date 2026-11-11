@@ -4240,6 +4240,14 @@
                   "archive_auto_update": {
                     "type": ["boolean", "null"],
                     "description": "Automatically download newer archive versions, which may spend GP. Defaults to false. Stored in settings.toml."
+                  },
+                  "favorites_sync_archive": {
+                    "type": ["boolean", "null"],
+                    "description": "Automatically archive newly discovered favorites, which may spend GP. Defaults to false. The initial scan only creates a baseline. Stored in settings.toml; environment overrides lock this setting."
+                  },
+                  "favorites_sync_categories": {
+                    "type": ["string", "null"],
+                    "description": "Limits auto-archive scope using comma-separated favorite folder IDs 0-9; -ID excludes a folder; empty means all folders. It does not filter the sync scan. Stored in settings.toml; environment overrides lock this setting."
                   }
                 },
                 "additionalProperties": true

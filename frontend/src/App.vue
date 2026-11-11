@@ -130,7 +130,11 @@ const groups = computed(() => {
       "comments_enabled",
       "image_cache_enabled",
       "cache_max_gb",
+    ],
+    收藏夹: [
       "favorites_sync_interval_seconds",
+      "favorites_sync_categories",
+      "favorites_sync_archive",
     ],
     归档: ["archive_update_interval_days", "archive_auto_update"],
   };
@@ -155,6 +159,8 @@ const labels = {
   image_cache_enabled: "图片缓存",
   cache_max_gb: "图片缓存上限（GB）",
   favorites_sync_interval_seconds: "收藏同步间隔（秒）",
+  favorites_sync_categories: "自动归档范围",
+  favorites_sync_archive: "自动归档新增收藏",
   archive_update_interval_days: "归档版本检查周期（天）",
   archive_auto_update: "自动更新归档",
 };
@@ -183,6 +189,7 @@ const lockedReason = (key) => {
       image_cache_enabled: "IMAGE_CACHE_ENABLED",
       cache_max_gb: "CACHE_MAX_GB",
       favorites_sync_interval_seconds: "FAVORITES_SYNC_INTERVAL_SECONDS",
+      favorites_sync_categories: "FAVORITES_SYNC_CATEGORIES",
     }[key] || key.toUpperCase();
   return env + " 环境变量控制此项。";
 };
@@ -858,6 +865,9 @@ const filteredArchives = computed(() => {
                 }}</small>
                 <small v-if="key === 'archive_update_interval_days'">0 关闭周期检查；仅写入 settings.toml。</small>
                 <small v-if="key === 'archive_auto_update'">启用后自动购买新版归档，可能消耗 GP；仅写入 settings.toml。</small>
+                <small v-if="key === 'favorites_sync_interval_seconds'">默认 3600 秒；设为 0 只关闭周期扫描，收藏操作触发的扫描和手动扫描仍可用。</small>
+                <small v-if="key === 'favorites_sync_categories'">逗号分隔收藏夹 ID（0–9）；留空表示全部，-ID 表示排除该收藏夹。只限制自动归档范围，不影响同步扫描。</small>
+                <small v-if="key === 'favorites_sync_archive'">启用后会自动购买新发现收藏的归档，可能消耗 GP；首次扫描只建立基线，不会归档已有收藏。保存后重启生效。</small>
               </div>
               <div class="control">
                 <label v-if="boolean(key)" class="switch"
@@ -921,12 +931,12 @@ const filteredArchives = computed(() => {
                   :type="
                     secret(key)
                       ? 'password'
-                      : key === 'cache_max_gb' || key === 'archive_update_interval_days'
+                      : key === 'cache_max_gb' || key === 'archive_update_interval_days' || key === 'favorites_sync_interval_seconds'
                         ? 'number'
                         : 'text'
                   "
-                  :min="key === 'archive_update_interval_days' ? 0 : undefined"
-                  :step="key === 'archive_update_interval_days' ? 1 : undefined"
+                  :min="['archive_update_interval_days', 'favorites_sync_interval_seconds'].includes(key) ? 0 : undefined"
+                  :step="key === 'archive_update_interval_days' ? 1 : key === 'favorites_sync_interval_seconds' ? 'any' : undefined"
                   :model-value="s.form.value[key] ?? ''"
                   :placeholder="
                     secret(key)
@@ -1541,11 +1551,17 @@ const filteredArchives = computed(() => {
                 <Select
                   :model-value="a.favcat != null ? String(a.favcat) : ''"
                   @update:model-value="
-                    s.favorite(
-                      a,
-                      a.is_favorited ? 'move' : 'add',
-                      Number($event),
-                    )
+                    (val) => {
+                      if (val === 'remove') {
+                        s.requestFavoriteRemove(a);
+                      } else {
+                        s.favorite(
+                          a,
+                          a.is_favorited ? 'move' : 'add',
+                          Number(val),
+                        );
+                      }
+                    }
                   "
                 >
                   <SelectTrigger class="favorite-select">
@@ -1557,16 +1573,17 @@ const filteredArchives = computed(() => {
                     <SelectItem v-for="cat in favcatList" :key="cat.id" :value="String(cat.id)">
                       {{ cat.id }}: {{ cat.name }}
                     </SelectItem>
+                    <template v-if="a.is_favorited">
+                      <SelectSeparator class="my-1" />
+                      <SelectItem
+                        value="remove"
+                        class="text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
+                      >
+                        移除收藏
+                      </SelectItem>
+                    </template>
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  v-if="a.is_favorited"
-                  @click="s.requestFavoriteRemove(a)"
-                >
-                  移除收藏
-                </Button>
               </div>
               <small v-if="a.error || a.version_update?.error" class="archive-error">
                 {{ a.error || a.version_update.error }}

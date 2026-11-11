@@ -13,7 +13,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-var editableKeys = []string{"EH_SITE", "IPB_MEMBER_ID", "IPB_PASS_HASH", "IGNEOUS", "PUBLIC_BASE_URL", "PSE_PAGE_BASE", "OPDS_ACQ_DETAIL", "TAG_STATUS_FILTER", "TAG_TRANSLATION_ENABLED", "COMMENTS_ENABLED", "IMAGE_CACHE_ENABLED", "CACHE_MAX_GB", "FAVORITES_SYNC_INTERVAL_SECONDS", "ARCHIVE_UPDATE_INTERVAL_DAYS", "ARCHIVE_AUTO_UPDATE"}
+var editableKeys = []string{"EH_SITE", "IPB_MEMBER_ID", "IPB_PASS_HASH", "IGNEOUS", "PUBLIC_BASE_URL", "PSE_PAGE_BASE", "OPDS_ACQ_DETAIL", "TAG_STATUS_FILTER", "TAG_TRANSLATION_ENABLED", "COMMENTS_ENABLED", "IMAGE_CACHE_ENABLED", "CACHE_MAX_GB", "FAVORITES_SYNC_INTERVAL_SECONDS", "FAVORITES_SYNC_ARCHIVE", "FAVORITES_SYNC_CATEGORIES", "ARCHIVE_UPDATE_INTERVAL_DAYS", "ARCHIVE_AUTO_UPDATE"}
 
 func EditablePath() string {
 	if p := os.Getenv("SETTINGS_CONFIG"); p != "" {
@@ -133,6 +133,10 @@ func EditableValue(s Settings, k string) any {
 		return s.CacheMaxGB
 	case "FAVORITES_SYNC_INTERVAL_SECONDS":
 		return s.FavoritesSyncIntervalSeconds
+	case "FAVORITES_SYNC_ARCHIVE":
+		return s.FavoritesSyncArchive
+	case "FAVORITES_SYNC_CATEGORIES":
+		return favoritesSyncCategoriesValue(s)
 	case "ARCHIVE_UPDATE_INTERVAL_DAYS":
 		return s.ArchiveUpdateIntervalSeconds / 86400
 	case "ARCHIVE_AUTO_UPDATE":
@@ -141,13 +145,13 @@ func EditableValue(s Settings, k string) any {
 	return nil
 }
 func ValidateEditableValue(k string, v any) error {
-	stringKey := k == "EH_SITE" || k == "IPB_MEMBER_ID" || k == "IPB_PASS_HASH" || k == "IGNEOUS" || k == "PUBLIC_BASE_URL" || k == "TAG_STATUS_FILTER"
+	stringKey := k == "EH_SITE" || k == "IPB_MEMBER_ID" || k == "IPB_PASS_HASH" || k == "IGNEOUS" || k == "PUBLIC_BASE_URL" || k == "TAG_STATUS_FILTER" || k == "FAVORITES_SYNC_CATEGORIES"
 	if stringKey {
 		if _, ok := v.(string); !ok {
 			return fmt.Errorf("%s must be a string", k)
 		}
 	}
-	if k == "OPDS_ACQ_DETAIL" || k == "TAG_TRANSLATION_ENABLED" || k == "COMMENTS_ENABLED" || k == "IMAGE_CACHE_ENABLED" || k == "ARCHIVE_AUTO_UPDATE" {
+	if k == "OPDS_ACQ_DETAIL" || k == "TAG_TRANSLATION_ENABLED" || k == "COMMENTS_ENABLED" || k == "IMAGE_CACHE_ENABLED" || k == "FAVORITES_SYNC_ARCHIVE" || k == "ARCHIVE_AUTO_UPDATE" {
 		if _, ok := v.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean", k)
 		}
@@ -287,6 +291,17 @@ func setEditableValue(s *Settings, k string, v any) error {
 			}
 		}
 		s.FavoritesSyncIntervalSeconds = n
+	case "FAVORITES_SYNC_ARCHIVE":
+		b, e := boolean()
+		s.FavoritesSyncArchive = b
+		return e
+	case "FAVORITES_SYNC_CATEGORIES":
+		included, excluded, err := parseFavoritesSyncCategories(str)
+		if err != nil {
+			return err
+		}
+		s.FavoritesSyncCategories = included
+		s.FavoritesSyncExcludes = excluded
 	case "ARCHIVE_UPDATE_INTERVAL_DAYS":
 		n, ok := archiveDaysValue(v)
 		if !ok || n > archiveMaxDays() {
@@ -324,6 +339,47 @@ func archiveMaxDays() int64 {
 		return maxDurationDays
 	}
 	return maxIntDays
+}
+
+func parseFavoritesSyncCategories(value string) ([]int, []int, error) {
+	included, excluded := []int{}, []int{}
+	seenIncluded, seenExcluded := map[int]bool{}, map[int]bool{}
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		exclude := strings.HasPrefix(part, "-")
+		idText := part
+		if exclude {
+			idText = strings.TrimPrefix(part, "-")
+		}
+		if idText == "" || len(idText) != 1 || idText[0] < '0' || idText[0] > '9' {
+			return nil, nil, fmt.Errorf("FAVORITES_SYNC_CATEGORIES must contain favcat IDs 0-9, optionally prefixed with -")
+		}
+		id := int(idText[0] - '0')
+		if exclude {
+			if !seenExcluded[id] {
+				excluded = append(excluded, id)
+				seenExcluded[id] = true
+			}
+		} else if !seenIncluded[id] {
+			included = append(included, id)
+			seenIncluded[id] = true
+		}
+	}
+	return included, excluded, nil
+}
+
+func favoritesSyncCategoriesValue(s Settings) string {
+	parts := make([]string, 0, len(s.FavoritesSyncCategories)+len(s.FavoritesSyncExcludes))
+	for _, id := range s.FavoritesSyncCategories {
+		parts = append(parts, strconv.Itoa(id))
+	}
+	for _, id := range s.FavoritesSyncExcludes {
+		parts = append(parts, "-"+strconv.Itoa(id))
+	}
+	return strings.Join(parts, ",")
 }
 
 func WriteEditableFile(path string, values map[string]any) error {

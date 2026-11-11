@@ -14,17 +14,53 @@ func TestEditableSettingsFileAndEnvironmentPrecedence(t *testing.T) {
 	t.Setenv("OPDS_ACQ_MODE", "")
 	_ = os.Unsetenv("OPDS_ACQ_MODE")
 	path := filepath.Join(t.TempDir(), "settings.toml")
-	if err := WriteEditableFile(path, map[string]any{"EH_SITE": "exhentai", "PSE_PAGE_BASE": float64(0), "COMMENTS_ENABLED": false}); err != nil {
+	if err := WriteEditableFile(path, map[string]any{"EH_SITE": "exhentai", "PSE_PAGE_BASE": float64(0), "COMMENTS_ENABLED": false, "FAVORITES_SYNC_ARCHIVE": true, "FAVORITES_SYNC_CATEGORIES": "1,-0"}); err != nil {
 		t.Fatal(err)
 	}
 	s := LoadWithConfigPath(path)
-	if s.EHSite != "exhentai" || s.PSEPageBase != 0 || s.CommentsEnabled {
+	if s.EHSite != "exhentai" || s.PSEPageBase != 0 || s.CommentsEnabled || !s.FavoritesSyncArchive || len(s.FavoritesSyncCategories) != 1 || s.FavoritesSyncCategories[0] != 1 || len(s.FavoritesSyncExcludes) != 1 || s.FavoritesSyncExcludes[0] != 0 {
 		t.Fatalf("file overrides not loaded: %+v", s)
 	}
 	t.Setenv("EH_SITE", "e-hentai")
 	s = LoadWithConfigPath(path)
 	if s.EHSite != "e-hentai" {
 		t.Fatalf("environment did not override file: %q", s.EHSite)
+	}
+}
+
+func TestFavoritesSyncCategoriesEnvironmentOverridesFile(t *testing.T) {
+	t.Setenv("FAVORITES_SYNC_CATEGORIES", "3,-5")
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := WriteEditableFile(p, map[string]any{"FAVORITES_SYNC_CATEGORIES": "1,-0"}); err != nil {
+		t.Fatal(err)
+	}
+	s := LoadWithConfigPath(p)
+	if len(s.FavoritesSyncCategories) != 1 || s.FavoritesSyncCategories[0] != 3 || len(s.FavoritesSyncExcludes) != 1 || s.FavoritesSyncExcludes[0] != 5 {
+		t.Fatalf("environment did not override favorites scope: %+v", s)
+	}
+}
+
+func TestFavoritesSyncCategoriesValidation(t *testing.T) {
+	for _, value := range []string{"", "0,1,-5", " 2 , -0 "} {
+		if err := ValidateEditableValue("FAVORITES_SYNC_CATEGORIES", value); err != nil {
+			t.Fatalf("valid category scope %q rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{"10", "-", "x", "1,,11"} {
+		if err := ValidateEditableValue("FAVORITES_SYNC_CATEGORIES", value); err == nil {
+			t.Fatalf("invalid category scope %q accepted", value)
+		}
+	}
+}
+
+func TestFavoritesSyncArchiveEnvironmentOverridesFile(t *testing.T) {
+	t.Setenv("FAVORITES_SYNC_ARCHIVE", "false")
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := WriteEditableFile(p, map[string]any{"FAVORITES_SYNC_ARCHIVE": true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadWithConfigPath(p).FavoritesSyncArchive; got {
+		t.Fatal("environment variable did not override favorites archive setting")
 	}
 }
 
