@@ -283,6 +283,30 @@
   margin-bottom: 1.35rem;
 }
 
+.heading-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.archive-scan-status {
+  margin: -0.55rem 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.8rem;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 0.85rem;
+}
+
+.archive-scan-error,
+.archive-scan-conflict {
+  border-color: color-mix(in oklch, var(--destructive) 45%, var(--border));
+  color: var(--destructive);
+}
+
 .heading > div > small {
   display: block;
   margin-bottom: 0.35rem;
@@ -1311,6 +1335,10 @@
 @media (max-width: 480px) {
   .heading {
     flex-direction: column;
+  }
+
+  .heading-actions {
+    justify-content: flex-start;
   }
 
   .heading > [data-slot="button"] {

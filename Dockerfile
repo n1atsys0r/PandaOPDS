@@ -20,7 +20,7 @@ COPY app/webui/assets.go ./app/webui/
 COPY --from=webui /src/app/webui/dist ./app/webui/dist
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath -ldflags="-s -w" -o /out/pandaopds ./cmd/pandaopds
-RUN mkdir -p /out/config /out/data/cache /out/data/archives && chown -R 65532:65532 /out/config /out/data
+RUN mkdir -p /out/config/archive /out/data/cache /out/data/archives && chown -R 65532:65532 /out/config /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /srv/pandaopds
@@ -39,6 +39,7 @@ ENV SETTINGS_CONFIG=/config/settings.toml \
     THUMB_MAX_CONCURRENCY=25 \
     CACHE_DIR=/data/cache \
     ARCHIVE_DIR=/data/archives \
+    ARCHIVE_STATE_DIR=/config/archive \
     PORT=8000
 
 EXPOSE 8000

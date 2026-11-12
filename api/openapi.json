@@ -1808,7 +1808,7 @@
             }
           },
           "503": {
-            "description": "Upstream unavailable or circuit breaker open",
+            "description": "Upstream, local archive storage, or circuit breaker temporarily unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -2080,7 +2080,7 @@
             }
           },
           "503": {
-            "description": "Upstream unavailable or circuit breaker open",
+            "description": "Upstream, local archive storage, or circuit breaker temporarily unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -2335,6 +2335,27 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/archive/import/scan": {
+      "get": {
+        "tags": ["archive"],
+        "summary": "Archive scan status",
+        "operationId": "archive_import_scan_status",
+        "responses": {
+          "200": {"description": "Current archive scan status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArchiveScanStatus"}}}},
+          "401": {"description": "Basic authentication required when configured", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "tags": ["archive"],
+        "summary": "Scan configured archive storage for legacy sidecars",
+        "operationId": "start_archive_import_scan",
+        "description": "Starts a state-backed scan of configured ARCHIVE_DIR. Repeated requests while running share the current job. ZIP-only files without state identity are ignored; this operation does not purchase or delete archives.",
+        "responses": {
+          "202": {"description": "Scan started or an existing scan is running", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArchiveScanStatus"}}}},
+          "401": {"description": "Basic authentication required when configured", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
@@ -4562,6 +4583,19 @@
           "download_url": {
             "type": "string"
           }
+        }
+      },
+      "ArchiveScanStatus": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer"},
+          "status": {"type": "string", "enum": ["idle", "running", "success", "skipped", "conflict", "error"]},
+          "imported": {"type": "integer", "description": "Number of sidecar files imported"},
+          "skipped": {"type": "integer", "description": "Number of sidecar files skipped"},
+          "conflicts": {"type": "integer", "description": "Number of sidecar files in conflict"},
+          "error": {"type": "string"},
+          "started_at": {"type": "integer"},
+          "completed_at": {"type": "integer"}
         }
       },
       "ArchiveStatus": {

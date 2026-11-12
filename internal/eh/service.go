@@ -66,6 +66,9 @@ type ArchiveReader interface {
 type archiveVersionResolver interface {
 	ResolveActive(gid int, token string) (int, string)
 }
+type archiveReadiness interface {
+	IsReady(gid int, token string) bool
+}
 type ArchiveInfo struct {
 	GID         int    `json:"gid"`
 	Token       string `json:"token"`
@@ -669,6 +672,8 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 	if s.archive != nil {
 		if b, ok, err := s.archive.GetPage(gid, token, index); err == nil && ok {
 			return b, detectImageType(b), nil
+		} else if err != nil && s.archivePayloadReady(gid, token) {
+			return nil, "", &UpstreamError{Status: 503, Detail: "local archive temporarily unavailable: " + err.Error()}
 		}
 	}
 	key := fmt.Sprintf("%d:%s:%d", gid, token, pageNo)
@@ -794,6 +799,8 @@ func (s *Service) GetPageThumbnail(ctx context.Context, gid int, token string, p
 				s.disk.Put(previewKey, data)
 				return data, "image/jpeg", nil
 			}
+		} else if err != nil && s.archivePayloadReady(gid, token) {
+			return nil, "", &UpstreamError{Status: 503, Detail: "local archive temporarily unavailable: " + err.Error()}
 		}
 	}
 	d, e := s.getDetailPage(ctx, gid, token, index/20)
@@ -835,6 +842,13 @@ func (s *Service) GetPageThumbnail(ctx context.Context, gid int, token string, p
 	}
 	s.disk.Put(previewKey, preview)
 	return preview, "image/jpeg", nil
+}
+
+func (s *Service) archivePayloadReady(gid int, token string) bool {
+	if ready, ok := s.archive.(archiveReadiness); ok {
+		return ready.IsReady(gid, token)
+	}
+	return s.archive != nil && s.archive.PageCount(gid, token) > 0
 }
 
 func (s *Service) getThumbnailSource(ctx context.Context, sourceURL, referer string) (image.Image, error) {

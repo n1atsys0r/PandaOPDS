@@ -2,6 +2,7 @@ package eh
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -39,6 +40,24 @@ type noArchiveNetwork struct{}
 
 func (noArchiveNetwork) RoundTrip(*http.Request) (*http.Response, error) {
 	panic("switched archive detail must not make an upstream request")
+}
+
+type unavailableReadyArchive struct{ switchedArchiveFixture }
+
+func (unavailableReadyArchive) GetPage(int, string, int) ([]byte, bool, error) {
+	return nil, false, errors.New("archive volume unavailable")
+}
+func (unavailableReadyArchive) IsReady(int, string) bool { return true }
+
+func TestReadyArchiveReadFailureReturnsTemporaryUnavailable(t *testing.T) {
+	s := NewService(config.Settings{PSEPageBase: 1}, noArchiveNetwork{})
+	defer s.Close()
+	s.AttachArchive(unavailableReadyArchive{})
+	_, _, err := s.GetImage(context.Background(), 10, "old", 1)
+	var upstream *UpstreamError
+	if !errors.As(err, &upstream) || upstream.Status != 503 {
+		t.Fatalf("error=%v, want local archive 503", err)
+	}
 }
 
 func TestSwitchedArchiveDetailUsesActiveSnapshotWithoutUpstream(t *testing.T) {

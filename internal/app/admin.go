@@ -138,7 +138,7 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 			field("facets", "分类筛选（facets）", facetText(cfg.Facets), false, true, nil),
 		}},
 		{"id": "archive", "title": "归档（archiver）", "fields": []map[string]any{
-			field("archive_dir", "归档数据目录", cfg.ArchiveDir, false, true, "持久目录：zip 母本 + meta.json；不受磁盘缓存 LRU/7 天 TTL 约束"),
+			field("archive_dir", "归档 ZIP 目录", cfg.ArchiveDir, false, true, "持久目录：保存 ZIP 母本；状态与图库 sidecar 位于 ARCHIVE_STATE_DIR，不受磁盘缓存 LRU/7 天 TTL 约束"),
 			field("archive_quality", "默认画质档位", cfg.ArchiveQuality, false, true, "start API 未传 quality 时的默认档（匹配 archiver 页面选项，默认 original 无损）"),
 			field("archive_download_concurrency", "归档任务并发", cfg.ArchiveDownloadConcurrency, false, true, "下载/7z 转换并发上限，其余排队；不受阅读限流约束（仍过熔断）"),
 			field("archive_update_interval_days", "归档版本检查周期（天）", cfg.ArchiveUpdateIntervalSeconds/86400, false, true, "默认 7 天；0 关闭后台检查"),

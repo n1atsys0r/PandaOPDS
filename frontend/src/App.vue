@@ -1288,12 +1288,30 @@ const filteredArchives = computed(() => {
               <h1>归档</h1>
               <p>归档操作可能消耗账户 GP；每次开始前会明确确认。</p>
             </div>
-            <Button
-              class="primary-action"
-              @click="openCreateArchiveDialog"
-            >
-              <Plus />新建归档
-            </Button>
+            <div class="heading-actions">
+              <Button
+                variant="outline"
+                :disabled="s.archiveScan.value.status === 'running'"
+                @click="s.startArchiveScan"
+              >
+                {{ s.archiveScan.value.status === 'running' ? '正在扫描…' : '扫描现有归档' }}
+              </Button>
+              <Button class="primary-action" @click="openCreateArchiveDialog">
+                <Plus />新建归档
+              </Button>
+            </div>
+          </div>
+          <div
+            v-if="s.archiveScan.value.status !== 'idle'"
+            class="archive-scan-status"
+            :class="'archive-scan-' + s.archiveScan.value.status"
+            role="status"
+          >
+            <span v-if="s.archiveScan.value.status === 'running'">正在查找归档状态与图库资料…</span>
+            <span v-else-if="s.archiveScan.value.status === 'success'">扫描完成：导入 {{ s.archiveScan.value.imported }} 个文件，跳过 {{ s.archiveScan.value.skipped }} 个文件，冲突 {{ s.archiveScan.value.conflicts }} 个文件。</span>
+            <span v-else-if="s.archiveScan.value.status === 'skipped'">扫描完成：未导入新文件，跳过 {{ s.archiveScan.value.skipped }} 个文件。</span>
+            <span v-else-if="s.archiveScan.value.status === 'conflict'">扫描完成：未导入文件，发现 {{ s.archiveScan.value.conflicts }} 个冲突文件。</span>
+            <span v-else>扫描失败：{{ s.archiveScan.value.error || '未知错误' }}</span>
           </div>
           <div class="archive-action-bar">
             <!-- 左侧分段器：全部 / 可更新 / 下载中 / 失败 -->

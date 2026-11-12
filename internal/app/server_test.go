@@ -1,6 +1,8 @@
 package app
 
 import (
+	"archive/zip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,9 +10,76 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"pandaopds/internal/config"
 )
+
+func TestArchiveScanAPIImportsAndExposesStatus(t *testing.T) {
+	base := t.TempDir()
+	settings := loadTestSettings(base)
+	settings.ArchiveStateDir = filepath.Join(base, "archive-state")
+	if err := os.MkdirAll(filepath.Join(settings.ArchiveDir, "601"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settings.ArchiveDir, "601", "state.json"), []byte(`{"gid":601,"token":"api-scan","status":"ready"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(settings.ArchiveDir, "601", "archive.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("page.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("page")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/archive/import/scan", nil))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start status=%d body=%s", response.Code, response.Body.String())
+	}
+	var initial ArchiveScanJob
+	if err := json.Unmarshal(response.Body.Bytes(), &initial); err != nil {
+		t.Fatal(err)
+	}
+	if initial.Status != "running" {
+		t.Fatalf("initial job=%+v", initial)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var result ArchiveScanJob
+	for time.Now().Before(deadline) {
+		status := httptest.NewRecorder()
+		server.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/archive/import/scan", nil))
+		if err := json.Unmarshal(status.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if result.Status != "success" || result.Imported != 1 {
+		t.Fatalf("completed status=%+v", result)
+	}
+	if server.Store.Get(601, "api-scan") == nil {
+		t.Fatal("scan result was not visible to live archive index")
+	}
+}
 
 func TestRootWebUIUsesEmbeddedAssetFromAnyWorkingDirectory(t *testing.T) {
 	base := t.TempDir()
@@ -46,7 +115,7 @@ func TestRootWebUIUsesEmbeddedAssetFromAnyWorkingDirectory(t *testing.T) {
 
 func loadTestSettings(base string) config.Settings {
 	return config.Settings{
-		EHSite: "e-hentai", CacheDir: filepath.Join(base, "cache"), ArchiveDir: filepath.Join(base, "archives"),
+		EHSite: "e-hentai", CacheDir: filepath.Join(base, "cache"), ArchiveDir: filepath.Join(base, "archives"), ArchiveStateDir: filepath.Join(base, "archive-state"),
 		HomeConfigPath: filepath.Join(base, "home.toml"), FavoritesSyncState: filepath.Join(base, "favorites.json"),
 		MyTagsState: filepath.Join(base, "mytags.json"), TagTranslationState: filepath.Join(base, "translations.json"),
 		ImageCacheEnabled: false, FavoritesSyncIntervalSeconds: 0,

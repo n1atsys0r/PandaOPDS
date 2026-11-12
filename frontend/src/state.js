@@ -15,6 +15,7 @@ const state = reactive({
   home: null,
   archives: [],
   archiveStats: {},
+  archiveScan: { status: "idle", imported: 0, skipped: 0, conflicts: 0 },
   favcats: [],
   archiveInput: "",
   quote: null,
@@ -354,6 +355,23 @@ async function loadArchives() {
     if (e.status !== 401) state.error = e.message;
   }
 }
+async function loadArchiveScanStatus() {
+  try {
+    const wasRunning = state.archiveScan.status === "running";
+    state.archiveScan = (await api("/api/archive/import/scan")).data;
+    if (wasRunning && state.archiveScan.status !== "running") await loadArchives();
+  } catch (e) {
+    if (e.status !== 401) state.archiveScan = { ...state.archiveScan, status: "error", error: e.message };
+  }
+}
+async function startArchiveScan() {
+  if (state.archiveScan.status === "running") return;
+  try {
+    state.archiveScan = (await api("/api/archive/import/scan", { method: "POST" })).data;
+  } catch (e) {
+    if (e.status !== 401) state.archiveScan = { ...state.archiveScan, status: "error", error: e.message };
+  }
+}
 function parseInput() {
   const s = state.archiveInput.trim();
   let m =
@@ -575,6 +593,7 @@ function route(v) {
   if (v === "home") loadHome();
   if (v === "archive") {
     loadArchives();
+    loadArchiveScanStatus();
     loadCategories();
     loadStatus();
   }
@@ -623,7 +642,7 @@ function logout() {
   state.authRequired = true;
 }
 
-let timer, archiveTimer, media;
+let timer, archiveTimer, archiveScanTimer, media;
 function init() {
   media = matchMedia("(prefers-color-scheme: dark)");
   applyTheme();
@@ -633,12 +652,18 @@ function init() {
     if (state.authChecked && !state.authRequired && state.page === "dashboard") loadStatus();
   }, 15000);
   archiveTimer = setInterval(() => {
-    if (state.authChecked && !state.authRequired && state.page === "archive") loadArchives();
+    if (state.authChecked && !state.authRequired && state.page === "archive") {
+      loadArchives();
+    }
   }, 10000);
+  archiveScanTimer = setInterval(() => {
+    if (state.authChecked && !state.authRequired && state.page === "archive" && state.archiveScan.status === "running") loadArchiveScanStatus();
+  }, 1000);
 }
 function destroy() {
   clearInterval(timer);
   clearInterval(archiveTimer);
+  clearInterval(archiveScanTimer);
   media?.removeEventListener?.("change", applyTheme);
 }
 export function useApp() {
@@ -662,6 +687,8 @@ export function useApp() {
     renameGroup,
     movePreviewItem,
     loadArchives,
+    loadArchiveScanStatus,
+    startArchiveScan,
     loadCategories,
     getQuote,
     quoteArchiveFor,

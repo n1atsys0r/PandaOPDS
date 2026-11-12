@@ -40,11 +40,20 @@ type Server struct {
 
 	stopArchiveUpdates context.CancelFunc
 	archiveUpdatesDone chan struct{}
+	archiveScanMu     sync.RWMutex
+	archiveScan       ArchiveScanJob
+	archiveScanDone   chan struct{}
+	archiveScanCancel context.CancelFunc
+	archiveScanNextID uint64
 }
 
 func New(settings config.Settings, logger *log.Logger) (*Server, error) {
-	editKey:=make([]byte,32);if _,err:=rand.Read(editKey);err!=nil{return nil,fmt.Errorf("initialize editor ETag key: %w",err)}
-	s := &Server{Settings: settings, Logger: logger, mux: http.NewServeMux(), settingsPath: config.EditablePath(),editKey:editKey}
+	editKey := make([]byte, 32)
+	if _, err := rand.Read(editKey); err != nil {
+		return nil, fmt.Errorf("initialize editor ETag key: %w", err)
+	}
+	s := &Server{Settings: settings, Logger: logger, mux: http.NewServeMux(), settingsPath: config.EditablePath(), editKey: editKey}
+	s.archiveScan.Status = "idle"
 	if err := settings.Validate(); err != nil {
 		s.configOK = false
 		s.configError = err.Error()
@@ -54,7 +63,7 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 	service := eh.NewService(settings, nil)
 	s.Service = service
 	service.StartTagTranslation()
-	store, err := archive.NewStore(settings.ArchiveDir)
+	store, err := archive.NewStoreWithState(settings.ArchiveDir, settings.ArchiveStateDir)
 	if err != nil {
 		return nil, fmt.Errorf("open archive store: %w", err)
 	}
@@ -81,10 +90,23 @@ func (s *Server) Close() error {
 	if s.Favorites != nil {
 		s.Favorites.Stop()
 	}
+	s.archiveScanMu.RLock()
+	scanDone := s.archiveScanDone
+	scanCancel := s.archiveScanCancel
+	s.archiveScanMu.RUnlock()
+	if scanCancel != nil { scanCancel() }
+	if scanDone != nil { <-scanDone }
 	if s.Archives != nil {
 		s.Archives.Close()
 	}
-	return s.Service.Close()
+	var closeErr error
+	if s.Store != nil {
+		closeErr = s.Store.Close()
+	}
+	if s.Service != nil {
+		closeErr = errors.Join(closeErr, s.Service.Close())
+	}
+	return closeErr
 }
 func (s *Server) register() {
 	m := s.mux
@@ -113,6 +135,8 @@ func (s *Server) register() {
 	m.HandleFunc("GET /image/{gid}/{token}/page/{page}/thumb", s.pageThumb)
 	m.HandleFunc("GET /image/fetch", s.imageFetch)
 	m.HandleFunc("GET /api/archive", s.archiveList)
+	m.HandleFunc("GET /api/archive/import/scan", s.archiveScanStatus)
+	m.HandleFunc("POST /api/archive/import/scan", s.startArchiveScan)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/quote", s.archiveQuote)
 	m.HandleFunc("POST /api/archive/{gid}/{token}/start", s.archiveStart)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/metadata", s.archiveMetadata)

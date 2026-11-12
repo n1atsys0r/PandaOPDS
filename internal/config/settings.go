@@ -34,7 +34,7 @@ type Settings struct {
 	EHProfile                                                                         string
 	HomeConfigPath                                                                    string
 	Facets                                                                            []Facet
-	ArchiveDir, ArchiveQuality                                                        string
+	ArchiveDir, ArchiveStateDir, ArchiveQuality                                       string
 	ArchiveDownloadConcurrency                                                        int
 	ArchiveUpdateIntervalSeconds                                                      int
 	ArchiveAutoUpdate                                                                 bool
@@ -124,7 +124,7 @@ func loadWithEditableValues(fileValues map[string]any) Settings {
 		TagStatusFilter: defaultString(strings.ToLower(base("TAG_STATUS_FILTER", "balanced")), "balanced"), CommentsEnabled: boolEnv("COMMENTS_ENABLED", true),
 		ImageProxyHosts: defaultCSV(base("IMAGE_PROXY_HOSTS", ""), []string{"ehgt.org", "s.exhentai.org"}), EHProfile: base("EH_PROFILE", "PandaOPDS"),
 		HomeConfigPath: base("HOME_CONFIG", "./config/home.toml"), Facets: parseFacets(os.Getenv("FACETS")),
-		ArchiveDir: base("ARCHIVE_DIR", "./archives"), ArchiveQuality: defaultString(strings.ToLower(base("ARCHIVE_QUALITY", "original")), "original"), ArchiveDownloadConcurrency: intEnv("ARCHIVE_DOWNLOAD_CONCURRENCY", 5),
+		ArchiveDir: base("ARCHIVE_DIR", "./archives"), ArchiveStateDir: defaultString(base("ARCHIVE_STATE_DIR", defaultArchiveStatePath()), defaultArchiveStatePath()), ArchiveQuality: defaultString(strings.ToLower(base("ARCHIVE_QUALITY", "original")), "original"), ArchiveDownloadConcurrency: intEnv("ARCHIVE_DOWNLOAD_CONCURRENCY", 5),
 		ArchiveUpdateIntervalSeconds: 7 * 86400,
 		FavoritesSyncIntervalSeconds: floatEnv("FAVORITES_SYNC_INTERVAL_SECONDS", 3600), FavoritesSyncArchive: boolEnv("FAVORITES_SYNC_ARCHIVE", false),
 		FavoritesSyncCategories: parseIDs(os.Getenv("FAVORITES_SYNC_CATEGORIES"), false), FavoritesSyncExcludes: parseIDs(os.Getenv("FAVORITES_SYNC_CATEGORIES"), true),
@@ -156,6 +156,12 @@ func defaultStatePath(name string) string {
 		return filepath.Join("/config", name)
 	}
 	return "./" + name
+}
+func defaultArchiveStatePath() string {
+	if st, err := os.Stat("/config"); err == nil && st.IsDir() {
+		return "/config/archive"
+	}
+	return "./config/archive"
 }
 func defaultString(v, d string) string {
 	if strings.TrimSpace(v) == "" {

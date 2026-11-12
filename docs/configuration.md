@@ -52,6 +52,7 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `HOME_CONFIG` | `./config/home.toml` | v2.0 首页布局文件。 |
 | `FACETS` | 内置 10 分类 | 分类筛选配置，`名称:掩码` 逗号分隔。 |
 | `ARCHIVE_DIR` | `./archives` | 长期归档存储目录。 |
+| `ARCHIVE_STATE_DIR` | `./config/archive`（容器内 `/config/archive`） | 本地归档状态与图库元数据目录；应与归档 ZIP 卷分开持久化。 |
 | `ARCHIVE_QUALITY` | `original` | 默认归档画质选择。 |
 | `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载和转换并发上限。 |
 | `FAVORITES_SYNC_INTERVAL_SECONDS` | `3600` | 收藏增量扫描周期；`0` 关闭周期扫描。 |
