@@ -1005,6 +1005,10 @@
   text-decoration: none;
 }
 
+.gallery-primary-action {
+  padding: 0 0.5rem;
+}
+
 .archive-error {
   display: block;
   padding: 0.25rem 0 0.5rem;

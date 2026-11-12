@@ -33,7 +33,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	homeCfg, homeUsing, homeErr := s.currentHome()
 	mem := map[string]any{"size": cache["list_entries"], "max_entries": 2000, "hits": 0, "misses": 0}
 	disk := img
-	site := map[string]any{"site": s.Settings.EHSite, "host": s.Settings.SiteHost(), "http_origin": "https://" + s.Settings.SiteHost(), "api_url": apiURL(s.Settings.EHSite), "public_base_url": s.Settings.PublicBaseURL, "is_exhentai": s.Settings.EHSite == "exhentai", "has_ipb": s.Settings.HasIPB()}
+	site := map[string]any{"site": s.Settings.EHSite, "host": s.Settings.SiteHost(), "http_origin": "https://" + s.Settings.SiteHost(), "api_url": apiURL(s.Settings.EHSite), "public_base_url": s.Settings.PublicBaseURL, "pse_page_base": s.Settings.PSEPageBase, "is_exhentai": s.Settings.EHSite == "exhentai", "has_ipb": s.Settings.HasIPB()}
 	if s.Settings.PublicBaseURL == "" {
 		site["public_base_url"] = "（相对路径）"
 	}

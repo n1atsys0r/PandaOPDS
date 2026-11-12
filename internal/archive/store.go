@@ -51,6 +51,7 @@ type Store struct {
 	snapshotWake      chan struct{}
 	snapshotStop      chan struct{}
 	snapshotDone      chan struct{}
+	zipPool           *zipPool
 	closeOnce         sync.Once
 	checkpointBlocked bool
 	closed            bool
@@ -82,7 +83,7 @@ func newStoreWithState(dataRoot, stateRoot string, recoverPayloads bool) (*Store
 	if err := os.MkdirAll(stateRoot, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{Root: stateRoot, DataRoot: dataRoot, roots: map[string]*rootRecord{}, identityRoot: map[string]string{}, conflicts: map[string]bool{}, snapshotWake: make(chan struct{}, 1), snapshotStop: make(chan struct{}), snapshotDone: make(chan struct{})}
+	s := &Store{Root: stateRoot, DataRoot: dataRoot, roots: map[string]*rootRecord{}, identityRoot: map[string]string{}, conflicts: map[string]bool{}, snapshotWake: make(chan struct{}, 1), snapshotStop: make(chan struct{}), snapshotDone: make(chan struct{}), zipPool: newZipPool(defaultZipPoolSize, defaultZipPoolIdleTTL)}
 	type metaFile struct {
 		path string
 		meta map[string]any
@@ -281,6 +282,9 @@ func (s *Store) Close() error {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
+	if s.zipPool != nil {
+		s.zipPool.close()
+	}
 	s.closeOnce.Do(func() { close(s.snapshotStop); <-s.snapshotDone })
 	if _, err := os.Lstat(filepath.Join(s.Root, ".dirty")); err == nil {
 		return errors.New("archive index checkpoint remains dirty")
@@ -612,6 +616,9 @@ func (s *Store) PublishArchive(gid int, token, publishPath string) error {
 	}
 	if err := s.writeDirtyMarker(); err != nil {
 		return err
+	}
+	if s.zipPool != nil {
+		s.zipPool.invalidate(target)
 	}
 	if err := os.Rename(publishPath, target); err != nil {
 		return err
@@ -1174,12 +1181,37 @@ func (s *Store) GetPage(gid int, token string, page int) ([]byte, bool, error) {
 	}
 	p := s.archivePathLocked(rec, gid, token)
 	s.mu.RUnlock()
-	r, err := zip.OpenReader(p)
+
+	if s.zipPool == nil {
+		r, err := zip.OpenReader(p)
+		if err != nil {
+			return nil, false, err
+		}
+		defer r.Close()
+		return readZipPage(r, page)
+	}
+
+	r, release, reused, err := s.zipPool.acquire(p)
 	if err != nil {
 		return nil, false, err
 	}
-	defer r.Close()
-	if page >= len(r.File) {
+	b, ok, readErr := readZipPage(r, page)
+	release()
+	if readErr != nil && reused {
+		// Invalidate stale pooled reader once in case the ZIP on disk was replaced.
+		s.zipPool.invalidate(p)
+		r, release, _, err = s.zipPool.acquire(p)
+		if err != nil {
+			return nil, false, err
+		}
+		defer release()
+		return readZipPage(r, page)
+	}
+	return b, ok, readErr
+}
+
+func readZipPage(r *zip.ReadCloser, page int) ([]byte, bool, error) {
+	if page < 0 || page >= len(r.File) {
 		return nil, false, nil
 	}
 	f, err := r.File[page].Open()
@@ -1600,6 +1632,9 @@ func (s *Store) cleanupPreviousZipLocked(rec *rootRecord) error {
 		if err := s.writeDirtyMarker(); err != nil {
 			return err
 		}
+		if s.zipPool != nil {
+			s.zipPool.invalidate(oldPath)
+		}
 		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -1693,6 +1728,9 @@ func (s *Store) Remove(gid int, token string) bool {
 		versionDirs[dir] = true
 	}
 	for payload := range payloads {
+		if s.zipPool != nil {
+			s.zipPool.invalidate(payload)
+		}
 		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
 			return false
 		}

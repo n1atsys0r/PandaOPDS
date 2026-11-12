@@ -172,6 +172,45 @@ func TestWebUIAuthBehavior(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for authenticated /api/status, got %d", rec.Code)
 	}
+	var payload struct {
+		Site struct {
+			PSEPageBase int `json:"pse_page_base"`
+		} `json:"site"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode /api/status response: %v", err)
+	}
+	if payload.Site.PSEPageBase != settings.PSEPageBase {
+		t.Fatalf("expected site.pse_page_base=%d, got %d", settings.PSEPageBase, payload.Site.PSEPageBase)
+	}
+}
+
+func TestAPIStatusExposesPSEPageBase(t *testing.T) {
+	for _, baseVal := range []int{0, 1} {
+		base := t.TempDir()
+		settings := loadTestSettings(base)
+		settings.PSEPageBase = baseVal
+		server, err := New(settings, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+		server.Close()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("base=%d status=%d", baseVal, rec.Code)
+		}
+		var payload struct {
+			Site map[string]any `json:"site"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := payload.Site["pse_page_base"].(float64)
+		if !ok || int(got) != baseVal {
+			t.Fatalf("base=%d expected site.pse_page_base=%d, got %#v", baseVal, baseVal, payload.Site["pse_page_base"])
+		}
+	}
 }
 
 func readBundledWebUIScript(t *testing.T) string {
@@ -230,6 +269,10 @@ func TestWebUIArchiveBundle(t *testing.T) {
 		"GID/TOKEN。归档需要已配置 IPB 登录凭据。",
 		"https://e-hentai.org/g/123456/abcdef/ 或 123456/abcdef",
 		"createObjectURL",
+		"关闭阅读器",
+		"条漫",
+		"翻页",
+		"comimi-root",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected bundled web UI to contain %q", want)

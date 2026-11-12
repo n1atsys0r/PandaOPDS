@@ -3819,6 +3819,7 @@
                     "http_origin": "https://e-hentai.org",
                     "api_url": "https://api.e-hentai.org/api.php",
                     "public_base_url": "https://catalog.example",
+                    "pse_page_base": 1,
                     "is_exhentai": false,
                     "has_ipb": false
                   },

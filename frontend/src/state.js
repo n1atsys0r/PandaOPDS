@@ -62,6 +62,42 @@ function peekCoverUrl(path) {
   return coverCache.get(`${token}:${path}`) || "";
 }
 
+async function fetchMediaBlobUrl(path, signal, directWhenUnauthed) {
+  if (!path) return "";
+  const token = state.authToken || localStorage.getItem("pandaopds_auth") || "";
+  if (!token && directWhenUnauthed) return path;
+  try {
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    if (token) headers.Authorization = `Basic ${token}`;
+    const r = await fetch(path, { signal, headers });
+    if (r.status === 401) {
+      clearAuthOn401();
+      return "";
+    }
+    if (!r.ok) return "";
+    const blob = await r.blob();
+    if (!blob || blob.size === 0) return "";
+    const objectUrl = URL.createObjectURL(blob);
+    const activeToken =
+      state.authToken || localStorage.getItem("pandaopds_auth") || "";
+    if (activeToken !== token) {
+      URL.revokeObjectURL(objectUrl);
+      return "";
+    }
+    return objectUrl;
+  } catch {
+    return "";
+  }
+}
+
+function fetchAuthedBlobUrl(path, signal) {
+  return fetchMediaBlobUrl(path, signal, true);
+}
+
+function fetchReaderBlobUrl(path, signal) {
+  return fetchMediaBlobUrl(path, signal, false);
+}
+
 async function resolveCoverUrl(path) {
   if (!path) return "";
   const token = state.authToken || localStorage.getItem("pandaopds_auth");
@@ -71,29 +107,10 @@ async function resolveCoverUrl(path) {
   if (coverInflight.has(cacheKey)) return coverInflight.get(cacheKey);
   const task = (async () => {
     try {
-      const r = await fetch(path, {
-        headers: {
-          Authorization: `Basic ${token}`,
-          "X-Requested-With": "XMLHttpRequest",
-        },
-      });
-      if (r.status === 401) {
-        clearAuthOn401();
-        return "";
-      }
-      if (!r.ok) return "";
-      const blob = await r.blob();
-      if (!blob || blob.size === 0) return "";
-      const objectUrl = URL.createObjectURL(blob);
-      const activeToken = state.authToken || localStorage.getItem("pandaopds_auth");
-      if (activeToken !== token) {
-        URL.revokeObjectURL(objectUrl);
-        return "";
-      }
+      const objectUrl = await fetchAuthedBlobUrl(path);
+      if (!objectUrl) return "";
       coverCache.set(cacheKey, objectUrl);
       return objectUrl;
-    } catch {
-      return "";
     } finally {
       coverInflight.delete(cacheKey);
     }
@@ -707,6 +724,8 @@ export function useApp() {
     destroy,
     peekCoverUrl,
     resolveCoverUrl,
+    fetchAuthedBlobUrl,
+    fetchReaderBlobUrl,
     clearCoverCache,
   };
 }

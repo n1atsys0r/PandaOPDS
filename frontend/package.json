@@ -12,6 +12,7 @@
     "@lucide/vue": "^1.71.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vueuse/core": "^15.0.0",
+    "@yui540/comimi": "^0.26.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
     "reka-ui": "^2.11.0",

@@ -40,6 +40,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
+import ArchiveReader from "@/components/ArchiveReader.vue";
 import CoverImage from "@/components/CoverImage.vue";
 import LoginForm from "@/components/LoginForm.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
@@ -48,6 +49,8 @@ import {
   MoonIcon as Moon,
   MonitorIcon as Monitor,
   RefreshCwIcon as RefreshCw,
+  RotateCcwIcon as RotateCcw,
+  BookOpenIcon as BookOpen,
   SaveIcon as Save,
   Trash2Icon as Trash2,
   PlusIcon as Plus,
@@ -274,10 +277,30 @@ const EH_CATEGORIES = [
 ];
 
 const createArchiveDialogOpen = ref(false);
+const readerArchive = ref(null);
+const readerOpen = computed({
+  get: () => Boolean(readerArchive.value),
+  set: (v) => {
+    if (!v) readerArchive.value = null;
+  },
+});
+const psePageBase = computed(() => {
+  const base = Number(s.status.value?.site?.pse_page_base);
+  return Number.isFinite(base) ? base : 1;
+});
 const selectedStatus = ref("all"); // "all" | "updates" | "downloading" | "failed"
 const selectedCategory = ref("all"); // "all" | EH category key
 const selectedFavcat = ref("all"); // "all" | "unfavorited" | "favorited" | "0".."9"
 const archiveSearch = ref("");
+
+function archivePageCount(a) {
+  return Math.max(0, Number(a?.page_count || a?.metadata?.filecount || 0));
+}
+
+function openReader(a) {
+  if (!a || a.status !== "ready" || archivePageCount(a) <= 0) return;
+  readerArchive.value = a;
+}
 
 function openCreateArchiveDialog() {
   s.archiveInput.value = "";
@@ -1557,14 +1580,23 @@ const filteredArchives = computed(() => {
                   "
                   @click="handleQuoteUpdate(a)"
                 >更新版本</Button
-                ><Button
-                  variant="link"
-                  size="sm"
-                  v-if="a.status === 'failed'"
-                  @click="handleQuoteArchive(a)"
-                >
-                  报价并重试</Button
                 ><Button variant="destructive" size="sm" @click="s.requestDelete(a)">删除归档</Button>
+              </div>
+              <div
+                v-if="a.status === 'ready' || a.status === 'failed'"
+                class="gallery-primary-action"
+              >
+                <Button
+                  :variant="a.status === 'ready' ? 'secondary' : 'outline'"
+                  size="sm"
+                  class="w-full text-xs"
+                  :disabled="a.status === 'ready' && archivePageCount(a) <= 0"
+                  @click="a.status === 'ready' ? openReader(a) : handleQuoteArchive(a)"
+                >
+                  <BookOpen v-if="a.status === 'ready'" class="size-3.5" />
+                  <RotateCcw v-else class="size-3.5" />
+                  {{ a.status === 'ready' ? '阅读' : '报价并重试' }}
+                </Button>
               </div>
               <div class="gallery-actions">
                 <Select
@@ -1787,6 +1819,12 @@ const filteredArchives = computed(() => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <ArchiveReader
+        v-model:open="readerOpen"
+        :archive="readerArchive"
+        :pse-page-base="psePageBase"
+        :theme="s.theme.value"
+      />
     </SidebarInset>
   </SidebarProvider>
 </template>
