@@ -50,6 +50,7 @@ tag_translation.json
 *.tmp
 
 # Local build artifacts
+/pandaopds
 coverage.xml
 *.whl
 
