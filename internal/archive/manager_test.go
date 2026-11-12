@@ -536,3 +536,30 @@ func TestSnapshotSavesMetadataAndCoverFromQuotedGDataNumbers(t *testing.T) {
 		t.Fatalf("cover saved = %q, %v", cover, ok)
 	}
 }
+
+func TestManagerRefreshRejectsUnarchivedCatalogEntry(t *testing.T) {
+	temp := t.TempDir()
+	cfg := config.Settings{EHSite: "e-hentai", IPBMemberID: "1", IPBPassHash: "hash", TimeoutSeconds: 2, CacheDir: filepath.Join(temp, "cache"), ArchiveDir: filepath.Join(temp, "archives"), ArchiveStateDir: filepath.Join(temp, "state")}
+	requests := 0
+	service := eh.NewService(cfg, archiveRoundTripper(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("unexpected upstream request: " + req.URL.String())
+	}))
+	defer service.Close()
+	store, err := NewStoreWithState(cfg.ArchiveDir, cfg.ArchiveStateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Catalog(77, "unarch", map[string]any{"title": "Unarchived"}, map[string]any{"title": "Unarchived"}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(cfg, service.Client, service, store)
+	defer manager.Close()
+	if _, err := manager.Refresh(context.Background(), 77, "unarch"); err == nil {
+		t.Fatal("Refresh succeeded on unarchived entry; expected refusal without quote")
+	}
+	if requests != 0 {
+		t.Fatalf("Refresh made %d upstream requests on unarchived entry, want 0", requests)
+	}
+}

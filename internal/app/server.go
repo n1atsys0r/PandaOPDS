@@ -22,6 +22,8 @@ import (
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
 	"pandaopds/internal/favorites"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type Server struct {
@@ -45,6 +47,7 @@ type Server struct {
 	archiveScanDone   chan struct{}
 	archiveScanCancel context.CancelFunc
 	archiveScanNextID uint64
+	coverFlight       singleflight.Group
 }
 
 func New(settings config.Settings, logger *log.Logger) (*Server, error) {

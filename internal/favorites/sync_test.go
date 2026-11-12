@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
 )
@@ -166,4 +167,139 @@ func favoritesSyncHTML(galleries []favoritesSyncGallery, next string) string {
 	}
 	body.WriteString(`</body></html>`)
 	return body.String()
+}
+
+func TestFavoritesSyncCatalogsIntoArchiveStateWithoutExtraAPIOrCoverRequests(t *testing.T) {
+	temp := t.TempDir()
+	cfg := config.Settings{
+		EHSite: "e-hentai", IPBMemberID: "1", IPBPassHash: "hash", TimeoutSeconds: 2,
+		HTMLIntervalSeconds: 0, Retries: 0, ListCacheTTLSeconds: 600, PageURLTTLSeconds: 3600,
+		FavoritesSyncArchive: false, FavoritesSyncMaxPages: 5, FavoritesSyncMatchThreshold: 5,
+		FavoritesSyncState: filepath.Join(temp, "favorites_sync.json"),
+		CacheDir:           filepath.Join(temp, "cache"),
+		ArchiveDir:         filepath.Join(temp, "archives"),
+		ArchiveStateDir:    filepath.Join(temp, "config", "archive"),
+	}
+	var archiverPosts, extraRequests int
+	service := eh.NewService(cfg, favoriteReplayTransport(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.URL.Path == "/":
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(`<html>session</html>`)), Request: r}, nil
+		case r.URL.Path == "/favorites.php":
+			body := `<!doctype html><html><body>
+				<div class="gl1e">
+					<a class="glink" href="https://e-hentai.org/g/123456/abcdef/">Cataloged Fav</a>
+					<div class="cs">Doujinshi</div>
+					<img src="https://ehgt.org/t/123456.jpg"/>
+					<div id="posted_123456" title="Fav 0">2026-01-02 15:04</div>
+					<div>24 pages</div>
+				</div>
+			</body></html>`
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		case r.URL.Path == "/archiver.php":
+			archiverPosts++
+			return nil, fmt.Errorf("unexpected archiver call")
+		default:
+			extraRequests++
+			return nil, fmt.Errorf("unexpected extra request %s", r.URL.String())
+		}
+	}))
+	defer service.Close()
+
+	store, err := archive.NewStoreWithState(cfg.ArchiveDir, cfg.ArchiveStateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := archive.NewManager(cfg, service.Client, service, store)
+	defer manager.Close()
+
+	syncer := NewSyncer(cfg, service, manager, NewState(cfg.FavoritesSyncState))
+	res, err := syncer.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["cataloged_count"] != 1 || archiverPosts != 0 || extraRequests != 0 {
+		t.Fatalf("res=%#v archiverPosts=%d extraRequests=%d", res, archiverPosts, extraRequests)
+	}
+	entry := store.Get(123456, "abcdef")
+	if entry == nil || entry["status"] != "unarchived" {
+		t.Fatalf("cataloged entry=%#v, want status=unarchived", entry)
+	}
+	if store.ReadyCount() != 0 {
+		t.Fatalf("ReadyCount=%d, want 0", store.ReadyCount())
+	}
+	snap, err := store.ReadMetadata(123456, "abcdef")
+	if err != nil || snap["title"] != "Cataloged Fav" || snap["filecount"] != float64(24) || snap["thumb"] != "https://ehgt.org/t/123456.jpg" {
+		t.Fatalf("seeded metadata=%#v err=%v", snap, err)
+	}
+}
+
+func TestFavoritesSyncBackfillsKnownWithoutAutoArchivingAndArchivesOnlyNew(t *testing.T) {
+	temp := t.TempDir()
+	cfg := config.Settings{
+		EHSite: "e-hentai", IPBMemberID: "1", IPBPassHash: "hash", TimeoutSeconds: 2,
+		HTMLIntervalSeconds: 0, Retries: 0, ListCacheTTLSeconds: 600, PageURLTTLSeconds: 3600,
+		FavoritesSyncArchive: true, ArchiveQuality: "original",
+		FavoritesSyncMaxPages: 5, FavoritesSyncMatchThreshold: 1,
+		FavoritesSyncState: filepath.Join(temp, "favorites_sync.json"),
+		CacheDir:           filepath.Join(temp, "cache"),
+		ArchiveDir:         filepath.Join(temp, "archives"),
+		ArchiveStateDir:    filepath.Join(temp, "config", "archive"),
+	}
+	var archiverGIDs []string
+	service := eh.NewService(cfg, favoriteReplayTransport(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/":
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(`<html>session</html>`)), Request: r}, nil
+		case "/favorites.php":
+			next := r.URL.Query().Get("next")
+			if next == "" {
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(favoritesSyncHTML([]favoritesSyncGallery{{10, "aa10"}, {20, "bb20"}}, "10-100"))), Request: r}, nil
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(favoritesSyncHTML([]favoritesSyncGallery{{11, "aa11"}}, ""))), Request: r}, nil
+		case "/archiver.php":
+			gid := r.URL.Query().Get("gid")
+			if r.Method == http.MethodPost {
+				archiverGIDs = append(archiverGIDs, gid)
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(`<html><body>Cannot be archived</body></html>`)), Request: r}, nil
+			}
+			body := `<html><body><form action="archiver.php" method="post"><input type="hidden" name="dltype" value="org"/><input type="submit" name="dlcheck" value="Download Original Archive"/></form><div>Download Cost: Free!</div><div>Estimated Size: 10 MiB</div></body></html>`
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		default:
+			return nil, fmt.Errorf("unexpected path %s", r.URL.String())
+		}
+	}))
+	defer service.Close()
+
+	store, err := archive.NewStoreWithState(cfg.ArchiveDir, cfg.ArchiveStateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := archive.NewManager(cfg, service.Client, service, store)
+	defer manager.Close()
+
+	state := NewState(cfg.FavoritesSyncState)
+	baseline := true
+	if err := state.Update(map[string]bool{"10:aa10": true, "11:aa11": true}, nil, nil, nil, nil, &baseline, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	syncer := NewSyncer(cfg, service, manager, state)
+	res, err := syncer.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["scanned_pages"] != 2 || res["cataloged_count"] != 3 {
+		t.Fatalf("backfill result=%#v, want scanned_pages=2 cataloged_count=3", res)
+	}
+	if len(archiverGIDs) != 1 || archiverGIDs[0] != "20" {
+		t.Fatalf("archiver submitted gids=%v, want only [20]", archiverGIDs)
+	}
+	if store.Get(10, "aa10")["status"] != "unarchived" || store.Get(11, "aa11")["status"] != "unarchived" {
+		t.Fatalf("backfilled known entries should stay unarchived: 10=%#v 11=%#v", store.Get(10, "aa10"), store.Get(11, "aa11"))
+	}
+	if !state.CatalogBackfilled() {
+		t.Fatal("expected catalog_backfilled to be marked true")
+	}
 }

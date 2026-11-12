@@ -1,12 +1,15 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"pandaopds/internal/archive"
 )
@@ -36,7 +39,7 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 			meta = map[string]any{"title": snapshot["title"], "title_jpn": snapshot["title_jpn"], "category": snapshot["category"], "rating": snapshot["rating"], "filecount": snapshot["filecount"], "filesize": snapshot["filesize"], "posted": snapshot["posted"], "uploader": snapshot["uploader"], "expunged": snapshot["expunged"], "torrentcount": snapshot["torrentcount"], "tags": snapshot["tags"], "thumb": snapshot["thumb"]}
 		}
 		var cover any
-		if _, ok := s.Store.Cover(activeGID, activeToken); ok {
+		if _, ok := s.Store.Cover(activeGID, activeToken); ok || hasAllowedCoverThumb(snapshot, s.Settings.ImageProxyHosts) {
 			cover = fmt.Sprintf("/api/archive/%d/%s/cover", activeGID, activeToken)
 		}
 		var favcat any
@@ -214,12 +217,52 @@ func (s *Server) archiveDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
+	if s.Store.Get(gid, token) == nil {
+		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
+		return
+	}
+	shelfKeys := map[string]bool{fmt.Sprintf("%d:%s", gid, token): true}
+	if rootGID, rootToken, ok := s.Store.RootIdentity(gid, token); ok {
+		shelfKeys[fmt.Sprintf("%d:%s", rootGID, rootToken)] = true
+		for _, id := range s.Store.Identities(rootGID, rootToken) {
+			shelfKeys[id[0]+":"+id[1]] = true
+		}
+	}
+	known := s.Favorites.State.Known()
+	isFavorited := false
+	for k := range shelfKeys {
+		if known[k] {
+			isFavorited = true
+			break
+		}
+	}
+	_ = s.Favorites.State.ClearArchiveTracking(shelfKeys)
+	if isFavorited {
+		if !s.Archives.DemoteToUnarchived(gid, token) {
+			writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"removed": true, "retained_catalog": true})
+		return
+	}
 	if !s.Archives.Remove(gid, token) {
 		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"removed": true})
+	writeJSON(w, 200, map[string]any{"removed": true, "retained_catalog": false})
 }
+func hasAllowedCoverThumb(snapshot map[string]any, allowedHosts []string) bool {
+	if snapshot == nil {
+		return false
+	}
+	raw, _ := snapshot["thumb"].(string)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.Fragment == "" && u.Port() == "" && contains(allowedHosts, strings.ToLower(u.Host))
+}
+
 func (s *Server) archiveCover(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
 	if e != nil {
@@ -227,15 +270,54 @@ func (s *Server) archiveCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, ok := s.Archives.Cover(gid, token)
+	var fetchedMime string
 	if !ok {
-		writeJSON(w, 404, map[string]any{"detail": "no cover for this gallery"})
-		return
+		snap, metaErr := s.Archives.Metadata(gid, token)
+		if metaErr != nil || !hasAllowedCoverThumb(snap, s.Settings.ImageProxyHosts) {
+			writeJSON(w, 404, map[string]any{"detail": "no cover for this gallery"})
+			return
+		}
+		thumb, _ := snap["thumb"].(string)
+		activeGID, activeToken := s.Store.ResolveActive(gid, token)
+		type coverResult struct {
+			data []byte
+			mime string
+		}
+		val, fetchErr, _ := s.coverFlight.Do(fmt.Sprintf("%d:%s", activeGID, activeToken), func() (any, error) {
+			if cached, found := s.Store.Cover(activeGID, activeToken); found {
+				return coverResult{data: cached}, nil
+			}
+			fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+			defer cancel()
+			bytes, mimeType, err := s.Service.FetchCoverBytes(fetchCtx, thumb)
+			if err != nil {
+				return nil, err
+			}
+			if len(bytes) == 0 {
+				return nil, errors.New("empty cover response")
+			}
+			_ = s.Store.WriteCover(activeGID, activeToken, bytes)
+			return coverResult{data: bytes, mime: mimeType}, nil
+		})
+		if fetchErr != nil {
+			writeError(w, fetchErr)
+			return
+		}
+		res := val.(coverResult)
+		data, fetchedMime = res.data, res.mime
 	}
-	mime := "image/jpeg"
-	if snap, e := s.Archives.Metadata(gid, token); e == nil {
-		if value, ok := snap["cover_mime"].(string); ok && strings.HasPrefix(value, "image/") {
-			mime = value
+	mimeType := http.DetectContentType(data)
+	if !strings.HasPrefix(mimeType, "image/") {
+		if strings.HasPrefix(fetchedMime, "image/") {
+			mimeType = fetchedMime
+		} else {
+			mimeType = "image/jpeg"
 		}
 	}
-	writeBytes(w, 200, mime, map[string]string{"Cache-Control": "public, max-age=86400"}, data)
+	if snap, e := s.Archives.Metadata(gid, token); e == nil {
+		if value, ok := snap["cover_mime"].(string); ok && strings.HasPrefix(value, "image/") {
+			mimeType = value
+		}
+	}
+	writeBytes(w, 200, mimeType, map[string]string{"Cache-Control": "public, max-age=86400"}, data)
 }

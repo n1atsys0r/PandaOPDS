@@ -292,6 +292,10 @@
 }
 
 .archive-scan-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   margin: -0.55rem 0 1rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -896,8 +900,56 @@
 }
 
 .quality-select,
-.favorite-select {
-  width: 100%;
+.favorite-chip[data-slot="select-trigger"] {
+  height: 1.5rem;
+  min-width: 0;
+  max-width: 9.5rem;
+  padding: 0 0.45rem;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  line-height: 1;
+  gap: 0.25rem;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.favorite-chip[data-slot="select-trigger"] [data-slot="select-value"] {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.favorite-chip[data-slot="select-trigger"] svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.favorite-chip--active[data-slot="select-trigger"] {
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--primary);
+}
+
+.favorite-chip--active[data-slot="select-trigger"]:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.favorite-chip--active[data-slot="select-trigger"] svg {
+  color: var(--primary);
+}
+
+.favorite-chip--empty[data-slot="select-trigger"] {
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.favorite-chip--empty[data-slot="select-trigger"]:hover {
+  border-style: solid;
+  background: var(--secondary);
+  color: var(--foreground);
 }
 
 .quote > small {
@@ -979,6 +1031,7 @@
 
 .gallery-meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.6rem 0.75rem 0;

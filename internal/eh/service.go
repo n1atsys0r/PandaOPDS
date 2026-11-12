@@ -739,7 +739,7 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, string, error) {
 	if s.archive != nil {
 		if b, ok := s.archive.GetCover(gid, token); ok {
-			return b, "image/jpeg", nil
+			return b, detectImageType(b), nil
 		}
 	}
 	diskKey := fmt.Sprintf("%d:%s:-1", gid, token)
@@ -994,9 +994,11 @@ func (s *Service) FavoriteCategories(ctx context.Context) (map[int]string, error
 		return nil, e
 	}
 	result := ParseFavoritesCategories(string(b))
-	s.mu.Lock()
-	put(s.categories, "favorites", result, 10*time.Minute)
-	s.mu.Unlock()
+	if len(result) > 0 {
+		s.mu.Lock()
+		put(s.categories, "favorites", result, 10*time.Minute)
+		s.mu.Unlock()
+	}
 	return result, nil
 }
 func (s *Service) FavoriteAction(ctx context.Context, action string, items []FavoriteItem, favcat *int, note string) []map[string]any {

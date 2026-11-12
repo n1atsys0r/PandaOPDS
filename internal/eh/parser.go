@@ -920,29 +920,34 @@ func gdataFloat(raw json.RawMessage) (float64, error) {
 func ParseFavoritesCategories(src string) map[int]string {
 	doc, _ := parseDoc(src)
 	out := map[int]string{}
-	container := first(doc, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && classHas(n, "nosel") })
-	for _, fp := range all(container, func(n *xhtml.Node) bool {
-		return n.Type == xhtml.ElementNode && classHas(n, "fp") && attr(n, "onclick") != ""
+	for _, container := range all(doc, func(n *xhtml.Node) bool {
+		return n.Type == xhtml.ElementNode && n.Data == "div" && classHas(n, "nosel")
 	}) {
-		m := regexp.MustCompile(`favcat=(\d+)`).FindStringSubmatch(attr(fp, "onclick"))
-		if len(m) < 2 {
-			continue
+		for _, fp := range all(container, func(n *xhtml.Node) bool {
+			return n.Type == xhtml.ElementNode && n.Data == "div" && classHas(n, "fp") && attr(n, "onclick") != ""
+		}) {
+			m := regexp.MustCompile(`favcat=(\d+)`).FindStringSubmatch(attr(fp, "onclick"))
+			if len(m) < 2 {
+				continue
+			}
+			id, e := strconv.Atoi(m[1])
+			if e != nil {
+				continue
+			}
+			ds := childrenNamed(fp, "div")
+			name := ""
+			if len(ds) >= 3 {
+				name = nodeText(ds[2])
+			} else if len(ds) >= 2 {
+				name = nodeText(ds[1])
+			}
+			if name == "" {
+				name = nodeText(fp)
+			}
+			if name != "" {
+				out[id] = name
+			}
 		}
-		id, e := strconv.Atoi(m[1])
-		if e != nil {
-			continue
-		}
-		ds := childrenNamed(fp, "div")
-		name := ""
-		if len(ds) >= 3 {
-			name = nodeText(ds[2])
-		} else if len(ds) >= 2 {
-			name = nodeText(ds[1])
-		}
-		if name == "" {
-			name = nodeText(fp)
-		}
-		out[id] = name
 	}
 	return out
 }

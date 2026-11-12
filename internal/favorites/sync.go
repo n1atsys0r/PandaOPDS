@@ -13,6 +13,10 @@ import (
 	"pandaopds/internal/eh"
 )
 
+type RunOptions struct {
+	FullCatalog bool
+}
+
 type Syncer struct {
 	Settings  config.Settings
 	Service   *eh.Service
@@ -89,7 +93,12 @@ func nilOrString(s string) any {
 	}
 	return s
 }
+
 func (s *Syncer) Run(ctx context.Context) (map[string]any, error) {
+	return s.RunWithOptions(ctx, RunOptions{})
+}
+
+func (s *Syncer) RunWithOptions(ctx context.Context, opts RunOptions) (map[string]any, error) {
 	s.mu.Lock()
 	if s.busy {
 		s.mu.Unlock()
@@ -106,12 +115,38 @@ func (s *Syncer) Run(ctx context.Context) (map[string]any, error) {
 	errs := s.State.Errors()
 	favcats := s.State.Favcats()
 	baseline := s.State.Baseline()
+	catalogBackfilled := s.State.CatalogBackfilled()
+
+	needBackfill := false
+	if s.Archive != nil && baseline && !catalogBackfilled {
+		if len(known) == 0 {
+			catalogBackfilled = true
+			_ = s.State.MarkCatalogBackfilled(true)
+		} else {
+			for k := range known {
+				gid, token, ok := ParseKey(k)
+				if ok && s.Archive.Store.Get(gid, token) == nil {
+					needBackfill = true
+					break
+				}
+			}
+			if !needBackfill {
+				catalogBackfilled = true
+				_ = s.State.MarkCatalogBackfilled(true)
+			}
+		}
+	}
+	fullScan := opts.FullCatalog || !baseline || needBackfill
+
 	newItems := []eh.GalleryListItem{}
+	scannedItems := []eh.GalleryListItem{}
+	seenInScan := map[string]bool{}
 	discovered := map[string]bool{}
 	consecutiveKnown := 0
 	pages := 0
 	cursor := ""
 	favcatNames := map[int]string{}
+	reachedEnd := false
 scanPages:
 	for pages < s.Settings.FavoritesSyncMaxPages {
 		page, e := s.Service.FavoritesSyncPage(ctx, cursor)
@@ -128,6 +163,7 @@ scanPages:
 			favcatNames[id] = name
 		}
 		if len(page.Galleries) == 0 {
+			reachedEnd = true
 			break
 		}
 		for _, item := range page.Galleries {
@@ -135,9 +171,13 @@ scanPages:
 			if item.Favcat != nil {
 				favcats[k] = *item.Favcat
 			}
+			if !seenInScan[k] {
+				seenInScan[k] = true
+				scannedItems = append(scannedItems, item)
+			}
 			if known[k] {
 				consecutiveKnown++
-				if consecutiveKnown >= s.Settings.FavoritesSyncMatchThreshold {
+				if !fullScan && consecutiveKnown >= s.Settings.FavoritesSyncMatchThreshold {
 					break scanPages
 				}
 				continue
@@ -149,10 +189,45 @@ scanPages:
 			}
 		}
 		if page.NextGID == "" {
+			reachedEnd = true
 			break
 		}
 		cursor = page.NextGID
 	}
+
+	catalogedCount := 0
+	if s.Archive != nil {
+		baseCreated := float64(time.Now().Unix())
+		for idx, item := range scannedItems {
+			createdAt := baseCreated - float64(idx)*0.001
+			payload := galleryPayloadFromListItem(item)
+			created, err := s.Archive.Store.Catalog(item.GID, item.Token, map[string]any{"title": item.Title, "created_at": createdAt}, payload)
+			if err == nil && created {
+				catalogedCount++
+			}
+		}
+	}
+
+	if fullScan && reachedEnd && s.Archive != nil {
+		for k := range known {
+			if seenInScan[k] {
+				continue
+			}
+			gid, token, ok := ParseKey(k)
+			if !ok {
+				continue
+			}
+			if meta := s.Archive.Store.Get(gid, token); meta != nil && fmt.Sprint(meta["status"]) == "unarchived" {
+				if s.Archive.Remove(gid, token) {
+					delete(known, k)
+					delete(archived, k)
+					delete(errs, k)
+					delete(favcats, k)
+				}
+			}
+		}
+	}
+
 	for key := range discovered {
 		known[key] = true
 	}
@@ -161,7 +236,7 @@ scanPages:
 	for k, v := range archived {
 		newArchived[k] = v
 	}
-	if !isBaseline && s.Settings.FavoritesSyncArchive {
+	if !isBaseline && s.Settings.FavoritesSyncArchive && s.Archive != nil {
 		for _, item := range newItems {
 			if !s.inScope(item.Favcat) {
 				continue
@@ -171,15 +246,21 @@ scanPages:
 				continue
 			}
 			if meta := s.Archive.Store.Get(item.GID, item.Token); meta != nil {
-				if meta["status"] == "ready" && strings.EqualFold(fmt.Sprint(meta["or"]), "res") && canonicalTier(s.Settings.ArchiveQuality) == "org" {
-					_, e := s.Archive.Start(ctx, item.GID, item.Token, "org", true)
-					if e != nil {
-						errs[k] = e.Error()
-					} else {
-						newArchived[k] = true
+				st := fmt.Sprint(meta["status"])
+				if st == "ready" {
+					if strings.EqualFold(fmt.Sprint(meta["or"]), "res") && canonicalTier(s.Settings.ArchiveQuality) == "org" {
+						_, e := s.Archive.Start(ctx, item.GID, item.Token, "org", true)
+						if e != nil {
+							errs[k] = e.Error()
+						} else {
+							newArchived[k] = true
+						}
 					}
+					continue
 				}
-				continue
+				if st != "unarchived" {
+					continue
+				}
 			}
 			if _, e := s.Archive.Start(ctx, item.GID, item.Token, s.Settings.ArchiveQuality, false); e != nil {
 				errs[k] = e.Error()
@@ -194,11 +275,57 @@ scanPages:
 		basePtr = &ok
 	}
 	_ = s.State.Update(known, newArchived, errs, favcats, favcatNames, basePtr, &ok, &pages)
+	if s.Archive != nil && (isBaseline || needBackfill) {
+		_ = s.State.MarkCatalogBackfilled(true)
+	}
 	s.mu.Lock()
 	s.lastError = ""
 	s.mu.Unlock()
-	return map[string]any{"ok": true, "baseline": isBaseline, "new_count": len(newItems), "archived_count": len(newArchived), "scanned_pages": pages, "status": s.Status()}, nil
+	return map[string]any{"ok": true, "baseline": isBaseline, "new_count": len(newItems), "cataloged_count": catalogedCount, "archived_count": len(newArchived), "scanned_pages": pages, "status": s.Status()}, nil
 }
+
+func galleryPayloadFromListItem(item eh.GalleryListItem) map[string]any {
+	tagsByNS := map[string][]eh.GalleryTag{}
+	for _, t := range item.Tags {
+		ns := t.Namespace
+		if ns == "" {
+			ns = "temp"
+		}
+		tagsByNS[ns] = append(tagsByNS[ns], t)
+	}
+	filecount := 0
+	if item.PageCount != nil {
+		filecount = *item.PageCount
+	}
+	var posted int64
+	if item.PublishTime != "" {
+		for _, layout := range []string{"2006-01-02 15:04", time.RFC3339} {
+			if t, err := time.ParseInLocation(layout, item.PublishTime, time.UTC); err == nil {
+				posted = t.Unix()
+				break
+			}
+		}
+	}
+	return map[string]any{
+		"gid":            item.GID,
+		"token":          item.Token,
+		"title":          item.Title,
+		"title_jpn":      "",
+		"category":       item.Category,
+		"thumb":          item.CoverURL,
+		"rating":         item.Rating,
+		"tags":           tagsByNS,
+		"filecount":      filecount,
+		"filesize":       int64(0),
+		"posted":         posted,
+		"uploader":       item.Uploader,
+		"torrentcount":   0,
+		"expunged":       item.Expunged,
+		"catalog_source": "favorites_list",
+		"saved_at":       float64(time.Now().Unix()),
+	}
+}
+
 func (s *Syncer) inScope(cat *int) bool {
 	if cat == nil {
 		return true

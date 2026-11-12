@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"pandaopds/internal/eh"
+	"pandaopds/internal/favorites"
 )
 
 type favoriteItem struct {
@@ -97,6 +98,11 @@ func (s *Server) favoriteAction(w http.ResponseWriter, r *http.Request) {
 				delete(archived, key)
 				delete(errs, key)
 				delete(favcats, key)
+				if gid, token, ok := favorites.ParseKey(key); ok && s.Store != nil && s.Archives != nil {
+					if meta := s.Store.Get(gid, token); meta != nil && fmt.Sprint(meta["status"]) == "unarchived" {
+						s.Archives.Remove(gid, token)
+					}
+				}
 			} else {
 				known[key] = true
 				if favcat != nil {
@@ -140,6 +146,12 @@ func (s *Server) favoriteCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cats, e := s.Service.FavoriteCategories(r.Context())
+	if e != nil || len(cats) == 0 {
+		if saved := s.Favorites.State.FavcatMap(); len(saved) > 0 {
+			cats = saved
+			e = nil
+		}
+	}
 	if e != nil {
 		writeError(w, e)
 		return
@@ -161,6 +173,12 @@ func (s *Server) favoriteFavcats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cats, e := s.Service.FavoriteCategories(r.Context())
+	if e != nil || len(cats) == 0 {
+		if saved := s.Favorites.State.FavcatMap(); len(saved) > 0 {
+			cats = saved
+			e = nil
+		}
+	}
 	if e != nil {
 		writeError(w, e)
 		return
@@ -179,7 +197,16 @@ func (s *Server) favoriteSyncRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 403, map[string]any{"detail": "favorites require IPB cookies (IPB_MEMBER_ID + IPB_PASS_HASH)"})
 		return
 	}
-	v, e := s.Favorites.Run(r.Context())
+	full := r.URL.Query().Get("full") == "1" || strings.EqualFold(r.URL.Query().Get("full"), "true")
+	if !full && r.Body != nil {
+		var body struct {
+			Full bool `json:"full"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) == nil && body.Full {
+			full = true
+		}
+	}
+	v, e := s.Favorites.RunWithOptions(r.Context(), favorites.RunOptions{FullCatalog: full})
 	if e != nil {
 		writeError(w, e)
 		return

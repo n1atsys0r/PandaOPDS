@@ -16,6 +16,8 @@ const state = reactive({
   archives: [],
   archiveStats: {},
   archiveScan: { status: "idle", imported: 0, skipped: 0, conflicts: 0 },
+  archiveScanDismissedKey:
+    localStorage.getItem("pandaopds_dismissed_archive_scan") || "",
   favcats: [],
   archiveInput: "",
   quote: null,
@@ -372,19 +374,51 @@ async function loadArchives() {
     if (e.status !== 401) state.error = e.message;
   }
 }
+const DISMISSED_SCAN_KEY = "pandaopds_dismissed_archive_scan";
+let archiveScanDismissTimer = null;
+
+function archiveScanKey(scan) {
+  if (!scan || scan.status === "idle" || scan.status === "running") return "";
+  return `${scan.id || 0}:${scan.completed_at || 0}:${scan.status}`;
+}
+
+function dismissArchiveScan(scan = state.archiveScan) {
+  clearTimeout(archiveScanDismissTimer);
+  const k = archiveScanKey(scan);
+  if (k) {
+    state.archiveScanDismissedKey = k;
+    localStorage.setItem(DISMISSED_SCAN_KEY, k);
+  } else {
+    state.archiveScan = { status: "idle", imported: 0, skipped: 0, conflicts: 0 };
+  }
+}
+
+function scheduleArchiveScanAutoDismiss(scan) {
+  clearTimeout(archiveScanDismissTimer);
+  if (!scan || (scan.status !== "success" && scan.status !== "skipped")) return;
+  const k = archiveScanKey(scan);
+  if (!k || k === state.archiveScanDismissedKey) return;
+  archiveScanDismissTimer = setTimeout(() => dismissArchiveScan(scan), 8000);
+}
+
 async function loadArchiveScanStatus() {
   try {
     const wasRunning = state.archiveScan.status === "running";
     state.archiveScan = (await api("/api/archive/import/scan")).data;
     if (wasRunning && state.archiveScan.status !== "running") await loadArchives();
+    scheduleArchiveScanAutoDismiss(state.archiveScan);
   } catch (e) {
     if (e.status !== 401) state.archiveScan = { ...state.archiveScan, status: "error", error: e.message };
   }
 }
 async function startArchiveScan() {
   if (state.archiveScan.status === "running") return;
+  clearTimeout(archiveScanDismissTimer);
+  state.archiveScanDismissedKey = "";
+  localStorage.removeItem(DISMISSED_SCAN_KEY);
   try {
     state.archiveScan = (await api("/api/archive/import/scan", { method: "POST" })).data;
+    scheduleArchiveScanAutoDismiss(state.archiveScan);
   } catch (e) {
     if (e.status !== 401) state.archiveScan = { ...state.archiveScan, status: "error", error: e.message };
   }
@@ -431,7 +465,10 @@ async function getQuote(action = "start", target = null) {
 }
 function quoteArchiveFor(a) {
   state.archiveInput = a.gid + " " + a.token;
-  return getQuote("refresh", { gid: a.gid, token: a.token });
+  return getQuote(a.status === "unarchived" ? "start" : "refresh", {
+    gid: a.gid,
+    token: a.token,
+  });
 }
 function quoteUpdateFor(a) {
   const target = a.update_available;
@@ -539,14 +576,17 @@ async function confirmFavoriteRemoval() {
       throw Error(
         result.data.detail || result.data.items?.[0]?.error || "移除收藏失败",
       );
-    if (state.deleteAfterFavoriteRemove) {
+    if (state.deleteAfterFavoriteRemove && target.status !== "unarchived") {
       await api("/api/archive/" + target.gid + "/" + target.token, {
         method: "DELETE",
       });
     }
-    state.notice = state.deleteAfterFavoriteRemove
-      ? "已移除收藏并删除本地归档。"
-      : "已移除收藏。";
+    state.notice =
+      target.status === "unarchived"
+        ? "已移除收藏并清理本地建档记录。"
+        : state.deleteAfterFavoriteRemove
+          ? "已移除收藏并删除本地归档。"
+          : "已移除收藏。";
     state.deleteAfterFavoriteRemove = false;
     await loadArchives();
   });
@@ -560,9 +600,39 @@ async function deleteArchive() {
   state.confirmDelete = false;
   if (!a) return;
   await run(async () => {
-    await api("/api/archive/" + a.gid + "/" + a.token, { method: "DELETE" });
-    state.notice = "本地归档已删除";
+    const res = (
+      await api("/api/archive/" + a.gid + "/" + a.token, { method: "DELETE" })
+    ).data;
+    if (a.status === "failed") {
+      state.notice = res.retained_catalog
+        ? "已清除失败状态并恢复为未归档"
+        : "失败记录已清除";
+    } else if (["pending", "downloading", "zipping", "submitting"].includes(a.status)) {
+      state.notice = res.retained_catalog
+        ? "归档任务已取消并恢复为未归档"
+        : "归档任务已取消并移除";
+    } else if (a.status === "unarchived") {
+      state.notice = "残留记录已移除";
+    } else {
+      state.notice = res.retained_catalog
+        ? "本地归档已删除（收藏记录保留为未归档）"
+        : "本地归档及记录已删除";
+    }
     await loadArchives();
+  });
+}
+async function syncFavorites(full = false) {
+  await run(async () => {
+    const query = full ? "?full=1" : "";
+    const result = (
+      await api("/api/favorites/sync/run" + query, { method: "POST" })
+    ).data;
+    if (result.skipped) {
+      state.notice = result.error || "已跳过收藏同步";
+    } else {
+      state.notice = `收藏同步完成：扫描 ${result.scanned_pages ?? 0} 页，新增 ${result.new_count ?? 0} 项，新建档 ${result.cataloged_count ?? 0} 项`;
+    }
+    await Promise.all([loadArchives(), loadCategories(), loadStatus()]);
   });
 }
 function askClearCache() {
@@ -681,6 +751,7 @@ function destroy() {
   clearInterval(timer);
   clearInterval(archiveTimer);
   clearInterval(archiveScanTimer);
+  clearTimeout(archiveScanDismissTimer);
   media?.removeEventListener?.("change", applyTheme);
 }
 export function useApp() {
@@ -706,6 +777,7 @@ export function useApp() {
     loadArchives,
     loadArchiveScanStatus,
     startArchiveScan,
+    dismissArchiveScan,
     loadCategories,
     getQuote,
     quoteArchiveFor,
@@ -720,6 +792,7 @@ export function useApp() {
     favorite,
     requestFavoriteRemove,
     confirmFavoriteRemoval,
+    syncFavorites,
     init,
     destroy,
     peekCoverUrl,

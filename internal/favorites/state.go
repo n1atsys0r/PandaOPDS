@@ -29,7 +29,7 @@ func (s *State) load() {
 	if s.data == nil {
 		s.data = map[string]any{}
 	}
-	defaults := map[string]any{"known": []string{}, "archived": []string{}, "errors": map[string]string{}, "favcats": map[string]int{}, "favcat_map": map[string]string{}, "baseline": false, "last_run": float64(0), "last_ok": true, "scanned_pages": 0}
+	defaults := map[string]any{"known": []string{}, "archived": []string{}, "errors": map[string]string{}, "favcats": map[string]int{}, "favcat_map": map[string]string{}, "baseline": false, "catalog_backfilled": false, "last_run": float64(0), "last_ok": true, "scanned_pages": 0}
 	for k, v := range defaults {
 		if _, ok := s.data[k]; !ok {
 			s.data[k] = v
@@ -80,6 +80,18 @@ func (s *State) Baseline() bool {
 	defer s.mu.RUnlock()
 	v, _ := s.data["baseline"].(bool)
 	return v
+}
+func (s *State) CatalogBackfilled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, _ := s.data["catalog_backfilled"].(bool)
+	return v
+}
+func (s *State) MarkCatalogBackfilled(v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data["catalog_backfilled"] = v
+	return s.saveLocked()
 }
 func (s *State) Errors() map[string]string {
 	s.mu.RLock()
@@ -209,6 +221,27 @@ func (s *State) Discard(keys map[string]bool) error {
 		s.data[k] = m
 	}
 	s.data["last_run"] = float64(time.Now().Unix())
+	return s.saveLocked()
+}
+
+// ClearArchiveTracking removes keys from archived and errors sets while
+// preserving known and favcats membership.
+func (s *State) ClearArchiveTracking(keys map[string]bool) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	archived := s.stringSet("archived")
+	for x := range keys {
+		delete(archived, x)
+	}
+	s.data["archived"] = sortedKeys(archived)
+	errs := s.ErrorsUnsafe()
+	for x := range keys {
+		delete(errs, x)
+	}
+	s.data["errors"] = errs
 	return s.saveLocked()
 }
 func sortedKeys(m map[string]bool) []string {

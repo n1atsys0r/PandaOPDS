@@ -440,3 +440,113 @@ func TestRemoveRefusesVersionDirectoryWithDifferentOwner(t *testing.T) {
 		t.Fatalf("failed ownership check removed the foreign directory: %v", err)
 	}
 }
+
+func TestCatalogCreatesUnarchivedWithoutTouchingReadyOrVersions(t *testing.T) {
+	dataDir := t.TempDir()
+	stateDir := t.TempDir()
+	store, err := NewStoreWithState(dataDir, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	created, err := store.Catalog(301, "tok301", map[string]any{"title": "Fav Gallery", "created_at": float64(100)}, map[string]any{
+		"title": "Fav Gallery", "category": "Manga", "filecount": 18, "catalog_source": "favorites_list",
+	})
+	if err != nil || !created {
+		t.Fatalf("Catalog(301) created=%v err=%v", created, err)
+	}
+	if store.ReadyCount() != 0 || len(store.ListReady(1, 20)) != 0 {
+		t.Fatalf("unarchived catalog entry leaked into ReadyCount/ListReady")
+	}
+	if got := store.Get(301, "tok301"); got == nil || got["status"] != "unarchived" {
+		t.Fatalf("Get(301)=%#v, want status=unarchived", got)
+	}
+	if len(store.Entries()) != 1 {
+		t.Fatalf("Entries()=%d, want 1", len(store.Entries()))
+	}
+	if err := store.CanStart(301, "tok301"); err != nil {
+		t.Fatalf("CanStart on unarchived catalog entry failed: %v", err)
+	}
+
+	// Ready archive & active updated version must never be downgraded or duplicated.
+	if _, err := store.Upsert(302, "root302", map[string]any{"status": "ready", "title": "Root", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(302, "root302"), "p1.jpg", "img")
+	if _, err := store.Upsert(303, "ver303", map[string]any{"root_gid": 302, "root_token": "root302", "is_version_update": true, "status": "ready", "title": "V2", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(303, "ver303"), "p1.jpg", "img")
+	if err := store.ActivateVersion(302, "root302", 303, "ver303", map[string]any{"gid": 303, "token": "ver303", "title": "V2"}, []byte("c"), true); err != nil {
+		t.Fatal(err)
+	}
+
+	created, err = store.Catalog(303, "ver303", map[string]any{"title": "V2 Fav"}, map[string]any{"title": "V2 Fav"})
+	if err != nil || created {
+		t.Fatalf("Catalog on active version returned created=%v err=%v", created, err)
+	}
+	if got := store.Get(302, "root302"); got["status"] != "ready" {
+		t.Fatalf("Catalog altered existing shelf status: %#v", got)
+	}
+	if len(store.Entries()) != 2 {
+		t.Fatalf("Entries()=%d, want 2 (no duplicate card for updated version)", len(store.Entries()))
+	}
+}
+
+func TestResetToUnarchivedCleansVersionPayloadsAndRetainsRootCatalog(t *testing.T) {
+	dataDir := t.TempDir()
+	stateDir := t.TempDir()
+	store, err := NewStoreWithState(dataDir, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(401, "root", map[string]any{"status": "ready", "title": "Root", "or": "org", "quality": "Original", "page_count": 2}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(401, "root"), "p1.jpg", "old")
+	if err := store.WriteMetadata(401, "root", map[string]any{"gid": 401, "token": "root", "title": "Root", "filecount": 2, "saved_at": float64(10)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteCover(401, "root", []byte("root-cover")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(402, "next", map[string]any{"root_gid": 401, "root_token": "root", "is_version_update": true, "status": "ready", "title": "V2", "or": "org", "quality": "Original", "page_count": 3}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(402, "next"), "p1.jpg", "new")
+	if err := store.ActivateVersion(401, "root", 402, "next", map[string]any{"gid": 402, "token": "next", "title": "V2", "filecount": 3}, []byte("new-cover"), true); err != nil {
+		t.Fatal(err)
+	}
+
+	if !store.ResetToUnarchived(401, "root") {
+		t.Fatal("ResetToUnarchived returned false")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "402.zip")); !os.IsNotExist(err) {
+		t.Fatalf("version ZIP was not removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "402")); !os.IsNotExist(err) {
+		t.Fatalf("version state directory was not removed: %v", err)
+	}
+	if store.ReadyCount() != 0 {
+		t.Fatalf("ReadyCount=%d, want 0", store.ReadyCount())
+	}
+	got := store.Get(401, "root")
+	if got == nil || got["status"] != "unarchived" || toInt(got["active_gid"]) != 401 || toInt(got["page_count"]) != 0 || toString(got["or"]) != "" {
+		t.Fatalf("reset entry=%#v", got)
+	}
+	if cover, ok := store.Cover(401, "root"); !ok || string(cover) != "root-cover" {
+		t.Fatalf("root cover=%q ok=%v", cover, ok)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewStoreWithState(dataDir, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if got := restarted.Get(401, "root"); got == nil || got["status"] != "unarchived" {
+		t.Fatalf("restarted reset entry=%#v", got)
+	}
+}

@@ -1130,6 +1130,18 @@ func (m *Manager) RecoverInterruptedUpgrades() int {
 func (m *Manager) Remove(gid int, token string) bool {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
+	m.stopAndCleanStagingLocked(gid, token)
+	return m.Store.Remove(gid, token)
+}
+
+func (m *Manager) DemoteToUnarchived(gid int, token string) bool {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	m.stopAndCleanStagingLocked(gid, token)
+	return m.Store.ResetToUnarchived(gid, token)
+}
+
+func (m *Manager) stopAndCleanStagingLocked(gid int, token string) {
 	rootGID, rootToken, _ := m.Store.RootIdentity(gid, token)
 	rootKey := key(rootGID, rootToken)
 	if rootGID <= 0 || rootToken == "" {
@@ -1162,7 +1174,7 @@ func (m *Manager) Remove(gid int, token string) bool {
 		stageGID, _ := strconv.Atoi(identity[0])
 		_ = os.RemoveAll(filepath.Dir(m.stagingPart(stageGID, identity[1])))
 	}
-	return m.Store.Remove(gid, token)
+	_ = os.RemoveAll(filepath.Dir(m.stagingPart(gid, token)))
 }
 func (m *Manager) Refresh(ctx context.Context, gid int, token string) (map[string]any, error) {
 	if rootGID, rootToken, ok := m.Store.RootIdentity(gid, token); ok && rootGID == gid && rootToken == token {
@@ -1172,7 +1184,12 @@ func (m *Manager) Refresh(ctx context.Context, gid int, token string) (map[strin
 	if meta == nil {
 		return nil, errors.New("no archive entry to refresh (start first)")
 	}
-	return m.Start(ctx, gid, token, fmt.Sprint(meta["or"]), true)
+	st := strings.TrimSpace(fmt.Sprint(meta["status"]))
+	tier := strings.TrimSpace(toString(meta["or"]))
+	if st == "unarchived" || tier == "" {
+		return nil, errors.New("gallery is not archived yet (quote and start first)")
+	}
+	return m.Start(ctx, gid, token, tier, true)
 }
 func (m *Manager) Snapshot(ctx context.Context, gid int, token string, force bool) (map[string]any, error) {
 	if m.Store.Get(gid, token) == nil {

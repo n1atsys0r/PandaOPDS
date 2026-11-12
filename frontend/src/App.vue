@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -68,6 +68,7 @@ import {
   LogOutIcon as LogOut,
   TagIcon as Tag,
   BookmarkIcon as Bookmark,
+  ChevronDownIcon as ChevronDown,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
 
@@ -78,9 +79,53 @@ function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
+
+function formatBinaryBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const k = 1024;
+  const sizes = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(k)), sizes.length - 1);
+  const val = parseFloat((n / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1));
+  return `${val}${sizes[i]}`;
+}
+
+function archiveSizeText(a) {
+  if (!a || a.status === "unarchived") return "";
+  const bytes =
+    a.status === "ready"
+      ? a.archive_size || a.metadata?.filesize || 0
+      : a.archive_size || a.part_size || 0;
+  return formatBinaryBytes(bytes);
+}
 const s = useApp();
-onMounted(s.init);
-onBeforeUnmount(s.destroy);
+const syncMenuOpen = ref(false);
+const syncMenuRef = ref(null);
+const confirmFullSyncOpen = ref(false);
+
+function handleDocumentClick(e) {
+  if (!syncMenuOpen.value) return;
+  if (syncMenuRef.value && !syncMenuRef.value.contains(e.target)) {
+    syncMenuOpen.value = false;
+  }
+}
+
+function handleDocumentKeydown(e) {
+  if (e.key === "Escape" && syncMenuOpen.value) {
+    syncMenuOpen.value = false;
+  }
+}
+
+onMounted(() => {
+  s.init();
+  document.addEventListener("click", handleDocumentClick);
+  document.addEventListener("keydown", handleDocumentKeydown);
+});
+onBeforeUnmount(() => {
+  s.destroy();
+  document.removeEventListener("click", handleDocumentClick);
+  document.removeEventListener("keydown", handleDocumentKeydown);
+});
 
 function cycleTheme() {
   const current = s.theme.value || "system";
@@ -201,6 +246,7 @@ const qualityLabel = (entry) => {
   const tier = String(entry.or || entry.quality || "").toLowerCase();
   if (tier === "org" || tier.includes("original")) return "原档";
   if (tier === "res" || tier.includes("resample")) return "降采样";
+  if (entry.status === "unarchived") return "在线";
   return "归档";
 };
 const countLabel = (section) => {
@@ -288,19 +334,50 @@ const psePageBase = computed(() => {
   const base = Number(s.status.value?.site?.pse_page_base);
   return Number.isFinite(base) ? base : 1;
 });
-const selectedStatus = ref("all"); // "all" | "updates" | "downloading" | "failed"
+const selectedStatus = ref("all"); // "all" | "ready" | "unarchived" | "updates" | "downloading" | "failed"
 const selectedCategory = ref("all"); // "all" | EH category key
 const selectedFavcat = ref("all"); // "all" | "unfavorited" | "favorited" | "0".."9"
 const archiveSearch = ref("");
+const visibleLimit = ref(60);
+
+watch([selectedStatus, selectedCategory, selectedFavcat, archiveSearch], () => {
+  visibleLimit.value = 60;
+});
 
 function archivePageCount(a) {
   return Math.max(0, Number(a?.page_count || a?.metadata?.filecount || 0));
 }
 
+function canReadOnline(a) {
+  return Boolean(
+    a &&
+      ["ready", "unarchived", "failed"].includes(a.status) &&
+      archivePageCount(a) > 0,
+  );
+}
+
 function openReader(a) {
-  if (!a || a.status !== "ready" || archivePageCount(a) <= 0) return;
+  if (!canReadOnline(a)) return;
   readerArchive.value = a;
 }
+
+function requestFullSync() {
+  syncMenuOpen.value = false;
+  confirmFullSyncOpen.value = true;
+}
+
+async function confirmAndRunFullSync() {
+  confirmFullSyncOpen.value = false;
+  await s.syncFavorites(true);
+}
+
+const showArchiveScanBanner = computed(() => {
+  const scan = s.archiveScan.value;
+  if (!scan || scan.status === "idle") return false;
+  if (scan.status === "running") return true;
+  const k = `${scan.id || 0}:${scan.completed_at || 0}:${scan.status}`;
+  return k !== s.archiveScanDismissedKey.value;
+});
 
 function openCreateArchiveDialog() {
   s.archiveInput.value = "";
@@ -348,11 +425,15 @@ const isFiltered = computed(() => {
 });
 
 const statusCounts = computed(() => {
+  let ready = 0;
+  let unarchived = 0;
   let updates = 0;
   let downloading = 0;
   let failed = 0;
   const dlStatuses = ["downloading", "zipping", "pending", "submitting"];
   for (const a of s.archives.value || []) {
+    if (a.status === "ready") ready++;
+    if (a.status === "unarchived") unarchived++;
     if (a.update_available) updates++;
     if (
       dlStatuses.includes(a.status) ||
@@ -366,6 +447,8 @@ const statusCounts = computed(() => {
   }
   return {
     all: s.archives.value?.length || 0,
+    ready,
+    unarchived,
     updates,
     downloading,
     failed,
@@ -389,11 +472,13 @@ const categoryCounts = computed(() => {
 
 const favcatList = computed(() => {
   const counts = {};
+  const archiveNames = {};
   for (let i = 0; i < 10; i++) counts[i] = 0;
   for (const a of s.archives.value || []) {
     if (a.is_favorited && a.favcat != null) {
       const id = Number(a.favcat);
       if (counts[id] !== undefined) counts[id]++;
+      if (a.favcat_name && !archiveNames[id]) archiveNames[id] = a.favcat_name;
     }
   }
   const cats = s.favcats.value || [];
@@ -402,7 +487,7 @@ const favcatList = computed(() => {
     const found = cats.find((c) => Number(c.id) === i);
     list.push({
       id: i,
-      name: found?.name || `收藏夹 ${i}`,
+      name: found?.name || archiveNames[i] || `收藏夹 ${i}`,
       count: counts[i] || 0,
     });
   }
@@ -442,7 +527,11 @@ const filteredArchives = computed(() => {
   let list = s.archives.value || [];
 
   // 1. 状态维度
-  if (selectedStatus.value === "updates") {
+  if (selectedStatus.value === "ready") {
+    list = list.filter((a) => a.status === "ready");
+  } else if (selectedStatus.value === "unarchived") {
+    list = list.filter((a) => a.status === "unarchived");
+  } else if (selectedStatus.value === "updates") {
     list = list.filter((a) => Boolean(a.update_available));
   } else if (selectedStatus.value === "downloading") {
     const dlStatuses = ["downloading", "zipping", "pending", "submitting"];
@@ -498,6 +587,67 @@ const filteredArchives = computed(() => {
 
   return list;
 });
+
+const visibleArchives = computed(() =>
+  filteredArchives.value.slice(0, visibleLimit.value),
+);
+
+const deleteDialogMeta = computed(() => {
+  const t = s.deleteTarget.value;
+  if (!t) {
+    return { title: "删除本地归档？", desc: "", note: "", confirm: "删除归档" };
+  }
+  const fav = Boolean(t.is_favorited);
+  if (t.status === "failed") {
+    return {
+      title: "清除失败记录？",
+      desc: fav
+        ? "将清理临时下载文件与报错信息，保留收藏建档记录并恢复为「未归档」状态。"
+        : "将清理临时下载文件并移除该失败记录。",
+      note: fav ? "操作不会影响 E-Hentai 收藏" : "操作将彻底移除该失败条目",
+      confirm: "清除失败",
+    };
+  }
+  if (["pending", "downloading", "zipping", "submitting"].includes(t.status)) {
+    return {
+      title: "取消当前归档任务？",
+      desc: fav
+        ? "将中止下载并清理临时文件，保留收藏建档记录并恢复为「未归档」状态。"
+        : "将中止下载、清理临时文件并移除该条目。",
+      note: fav ? "操作不会影响 E-Hentai 收藏" : "操作将彻底移除该条目",
+      confirm: "取消归档",
+    };
+  }
+  if (t.status === "unarchived") {
+    return {
+      title: "移除残留记录？",
+      desc: "该条目不在收藏夹且无本地归档文件，移除后将从「浏览」列表清除。",
+      note: "操作仅清理本地元数据索引",
+      confirm: "移除",
+    };
+  }
+  return {
+    title: "删除本地归档？",
+    desc: fav
+      ? "仅删除本地归档文件；因仍在收藏夹中，卡片将保留为「未归档」状态并可继续在线阅读（移除收藏后会自动清理）。"
+      : "将删除本地归档文件及本地记录（不在收藏夹中，将从「浏览」列表移除）；E-Hentai 账号记录保留。",
+    note: fav
+      ? "本地归档 ZIP 将被删除，收藏卡片保留"
+      : "操作只影响本机保存的归档与记录",
+    confirm: "删除归档",
+  };
+});
+
+function cardActionLabel(a) {
+  if (a.status === "unarchived") {
+    return a.is_favorited ? "下载归档" : "移除";
+  }
+  if (a.status === "failed") return "清除失败";
+  if (["pending", "downloading", "zipping", "submitting"].includes(a.status)) {
+    return "取消归档";
+  }
+  return "删除归档";
+}
 </script>
 <template>
   <div
@@ -1312,12 +1462,52 @@ const filteredArchives = computed(() => {
               <p>归档操作可能消耗账户 GP；每次开始前会明确确认。</p>
             </div>
             <div class="heading-actions">
+              <div ref="syncMenuRef" class="relative inline-flex items-center">
+                <div class="inline-flex items-center rounded-md">
+                  <Button
+                    variant="outline"
+                    class="rounded-r-none border-r-0"
+                    :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
+                    @click="s.syncFavorites(false)"
+                  >
+                    <RefreshCw class="size-3.5" />同步收藏
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    class="rounded-l-none w-8 px-0"
+                    :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
+                    aria-label="更多同步选项"
+                    aria-haspopup="menu"
+                    :aria-expanded="syncMenuOpen"
+                    @click.stop="syncMenuOpen = !syncMenuOpen"
+                  >
+                    <ChevronDown class="size-3.5" />
+                  </Button>
+                </div>
+                <div
+                  v-if="syncMenuOpen"
+                  role="menu"
+                  class="absolute right-0 top-full z-50 mt-1.5 min-w-52 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
+                    @click="requestFullSync"
+                  >
+                    <span class="font-medium text-foreground">全量校准收藏…</span>
+                    <span class="text-[11px] text-muted-foreground mt-0.5">遍历全部收藏页并清理上游已取消项</span>
+                  </button>
+                </div>
+              </div>
               <Button
                 variant="outline"
                 :disabled="s.archiveScan.value.status === 'running'"
                 @click="s.startArchiveScan"
+                title="扫描 ARCHIVE_DIR 中已有的历史归档文件并导入索引"
               >
-                {{ s.archiveScan.value.status === 'running' ? '正在扫描…' : '扫描现有归档' }}
+                {{ s.archiveScan.value.status === 'running' ? '正在导入…' : '导入本地归档' }}
               </Button>
               <Button class="primary-action" @click="openCreateArchiveDialog">
                 <Plus />新建归档
@@ -1325,19 +1515,27 @@ const filteredArchives = computed(() => {
             </div>
           </div>
           <div
-            v-if="s.archiveScan.value.status !== 'idle'"
+            v-if="showArchiveScanBanner"
             class="archive-scan-status"
             :class="'archive-scan-' + s.archiveScan.value.status"
             role="status"
           >
             <span v-if="s.archiveScan.value.status === 'running'">正在查找归档状态与图库资料…</span>
-            <span v-else-if="s.archiveScan.value.status === 'success'">扫描完成：导入 {{ s.archiveScan.value.imported }} 个文件，跳过 {{ s.archiveScan.value.skipped }} 个文件，冲突 {{ s.archiveScan.value.conflicts }} 个文件。</span>
-            <span v-else-if="s.archiveScan.value.status === 'skipped'">扫描完成：未导入新文件，跳过 {{ s.archiveScan.value.skipped }} 个文件。</span>
-            <span v-else-if="s.archiveScan.value.status === 'conflict'">扫描完成：未导入文件，发现 {{ s.archiveScan.value.conflicts }} 个冲突文件。</span>
-            <span v-else>扫描失败：{{ s.archiveScan.value.error || '未知错误' }}</span>
+            <span v-else-if="s.archiveScan.value.status === 'success'">导入完成：导入 {{ s.archiveScan.value.imported }} 个文件，跳过 {{ s.archiveScan.value.skipped }} 个文件，冲突 {{ s.archiveScan.value.conflicts }} 个文件。</span>
+            <span v-else-if="s.archiveScan.value.status === 'skipped'">导入完成：未导入新文件，跳过 {{ s.archiveScan.value.skipped }} 个文件。</span>
+            <span v-else-if="s.archiveScan.value.status === 'conflict'">导入完成：未导入文件，发现 {{ s.archiveScan.value.conflicts }} 个冲突文件。</span>
+            <span v-else>导入失败：{{ s.archiveScan.value.error || '未知错误' }}</span>
+            <Button
+              v-if="s.archiveScan.value.status !== 'running'"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="关闭导入提示"
+              @click="s.dismissArchiveScan()"
+              ><X :size="14"
+            /></Button>
           </div>
           <div class="archive-action-bar">
-            <!-- 左侧分段器：全部 / 可更新 / 下载中 / 失败 -->
+            <!-- 左侧分段器：全部 / 已归档 / 未归档 / 可更新 / 下载中 / 失败 -->
             <div class="segmented-control" role="tablist">
               <button
                 type="button"
@@ -1347,6 +1545,36 @@ const filteredArchives = computed(() => {
                 @click="selectedStatus = 'all'"
               >
                 <span>全部</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="segment-btn"
+                :class="{ active: selectedStatus === 'ready' }"
+                @click="selectedStatus = 'ready'"
+              >
+                <span>已归档</span>
+                <span
+                  v-if="statusCounts.ready > 0"
+                  class="segment-badge"
+                >
+                  {{ statusCounts.ready }}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="segment-btn"
+                :class="{ active: selectedStatus === 'unarchived' }"
+                @click="selectedStatus = 'unarchived'"
+              >
+                <span>未归档</span>
+                <span
+                  v-if="statusCounts.unarchived > 0"
+                  class="segment-badge"
+                >
+                  {{ statusCounts.unarchived }}
+                </span>
               </button>
               <button
                 type="button"
@@ -1509,7 +1737,7 @@ const filteredArchives = computed(() => {
           </div>
           <div v-else class="gallery">
             <Card
-              v-for="a in filteredArchives"
+              v-for="a in visibleArchives"
               :key="a.gid + '/' + a.token"
               class="gallery-card"
             >
@@ -1519,18 +1747,27 @@ const filteredArchives = computed(() => {
                   :src="a.cover_url"
                   :alt="a.title || '封面'"
                 /><span v-else>暂无封面</span
-                ><b>{{
-                  a.metadata?.title_jpn ||
-                  a.metadata?.title ||
-                  a.title ||
-                  "未命名画廊"
-                }}</b
+                ><b
+                  :title="
+                    a.metadata?.title_jpn ||
+                    a.metadata?.title ||
+                    a.title ||
+                    '未命名画廊'
+                  "
+                  ><span class="line-clamp-2 break-words">{{
+                    a.metadata?.title_jpn ||
+                    a.metadata?.title ||
+                    a.title ||
+                    "未命名画廊"
+                  }}</span></b
                 ><Badge variant="secondary" class="cover-status">{{
                   {
                     ready: "可用",
+                    unarchived: "未归档",
                     downloading: "下载中",
                     zipping: "转换中",
                     pending: "准备中",
+                    submitting: "提交中",
                     failed: "失败",
                     quoting: "报价中",
                     absent: "无",
@@ -1546,11 +1783,68 @@ const filteredArchives = computed(() => {
                   a.metadata?.rating ? "★ " + a.metadata.rating : ""
                 }}</span>
               </div>
-              <div class="gallery-meta">
-                {{ a.metadata?.filecount || a.page_count || "—" }} 页
-                <span>{{
-                  a.metadata?.filesize || a.archive_size || a.part_size || "—"
-                }}</span>
+              <div class="gallery-meta items-center">
+                <span class="shrink-0 whitespace-nowrap"
+                  >{{ a.metadata?.filecount || a.page_count || "—" }} 页<template v-if="archiveSizeText(a)">（{{ archiveSizeText(a) }}）</template></span
+                >
+                <Select
+                  :model-value="a.favcat != null ? String(a.favcat) : ''"
+                  @update:model-value="
+                    (val) => {
+                      if (val === 'remove') {
+                        s.requestFavoriteRemove(a);
+                      } else {
+                        s.favorite(
+                          a,
+                          a.is_favorited ? 'move' : 'add',
+                          Number(val),
+                        );
+                      }
+                    }
+                  "
+                >
+                  <SelectTrigger
+                    size="sm"
+                    :class="[
+                      'favorite-chip',
+                      a.is_favorited && a.favcat != null
+                        ? 'favorite-chip--active'
+                        : 'favorite-chip--empty',
+                    ]"
+                    :title="
+                      a.favcat != null
+                        ? a.favcat_name || `收藏夹 ${a.favcat}`
+                        : '添加到收藏夹'
+                    "
+                  >
+                    <Bookmark class="size-3 shrink-0" />
+                    <SelectValue placeholder="未收藏">
+                      <span class="truncate">{{
+                        a.favcat != null
+                          ? a.favcat_name || `收藏夹 ${a.favcat}`
+                          : "未收藏"
+                      }}</span>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    <SelectItem
+                      v-for="cat in favcatList"
+                      :key="cat.id"
+                      :value="String(cat.id)"
+                    >
+                      {{ cat.id }}: {{ cat.name }}
+                    </SelectItem>
+                    <template v-if="a.is_favorited">
+                      <SelectSeparator class="my-1" />
+                      <SelectItem
+                        value="remove"
+                        class="text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
+                      >
+                        移除收藏
+                      </SelectItem>
+                    </template>
+                  </SelectContent>
+                </Select>
               </div>
               <div class="gallery-actions">
                 <Button as-child variant="link" size="sm">
@@ -1580,66 +1874,83 @@ const filteredArchives = computed(() => {
                   "
                   @click="handleQuoteUpdate(a)"
                 >更新版本</Button
-                ><Button variant="destructive" size="sm" @click="s.requestDelete(a)">删除归档</Button>
+                ><Button
+                  v-if="a.status === 'unarchived' && a.is_favorited"
+                  variant="link"
+                  size="sm"
+                  :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
+                  @click="handleQuoteArchive(a)"
+                >{{ cardActionLabel(a) }}</Button
+                ><Button
+                  v-else
+                  variant="destructive"
+                  size="sm"
+                  @click="s.requestDelete(a)"
+                >{{ cardActionLabel(a) }}</Button>
               </div>
               <div
-                v-if="a.status === 'ready' || a.status === 'failed'"
+                v-if="
+                  (a.status === 'ready' || a.status === 'unarchived' || a.status === 'failed') &&
+                  (a.status !== 'unarchived' || archivePageCount(a) > 0)
+                "
                 class="gallery-primary-action"
               >
                 <Button
-                  :variant="a.status === 'ready' ? 'secondary' : 'outline'"
+                  v-if="a.status === 'ready'"
+                  variant="default"
                   size="sm"
                   class="w-full text-xs"
-                  :disabled="a.status === 'ready' && archivePageCount(a) <= 0"
-                  @click="a.status === 'ready' ? openReader(a) : handleQuoteArchive(a)"
+                  :disabled="archivePageCount(a) <= 0"
+                  @click="openReader(a)"
                 >
-                  <BookOpen v-if="a.status === 'ready'" class="size-3.5" />
-                  <RotateCcw v-else class="size-3.5" />
-                  {{ a.status === 'ready' ? '阅读' : '报价并重试' }}
+                  <BookOpen class="size-3.5" />阅读
                 </Button>
-              </div>
-              <div class="gallery-actions">
-                <Select
-                  :model-value="a.favcat != null ? String(a.favcat) : ''"
-                  @update:model-value="
-                    (val) => {
-                      if (val === 'remove') {
-                        s.requestFavoriteRemove(a);
-                      } else {
-                        s.favorite(
-                          a,
-                          a.is_favorited ? 'move' : 'add',
-                          Number(val),
-                        );
-                      }
-                    }
-                  "
+                <Button
+                  v-else-if="a.status === 'unarchived'"
+                  variant="default"
+                  size="sm"
+                  class="w-full text-xs"
+                  @click="openReader(a)"
                 >
-                  <SelectTrigger class="favorite-select">
-                    <SelectValue placeholder="选择收藏分类">
-                      {{ a.favcat != null ? (a.favcat_name || `收藏夹 ${a.favcat}`) : '选择收藏分类' }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent position="popper">
-                    <SelectItem v-for="cat in favcatList" :key="cat.id" :value="String(cat.id)">
-                      {{ cat.id }}: {{ cat.name }}
-                    </SelectItem>
-                    <template v-if="a.is_favorited">
-                      <SelectSeparator class="my-1" />
-                      <SelectItem
-                        value="remove"
-                        class="text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
-                      >
-                        移除收藏
-                      </SelectItem>
-                    </template>
-                  </SelectContent>
-                </Select>
+                  <BookOpen class="size-3.5" />在线阅读
+                </Button>
+                <div v-else class="flex items-center gap-1.5 w-full">
+                  <Button
+                    v-if="archivePageCount(a) > 0"
+                    variant="default"
+                    size="sm"
+                    class="flex-1 text-xs"
+                    @click="openReader(a)"
+                  >
+                    <BookOpen class="size-3.5" />在线阅读
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="flex-1 text-xs"
+                    :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
+                    @click="handleQuoteArchive(a)"
+                  >
+                    <RotateCcw class="size-3.5" />报价并重试
+                  </Button>
+                </div>
               </div>
               <small v-if="a.error || a.version_update?.error" class="archive-error">
                 {{ a.error || a.version_update.error }}
               </small>
             </Card>
+          </div>
+          <div
+            v-if="filteredArchives.length > visibleArchives.length"
+            class="flex justify-center pt-4"
+          >
+            <Button
+              variant="outline"
+              size="sm"
+              @click="visibleLimit += 60"
+            >
+              加载更多（已显示 {{ visibleArchives.length }} / {{ filteredArchives.length }}）
+            </Button>
           </div></template
         >
       </div>
@@ -1697,9 +2008,9 @@ const filteredArchives = computed(() => {
       <AlertDialog v-model:open="s.confirmDelete.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除本地归档？</AlertDialogTitle>
+            <AlertDialogTitle>{{ deleteDialogMeta.title }}</AlertDialogTitle>
             <AlertDialogDescription>
-              仅删除本地归档文件；E-Hentai 上的归档记录保留，之后可重新下载。
+              {{ deleteDialogMeta.desc }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div class="dialog-detail">
@@ -1708,11 +2019,13 @@ const filteredArchives = computed(() => {
               s.deleteTarget.value?.title ||
               "画廊 " + (s.deleteTarget.value?.gid || "")
             }}</b>
-            <span>操作只影响本机保存的归档文件</span>
+            <span>{{ deleteDialogMeta.note }}</span>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button variant="destructive" @click="s.deleteArchive">删除归档</Button></AlertDialogAction>
+            <AlertDialogAction as-child><Button variant="destructive" @click="s.deleteArchive">{{
+              deleteDialogMeta.confirm
+            }}</Button></AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1721,16 +2034,37 @@ const filteredArchives = computed(() => {
           <AlertDialogHeader>
             <AlertDialogTitle>移除收藏？</AlertDialogTitle>
             <AlertDialogDescription>
-              这会从你的 E-Hentai 收藏夹移除此画廊。
+              {{
+                s.favoriteRemoveTarget.value?.status === "unarchived"
+                  ? "这会从你的 E-Hentai 收藏夹移除此画廊，并同步清理未归档的本地建档记录。"
+                  : "这会从你的 E-Hentai 收藏夹移除此画廊。"
+              }}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <label class="delete-local-check">
+          <label
+            v-if="s.favoriteRemoveTarget.value?.status !== 'unarchived'"
+            class="delete-local-check"
+          >
             <input type="checkbox" v-model="s.deleteAfterFavoriteRemove.value" />
             同时删除本地归档（只有上游移除收藏成功后才会执行）
           </label>
           <AlertDialogFooter>
             <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
             <AlertDialogAction as-child><Button variant="destructive" @click="s.confirmFavoriteRemoval">移除收藏</Button></AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog v-model:open="confirmFullSyncOpen">
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>执行全量校准收藏？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将从头遍历你的 E-Hentai 收藏页（受最大扫描页数限制），补齐遗漏建档并自动清理上游已取消收藏的「未归档」条目。此操作不会触发付费归档，但会发起较多次列表页请求。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
+            <AlertDialogAction as-child><Button :disabled="s.busy.value" @click="confirmAndRunFullSync">确认全量校准</Button></AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

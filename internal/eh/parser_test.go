@@ -3,6 +3,7 @@ package eh
 import "testing"
 
 const extendedSiblingCellListHTML = `<!doctype html><html><body>
+<div id="nb" class="nosel"><div><a href="https://e-hentai.org/">Front Page</a></div></div>
 <div class="nosel"><div class="fp" onclick="popUp('/gallerypopups.php?favcat=1')"><div>1</div><div>Favorite</div><div>Common</div></div></div>
 <table class="itg glte"><tr>
   <td class="gl1e"><div><a href="https://e-hentai.org/g/42/abcd/"><img data-src="https://ehgt.org/test-cover.webp" src="placeholder.gif"></a></div></td>

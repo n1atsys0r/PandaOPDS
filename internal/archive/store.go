@@ -1753,6 +1753,141 @@ func (s *Store) Remove(gid int, token string) bool {
 	return true
 }
 
+// ResetToUnarchived removes all downloaded ZIP payloads and extra version
+// directories for a shelf while retaining its root catalog record as
+// "unarchived" in ARCHIVE_STATE_DIR.
+func (s *Store) ResetToUnarchived(gid int, token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conflicts[key(gid, token)] {
+		return false
+	}
+	rec := s.rootLocked(gid, token)
+	if rec == nil || !s.flatOwnedLocked(rec) {
+		return false
+	}
+	rootGID, rootToken := s.rootIdentity(rec)
+	if s.writeDirtyMarker() != nil {
+		return false
+	}
+	versionDirs := map[string]bool{}
+	payloads := map[string]bool{}
+	for id, state := range versionRecords(rec.meta) {
+		versionGID, versionToken, ok := parseKey(id)
+		if !ok {
+			continue
+		}
+		payload := s.archivePathLocked(rec, versionGID, versionToken)
+		if payload != "" {
+			rel, err := filepath.Rel(s.DataRoot, payload)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return false
+			}
+			payloads[payload] = true
+		}
+		if (versionGID == rootGID && versionToken == rootToken) || toString(state["storage_dir"]) == "" || toString(state["storage_dir"]) == "." {
+			continue
+		}
+		dir, ok := s.versionDirLocked(rec, versionGID, versionToken)
+		if !ok || !s.versionDirOwnedLocked(rec, versionGID, versionToken) {
+			return false
+		}
+		versionDirs[dir] = true
+	}
+	for payload := range payloads {
+		if s.zipPool != nil {
+			s.zipPool.invalidate(payload)
+		}
+		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
+			return false
+		}
+	}
+	for dir := range versionDirs {
+		if os.RemoveAll(dir) != nil {
+			return false
+		}
+	}
+	_ = os.Remove(filepath.Join(rec.dir, partName))
+	_ = os.Remove(filepath.Join(rec.dir, ".cover.none"))
+	rootGallery := inferGalleryFile(rec.dir, rec.stateFileName)
+	_ = os.Remove(filepath.Join(rec.dir, rootGallery+".next"))
+	_ = os.Remove(filepath.Join(rec.dir, coverName+".next"))
+
+	now := float64(time.Now().Unix())
+	createdAt := toFloat(rec.meta["created_at"])
+	if createdAt <= 0 {
+		createdAt = now
+	}
+	title := toString(rec.meta["title"])
+	metadataAt := toInt64(rec.meta["metadata_at"])
+	if title == "" || metadataAt == 0 {
+		if b, err := os.ReadFile(filepath.Join(rec.dir, rootGallery)); err == nil {
+			var snap map[string]any
+			if json.Unmarshal(b, &snap) == nil {
+				if title == "" {
+					title = toString(snap["title"])
+				}
+				if metadataAt == 0 {
+					metadataAt = toInt64(snap["saved_at"])
+				}
+			}
+		}
+	}
+	state := map[string]any{
+		"gid":          rootGID,
+		"token":        rootToken,
+		"status":       "unarchived",
+		"storage_dir":  ".",
+		"state_file":   rec.stateFileName,
+		"gallery_file": rootGallery,
+		"created_at":   createdAt,
+		"updated_at":   now,
+	}
+	if title != "" {
+		state["title"] = title
+	}
+	if metadataAt > 0 {
+		state["metadata_at"] = metadataAt
+	}
+	nextMeta := map[string]any{
+		"gid":          rootGID,
+		"token":        rootToken,
+		"root_gid":     rootGID,
+		"root_token":   rootToken,
+		"active_gid":   rootGID,
+		"active_token": rootToken,
+		"status":       "unarchived",
+		"created_at":   createdAt,
+		"updated_at":   now,
+		versionsName:   map[string]any{rec.key: state},
+	}
+	if !rec.legacy {
+		nextMeta["layout"] = versionDirLayout
+	}
+	if filepath.Clean(s.Root) != filepath.Clean(s.DataRoot) {
+		nextMeta["payload_layout"] = "flat-gid"
+	}
+	if title != "" {
+		nextMeta["title"] = title
+	}
+	if metadataAt > 0 {
+		nextMeta["metadata_at"] = metadataAt
+	}
+	oldMeta := rec.meta
+	rec.meta = nextMeta
+	if err := s.persistLocked(rec); err != nil {
+		rec.meta = oldMeta
+		return false
+	}
+	for id, root := range s.identityRoot {
+		if root == rec.key && id != rec.key {
+			delete(s.identityRoot, id)
+		}
+	}
+	s.registerIdentityLocked(rec, rootGID, rootToken)
+	return true
+}
+
 func (s *Store) Stats() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1799,8 +1934,134 @@ func (s *Store) Entries() []map[string]any {
 		m["archive_size"] = toInt64(versionRecords(rec.meta)[key(activeGID, activeToken)]["archive_size"])
 		out = append(out, m)
 	}
-	sort.Slice(out, func(i, j int) bool { return toInt64(out[i]["created_at"]) > toInt64(out[j]["created_at"]) })
+	sort.Slice(out, func(i, j int) bool {
+		ci, cj := toFloat(out[i]["created_at"]), toFloat(out[j]["created_at"])
+		if ci != cj {
+			return ci > cj
+		}
+		return toInt(out[i]["gid"]) > toInt(out[j]["gid"])
+	})
 	return out
+}
+
+// Catalog records a discovered gallery (e.g. from favorites sync) in the
+// durable archive state directory without marking it archived or touching ZIP
+// storage. Existing shelves (ready, active, or failed) are never downgraded.
+func (s *Store) Catalog(gid int, token string, metaPatch, galleryPayload map[string]any) (bool, error) {
+	if gid <= 0 || token == "" {
+		return false, errors.New("invalid archive identity")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := key(gid, token)
+	if s.conflicts[id] {
+		return false, errors.New("archive identity conflicts with another shelf")
+	}
+	if rec := s.rootLocked(gid, token); rec != nil {
+		if !s.flatOwnedLocked(rec) {
+			return false, errors.New("archive root ownership conflict")
+		}
+		if len(galleryPayload) > 0 {
+			if metaPath, ok := s.metadataPathLocked(rec, gid, token); ok {
+				if _, err := os.Stat(metaPath); os.IsNotExist(err) {
+					payload := cloneMap(galleryPayload)
+					payload["gid"], payload["token"] = gid, token
+					if b, err := json.MarshalIndent(payload, "", "  "); err == nil {
+						if err := s.writeDirtyMarker(); err != nil {
+							return false, err
+						}
+						if err := s.writeAtomic(metaPath, b); err != nil {
+							return false, err
+						}
+						s.scheduleIndexSnapshotLocked()
+					}
+				}
+			}
+		}
+		return false, nil
+	}
+	for identity := range s.identityRoot {
+		priorGID, priorToken, ok := parseKey(identity)
+		if ok && priorGID == gid && priorToken != token {
+			return false, errors.New("archive gid already belongs to another token")
+		}
+	}
+	rootDir := filepath.Join(s.Root, strconv.Itoa(gid))
+	if filepath.Clean(s.Root) != filepath.Clean(s.DataRoot) {
+		if _, err := os.Lstat(filepath.Join(s.DataRoot, strconv.Itoa(gid)+".zip")); err == nil {
+			return false, errors.New("archive payload already exists without matching shelf ownership")
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
+		return false, errors.New("archive root directory already exists without matching shelf ownership")
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	now := float64(time.Now().Unix())
+	createdAt := now
+	if ts := toFloat(metaPatch["created_at"]); ts > 0 {
+		createdAt = ts
+	}
+	state := map[string]any{
+		"gid":          gid,
+		"token":        token,
+		"status":       "unarchived",
+		"storage_dir":  ".",
+		"state_file":   stateName,
+		"gallery_file": galleryName,
+		"created_at":   createdAt,
+		"updated_at":   now,
+	}
+	for k, v := range metaPatch {
+		switch k {
+		case "gid", "token", "root_gid", "root_token", "active_gid", "active_token", "layout", "payload_layout", "versions", "status", "storage_dir", "state_file", "gallery_file":
+			continue
+		}
+		state[k] = v
+	}
+	meta := map[string]any{
+		"gid":          gid,
+		"token":        token,
+		"root_gid":     gid,
+		"root_token":   token,
+		"active_gid":   gid,
+		"active_token": token,
+		"layout":       versionDirLayout,
+		"created_at":   createdAt,
+		"updated_at":   now,
+		"status":       "unarchived",
+		versionsName:   map[string]any{id: state},
+	}
+	for k, v := range state {
+		switch k {
+		case "storage_dir", "state_file", "gallery_file":
+			continue
+		}
+		meta[k] = v
+	}
+	if filepath.Clean(s.Root) != filepath.Clean(s.DataRoot) {
+		meta["payload_layout"] = "flat-gid"
+	}
+	rec := &rootRecord{key: id, dir: rootDir, stateFileName: stateName, meta: meta}
+	if err := s.persistLocked(rec); err != nil {
+		return false, err
+	}
+	if len(galleryPayload) > 0 {
+		payload := cloneMap(galleryPayload)
+		payload["gid"], payload["token"] = gid, token
+		b, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return false, err
+		}
+		if err := s.writeAtomic(filepath.Join(rootDir, galleryName), b); err != nil {
+			return false, err
+		}
+	}
+	s.roots[id] = rec
+	s.registerIdentityLocked(rec, gid, token)
+	return true, nil
 }
 
 // RecoveryEntries returns individual version jobs plus original roots for
@@ -1846,6 +2107,23 @@ func toInt64(v any) int64 {
 	case string:
 		n, _ := strconv.ParseInt(x, 10, 64)
 		return n
+	}
+	return 0
+}
+func toFloat(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case json.Number:
+		f, _ := x.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(x, 64)
+		return f
 	}
 	return 0
 }

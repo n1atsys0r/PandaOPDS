@@ -2735,11 +2735,15 @@
                   "properties": {
                     "removed": {
                       "type": "boolean"
+                    },
+                    "retained_catalog": {
+                      "type": "boolean"
                     }
                   }
                 },
                 "example": {
-                  "removed": true
+                  "removed": true,
+                  "retained_catalog": false
                 }
               }
             }
@@ -3573,7 +3577,19 @@
           "favorites"
         ],
         "summary": "Favorites Sync Run",
+        "description": "Trigger a favorites scan that catalogs discovered favorites into ARCHIVE_STATE_DIR and optionally starts auto-archiving newly discovered entries when FAVORITES_SYNC_ARCHIVE is enabled. Pass full=1 to run a full catalog backfill scan without triggering paid auto-archiving on known items.",
         "operationId": "favorites_sync_run_api_favorites_sync_run_post",
+        "parameters": [
+          {
+            "name": "full",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Scan all favorites pages to backfill catalog entries and reconcile removed unarchived records."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response",
@@ -4611,6 +4627,7 @@
           "status": {
             "enum": [
               "absent",
+              "unarchived",
               "quoting",
               "pending",
               "downloading",

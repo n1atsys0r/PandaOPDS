@@ -148,7 +148,7 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 		{"id": "favorites", "title": "收藏夹（操作与同步）", "fields": []map[string]any{
 			field("favorites_enabled", "启用条件", choose(cfg.HasIPB(), "开（已配置 IPB 登录态）", "关（需 IPB_MEMBER_ID + IPB_PASS_HASH）"), false, true, "写操作（add/move/remove）与目录列表需要登录态；无登录态时 API 返回 403"),
 			field("favorites_sync_interval_seconds", "同步周期（秒）", cfg.FavoritesSyncIntervalSeconds, false, true, "默认 3600=每小时；0 = 关闭周期扫描（写操作后的防抖触发 + 手动 sync/run 仍生效）"),
-			field("favorites_sync_archive", "自动归档新增项", choose(cfg.FavoritesSyncArchive, "开（消耗 GP！）", "关（仅扫描记录）"), false, true, "必须显式开启；对每次扫描发现的新增收藏项调用 archiver start（首次运行仅建档不归档，自第二次起生效）"),
+			field("favorites_sync_archive", "自动归档新增项", choose(cfg.FavoritesSyncArchive, "开（消耗 GP！）", "关（仅扫描建档）"), false, true, "必须显式开启；所有同步收藏都会在 ARCHIVE_STATE_DIR 建档，开启后会对每次扫描发现的新增收藏项调用 archiver start（首次运行仅建档不归档，自第二次起生效）"),
 			field("favorites_sync_categories", "自动归档范围", favScope(cfg), false, true, "FAVORITES_SYNC_CATEGORIES：只决定哪些新增收藏会被自动归档；扫描恒全量。逗号分隔的收藏夹 ID；留空 = 全归档；-ID = 排除该分区（如 -0）"),
 			field("favorites_sync_state", "同步状态文件", cfg.FavoritesSyncState, false, true, "记录已扫描/已归档 gid；删除可重置增量扫描基线"),
 			field("favorites_sync_match_threshold", "增量停止阈值", cfg.FavoritesSyncMatchThreshold, false, true, "连续 N 个已知 gid 即停止翻页"),
