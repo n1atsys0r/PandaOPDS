@@ -17,24 +17,29 @@ import (
 )
 
 const (
-	metaName     = "meta.json"
-	zipName      = "archive.zip"
-	partName     = "archive.part"
-	metadataName = "metadata.json"
-	coverName    = "cover.jpg"
-	versionsName = "versions"
+	metaName         = "meta.json"
+	stateName        = "state.json"
+	zipName          = "archive.zip"
+	partName         = "archive.part"
+	metadataName     = "metadata.json"
+	galleryName      = "gallery.json"
+	coverName        = "cover.jpg"
+	versionsName     = "versions"
+	versionDirLayout = "versioned"
 )
 
 type rootRecord struct {
-	key    string
-	dir    string
-	legacy bool
-	meta   map[string]any
+	key           string
+	dir           string
+	stateFileName string
+	legacy        bool
+	meta          map[string]any
 }
 
-// Store keeps one shelf record per original gallery. A flat shelf uses
-// ARCHIVE_DIR/{original gid}/meta.json and ARCHIVE_DIR/{original gid}/{actual gid}.zip.
-// Old {gid}/{token}/ shelves remain in place and continue using archive.zip.
+// Store keeps one shelf record per original gallery. New shelves use
+// ARCHIVE_DIR/{original gid}/state.json and new physical versions use
+// ARCHIVE_DIR/{actual gid}/state.json. Existing shelves keep their discovered
+// filenames; all physical versions continue to use archive.zip.
 type Store struct {
 	Root         string
 	mu           sync.RWMutex
@@ -48,8 +53,13 @@ func NewStore(root string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{Root: root, roots: map[string]*rootRecord{}, identityRoot: map[string]string{}, conflicts: map[string]bool{}}
+	type metaFile struct {
+		path string
+		meta map[string]any
+	}
+	rootFiles, versionFiles := []metaFile{}, []metaFile{}
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Name() != metaName {
+		if err != nil || d.IsDir() || (d.Name() != metaName && d.Name() != stateName) {
 			return nil
 		}
 		b, e := os.ReadFile(path)
@@ -64,14 +74,38 @@ func NewStore(root string) (*Store, error) {
 		if gid <= 0 || token == "" {
 			return nil
 		}
-		flat := filepath.Dir(path) == filepath.Join(root, strconv.Itoa(gid)) && meta["layout"] == "flat"
-		rec := &rootRecord{key: key(gid, token), dir: filepath.Dir(path), legacy: !flat, meta: meta}
+		rel, _ := filepath.Rel(root, path)
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) == 2 {
+			declaredRootGID, declaredRootToken := toInt(meta["root_gid"]), toString(meta["root_token"])
+			if declaredRootGID > 0 && (declaredRootGID != gid || declaredRootToken != token) {
+				versionFiles = append(versionFiles, metaFile{path: path, meta: meta})
+			} else {
+				rootFiles = append(rootFiles, metaFile{path: path, meta: meta})
+			}
+			return nil
+		}
+		if len(parts) != 3 {
+			return nil
+		}
+		rootFiles = append(rootFiles, metaFile{path: path, meta: meta})
+		return nil
+	})
+	for _, file := range rootFiles {
+		meta := file.meta
+		gid, token := toInt(meta["gid"]), toString(meta["token"])
+		if toInt(meta["root_gid"]) == 0 {
+			meta["root_gid"], meta["root_token"] = gid, token
+		}
+		layout := toString(meta["layout"])
+		legacy := layout != "flat" && layout != versionDirLayout
+		rec := &rootRecord{key: key(gid, token), dir: filepath.Dir(file.path), stateFileName: filepath.Base(file.path), legacy: legacy, meta: meta}
 		if toInt(meta["active_gid"]) <= 0 || toString(meta["active_token"]) == "" {
 			meta["active_gid"], meta["active_token"] = gid, token
 		}
 		if _, exists := s.roots[rec.key]; exists {
 			s.conflicts[rec.key] = true
-			return nil
+			continue
 		}
 		s.roots[rec.key] = rec
 		s.registerIdentityLocked(rec, gid, token)
@@ -81,17 +115,96 @@ func NewStore(root string) (*Store, error) {
 				s.registerIdentityLocked(rec, vgid, vtoken)
 			}
 		}
-		return nil
-	})
+	}
+	for _, file := range versionFiles {
+		meta := file.meta
+		gid, token := toInt(meta["gid"]), toString(meta["token"])
+		rootGID, rootToken := toInt(meta["root_gid"]), toString(meta["root_token"])
+		rec := s.roots[key(rootGID, rootToken)]
+		if rec == nil || gid <= 0 || token == "" {
+			continue
+		}
+		id := key(gid, token)
+		state := versionRecords(rec.meta)[id]
+		if state == nil || toString(state["storage_dir"]) != strconv.Itoa(gid) {
+			s.conflicts[id] = true
+			delete(s.identityRoot, id)
+			continue
+		}
+		state["state_file"] = filepath.Base(file.path)
+		state["gallery_file"] = inferGalleryFile(filepath.Dir(file.path), filepath.Base(file.path))
+	}
+	for _, rec := range s.roots {
+		if rec.stateFileName == "" {
+			rec.stateFileName = metaName
+		}
+		rootID := key(toInt(rec.meta["gid"]), toString(rec.meta["token"]))
+		rootState := versionRecords(rec.meta)[rootID]
+		if rootState != nil {
+			if toString(rootState["state_file"]) == "" {
+				rootState["state_file"] = rec.stateFileName
+			}
+			if toString(rootState["gallery_file"]) == "" {
+				rootState["gallery_file"] = inferGalleryFile(rec.dir, rec.stateFileName)
+			}
+		}
+		for _, state := range versionRecords(rec.meta) {
+			if toString(state["state_file"]) != "" {
+				continue
+			}
+			gid := toInt(state["gid"])
+			token := toString(state["token"])
+			dir, ok := s.versionDirLocked(rec, gid, token)
+			if !ok {
+				continue
+			}
+			stateFile := stateName
+			if dir == rec.dir {
+				stateFile = rec.stateFileName
+			} else if _, err := os.Stat(filepath.Join(dir, metaName)); err == nil {
+				stateFile = metaName
+			} else if _, err := os.Stat(filepath.Join(dir, stateName)); err == nil {
+				stateFile = stateName
+			}
+			state["state_file"] = stateFile
+			state["gallery_file"] = inferGalleryFile(dir, stateFile)
+		}
+	}
 	// Finish or roll back a partially published active snapshot before exposing
 	// the store to readers.
 	for _, rec := range s.roots {
 		_ = s.recoverActivationLocked(rec)
+		_ = s.cleanupPreviousZipLocked(rec)
+		for id, state := range versionRecords(rec.meta) {
+			gid, token, ok := parseKey(id)
+			if ok && (gid != toInt(rec.meta["gid"]) || token != toString(rec.meta["token"])) && toString(state["storage_dir"]) == strconv.Itoa(gid) {
+				_ = s.persistVersionLocked(rec, gid, token)
+			}
+		}
 	}
 	return s, nil
 }
 
 func key(gid int, token string) string { return strconv.Itoa(gid) + ":" + token }
+
+func inferGalleryFile(dir, stateFile string) string {
+	preferred := galleryName
+	if stateFile == metaName {
+		preferred = metadataName
+	}
+	if _, err := os.Stat(filepath.Join(dir, preferred)); err == nil {
+		return preferred
+	}
+	other := metadataName
+	if preferred == metadataName {
+		other = galleryName
+	}
+	if _, err := os.Stat(filepath.Join(dir, other)); err == nil {
+		return other
+	}
+	return preferred
+}
+
 func parseKey(k string) (int, string, bool) {
 	parts := strings.SplitN(k, ":", 2)
 	if len(parts) != 2 || parts[1] == "" {
@@ -139,10 +252,20 @@ func (s *Store) flatOwnedLocked(rec *rootRecord) bool {
 	if rec == nil {
 		return false
 	}
-	metaPath := filepath.Join(rec.dir, metaName)
-	b, err := os.ReadFile(metaPath)
+	stateFile := rec.stateFileName
+	if stateFile == "" {
+		stateFile = metaName
+	}
+	b, err := os.ReadFile(filepath.Join(rec.dir, stateFile))
 	if os.IsNotExist(err) {
-		return true
+		otherFile := metaName
+		if stateFile == metaName {
+			otherFile = stateName
+		}
+		b, err = os.ReadFile(filepath.Join(rec.dir, otherFile))
+		if os.IsNotExist(err) {
+			return true
+		}
 	}
 	if err != nil {
 		return false
@@ -155,9 +278,9 @@ func (s *Store) flatOwnedLocked(rec *rootRecord) bool {
 		return false
 	}
 	if rec.legacy {
-		return disk["layout"] != "flat"
+		return toString(disk["layout"]) != "flat" && toString(disk["layout"]) != versionDirLayout
 	}
-	return disk["layout"] == "flat"
+	return toString(disk["layout"]) == toString(rec.meta["layout"])
 }
 
 func (s *Store) rootIdentity(rec *rootRecord) (int, string) {
@@ -206,36 +329,147 @@ func (s *Store) dir(gid int, token string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if rec := s.rootLocked(gid, token); rec != nil {
-		return rec.dir
+		if dir, ok := s.versionDirLocked(rec, gid, token); ok {
+			return dir
+		}
 	}
 	return filepath.Join(s.Root, strconv.Itoa(gid), token)
 }
 
-func (s *Store) archivePathLocked(rec *rootRecord, gid int) string {
-	if rec.legacy && gid == toInt(rec.meta["gid"]) {
-		return filepath.Join(rec.dir, zipName)
+func (s *Store) versionDirLocked(rec *rootRecord, gid int, token string) (string, bool) {
+	if rec == nil || !s.flatOwnedLocked(rec) {
+		return "", false
 	}
-	return filepath.Join(rec.dir, strconv.Itoa(gid)+".zip")
+	rootGID, rootToken := s.rootIdentity(rec)
+	if gid == rootGID && token == rootToken {
+		return rec.dir, true
+	}
+	state := s.versionStateLocked(rec, gid, token)
+	if state == nil {
+		return "", false
+	}
+	storageDir := toString(state["storage_dir"])
+	if storageDir == "" {
+		if toString(rec.meta["layout"]) == "flat" {
+			return rec.dir, true
+		}
+		return "", false
+	}
+	if storageDir == "." {
+		return rec.dir, true
+	}
+	if storageDir != strconv.Itoa(gid) {
+		return "", false
+	}
+	return filepath.Join(s.Root, storageDir), true
+}
+
+func (s *Store) versionDirOwnedLocked(rec *rootRecord, gid int, token string) bool {
+	dir, ok := s.versionDirLocked(rec, gid, token)
+	if !ok {
+		return false
+	}
+	if dir == rec.dir {
+		return true
+	}
+	stateFile := s.stateFileNameLocked(rec, gid, token)
+	b, err := os.ReadFile(filepath.Join(dir, stateFile))
+	if os.IsNotExist(err) {
+		entries, readErr := os.ReadDir(dir)
+		if os.IsNotExist(readErr) {
+			return true
+		}
+		if readErr != nil {
+			return false
+		}
+		for _, entry := range entries {
+			if entry.Name() != stateFile+".tmp" && entry.Name() != metaName+".tmp" && entry.Name() != stateName+".tmp" {
+				return false
+			}
+		}
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	var meta map[string]any
+	if json.Unmarshal(b, &meta) != nil {
+		return false
+	}
+	rootGID, rootToken := s.rootIdentity(rec)
+	return toInt(meta["gid"]) == gid && toString(meta["token"]) == token && toInt(meta["root_gid"]) == rootGID && toString(meta["root_token"]) == rootToken
+}
+
+func (s *Store) archivePathLocked(rec *rootRecord, gid int, token string) string {
+	dir, ok := s.versionDirLocked(rec, gid, token)
+	if !ok || !s.versionDirOwnedLocked(rec, gid, token) {
+		return ""
+	}
+	if dir == rec.dir && toString(rec.meta["layout"]) == "flat" {
+		return filepath.Join(dir, strconv.Itoa(gid)+".zip")
+	}
+	if dir == rec.dir && rec.legacy && gid == toInt(rec.meta["gid"]) && token == toString(rec.meta["token"]) {
+		return filepath.Join(dir, zipName)
+	}
+	return filepath.Join(dir, zipName)
+}
+
+func (s *Store) stateFileNameLocked(rec *rootRecord, gid int, token string) string {
+	if rec == nil {
+		return stateName
+	}
+	if gid == toInt(rec.meta["gid"]) && token == toString(rec.meta["token"]) {
+		if rec.stateFileName != "" {
+			return rec.stateFileName
+		}
+		return stateName
+	}
+	state := s.versionStateLocked(rec, gid, token)
+	if name := toString(state["state_file"]); name == metaName || name == stateName {
+		return name
+	}
+	dir, ok := s.versionDirLocked(rec, gid, token)
+	if ok {
+		if _, err := os.Stat(filepath.Join(dir, metaName)); err == nil {
+			return metaName
+		}
+	}
+	return stateName
+}
+
+func (s *Store) galleryFileNameLocked(rec *rootRecord, gid int, token string) string {
+	if rec == nil {
+		return galleryName
+	}
+	state := s.versionStateLocked(rec, gid, token)
+	if name := toString(state["gallery_file"]); name == metadataName || name == galleryName {
+		return name
+	}
+	dir, ok := s.versionDirLocked(rec, gid, token)
+	if !ok {
+		return galleryName
+	}
+	return inferGalleryFile(dir, s.stateFileNameLocked(rec, gid, token))
 }
 
 func (s *Store) archivePath(gid int, token string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rec := s.rootLocked(gid, token)
-	if rec == nil {
-		return ""
-	}
-	return s.archivePathLocked(rec, gid)
+	return s.archivePathLocked(rec, gid, token)
 }
 
 func (s *Store) ArchivePublishPath(gid int, token string) (string, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rec := s.rootLocked(gid, token)
-	if rec == nil || s.versionStateLocked(rec, gid, token) == nil || !s.flatOwnedLocked(rec) {
+	if rec == nil || s.versionStateLocked(rec, gid, token) == nil {
 		return "", "", errors.New("archive identity or ownership conflict")
 	}
-	target := s.archivePathLocked(rec, gid)
+	target := s.archivePathLocked(rec, gid, token)
+	if target == "" {
+		return "", "", errors.New("archive identity or ownership conflict")
+	}
 	return target, target + ".publish.tmp", nil
 }
 
@@ -243,11 +477,11 @@ func (s *Store) PublishArchive(gid int, token, publishPath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec := s.rootLocked(gid, token)
-	if rec == nil || s.versionStateLocked(rec, gid, token) == nil || !s.flatOwnedLocked(rec) {
+	if rec == nil || s.versionStateLocked(rec, gid, token) == nil {
 		return errors.New("archive identity or ownership conflict")
 	}
-	target := s.archivePathLocked(rec, gid)
-	if filepath.Clean(publishPath) != filepath.Clean(target+".publish.tmp") {
+	target := s.archivePathLocked(rec, gid, token)
+	if target == "" || filepath.Clean(publishPath) != filepath.Clean(target+".publish.tmp") || !s.versionDirOwnedLocked(rec, gid, token) {
 		return errors.New("archive publish path does not belong to this identity")
 	}
 	return os.Rename(publishPath, target)
@@ -262,10 +496,11 @@ func (s *Store) metadataPathLocked(rec *rootRecord, gid int, token string) (stri
 	}
 	activeGID, activeToken := s.activeIdentity(rec)
 	if gid == activeGID && token == activeToken {
-		if !s.flatOwnedLocked(rec) {
+		if !s.versionDirOwnedLocked(rec, gid, token) {
 			return "", false
 		}
-		return filepath.Join(rec.dir, metadataName), true
+		dir, _ := s.versionDirLocked(rec, gid, token)
+		return filepath.Join(dir, s.galleryFileNameLocked(rec, gid, token)), true
 	}
 	return "", false
 }
@@ -280,18 +515,54 @@ func (s *Store) persistLocked(rec *rootRecord) error {
 	if err := os.MkdirAll(rec.dir, 0o755); err != nil {
 		return err
 	}
+	if rec.stateFileName == "" {
+		rec.stateFileName = stateName
+	}
 	b, err := json.MarshalIndent(rec.meta, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(rec.dir, metaName+".tmp")
+	tmp := filepath.Join(rec.dir, rec.stateFileName+".tmp")
 	if err = os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	if err = os.Rename(tmp, filepath.Join(rec.dir, metaName)); err != nil {
+	if err = os.Rename(tmp, filepath.Join(rec.dir, rec.stateFileName)); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) persistVersionLocked(rec *rootRecord, gid int, token string) error {
+	rootGID, rootToken := s.rootIdentity(rec)
+	if gid == rootGID && token == rootToken {
+		return nil
+	}
+	dir, ok := s.versionDirLocked(rec, gid, token)
+	if !ok || dir == rec.dir {
+		return nil
+	}
+	if !s.versionDirOwnedLocked(rec, gid, token) {
+		return errors.New("archive version directory ownership conflict")
+	}
+	state := versionRecords(rec.meta)[key(gid, token)]
+	if state == nil {
+		return errors.New("archive version state not found")
+	}
+	if toString(state["state_file"]) == "" {
+		state["state_file"] = s.stateFileNameLocked(rec, gid, token)
+	}
+	if toString(state["gallery_file"]) == "" {
+		state["gallery_file"] = s.galleryFileNameLocked(rec, gid, token)
+	}
+	meta := cloneMap(state)
+	meta["gid"], meta["token"] = gid, token
+	meta["root_gid"], meta["root_token"] = rootGID, rootToken
+	meta["layout"] = "version"
+	b, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.writeAtomic(filepath.Join(dir, toString(state["state_file"])), b)
 }
 
 func (s *Store) Get(gid int, token string) map[string]any {
@@ -306,10 +577,11 @@ func (s *Store) Get(gid int, token string) map[string]any {
 	var out map[string]any
 	if gid == rootGID && token == rootToken || gid == activeGID && token == activeToken {
 		out = cloneMap(rec.meta)
-	} else if rec.legacy {
-		out = cloneMap(rec.meta)
 	} else {
 		out = cloneMap(versionRecords(rec.meta)[key(gid, token)])
+		if out == nil && rec.legacy && gid == rootGID && token == rootToken {
+			out = cloneMap(rec.meta)
+		}
 	}
 	if out == nil {
 		return nil
@@ -325,7 +597,11 @@ func (s *Store) Get(gid int, token string) map[string]any {
 	if gid == rootGID && token == rootToken {
 		pathGID = activeGID
 	}
-	if st, e := os.Stat(s.archivePathLocked(rec, pathGID)); e == nil {
+	pathToken := token
+	if gid == rootGID && token == rootToken {
+		pathToken = activeToken
+	}
+	if st, e := os.Stat(s.archivePathLocked(rec, pathGID, pathToken)); e == nil {
 		out["archive_size"] = st.Size()
 	} else {
 		out["archive_size"] = int64(0)
@@ -367,25 +643,19 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 	}
 	if rec == nil {
 		rootDir := filepath.Join(s.Root, strconv.Itoa(gid))
-		if b, err := os.ReadFile(filepath.Join(rootDir, metaName)); err == nil {
-			var disk map[string]any
-			if json.Unmarshal(b, &disk) != nil || toInt(disk["gid"]) != gid || toString(disk["token"]) != token || disk["layout"] != "flat" {
-				return nil, errors.New("archive root ownership conflict")
-			}
+		if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
+			return nil, errors.New("archive root directory already exists without matching shelf ownership")
+		} else if err != nil && !os.IsNotExist(err) {
+			return nil, err
 		}
 		for _, existing := range s.roots {
 			if toInt(existing.meta["gid"]) == gid && toString(existing.meta["token"]) != token {
 				return nil, errors.New("archive gid already belongs to another token")
 			}
 		}
-		if _, err := os.Stat(filepath.Join(rootDir, strconv.Itoa(gid)+".zip")); err == nil {
-			return nil, errors.New("archive file already exists without matching shelf ownership")
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
 		now := float64(time.Now().Unix())
-		meta := map[string]any{"gid": gid, "token": token, "root_gid": gid, "root_token": token, "active_gid": gid, "active_token": token, "layout": "flat", "created_at": now, "versions": map[string]any{}}
-		rec = &rootRecord{key: id, dir: rootDir, meta: meta}
+		meta := map[string]any{"gid": gid, "token": token, "root_gid": gid, "root_token": token, "active_gid": gid, "active_token": token, "layout": versionDirLayout, "created_at": now, versionsName: map[string]any{}}
+		rec = &rootRecord{key: id, dir: rootDir, stateFileName: stateName, meta: meta}
 		s.roots[id] = rec
 		s.registerIdentityLocked(rec, gid, token)
 	}
@@ -397,14 +667,14 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 		if prior := s.rootLocked(gid, token); prior != nil && prior.key != rec.key {
 			return nil, errors.New("target gallery already belongs to another shelf")
 		}
-		for identity, owner := range s.identityRoot {
+		for identity := range s.identityRoot {
 			priorGID, priorToken, ok := parseKey(identity)
-			if ok && priorGID == gid && priorToken != token && owner != rec.key {
+			if ok && priorGID == gid && priorToken != token {
 				return nil, errors.New("target gallery gid already belongs to another token")
 			}
 		}
-		if _, err := os.Stat(s.archivePathLocked(rec, gid)); err == nil {
-			return nil, errors.New("target archive file already exists without matching shelf ownership")
+		if _, err := os.Stat(filepath.Join(s.Root, strconv.Itoa(gid))); err == nil {
+			return nil, errors.New("target gallery directory already exists without matching shelf ownership")
 		} else if !os.IsNotExist(err) {
 			return nil, err
 		}
@@ -421,6 +691,15 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 	state := cloneMap(versions[id])
 	if state == nil {
 		state = map[string]any{"gid": gid, "token": token, "created_at": now}
+		if id == rec.key {
+			state["storage_dir"] = "."
+			state["state_file"] = rec.stateFileName
+			state["gallery_file"] = inferGalleryFile(rec.dir, rec.stateFileName)
+		} else {
+			state["storage_dir"] = strconv.Itoa(gid)
+			state["state_file"] = stateName
+			state["gallery_file"] = galleryName
+		}
 	}
 	for k, v := range patch {
 		state[k] = v
@@ -450,6 +729,9 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 	}
 	rec.meta = base
 	if err := s.persistLocked(rec); err != nil {
+		return nil, err
+	}
+	if err := s.persistVersionLocked(rec, gid, token); err != nil {
 		return nil, err
 	}
 	return cloneMap(state), nil
@@ -504,20 +786,16 @@ func (s *Store) CanStart(gid int, token string) error {
 	if rec := s.rootLocked(gid, token); rec != nil {
 		return nil
 	}
-	for _, rec := range s.roots {
-		if toInt(rec.meta["gid"]) == gid && toString(rec.meta["token"]) != token {
+	for identity := range s.identityRoot {
+		priorGID, priorToken, ok := parseKey(identity)
+		if ok && priorGID == gid && priorToken != token {
 			return errors.New("archive gid already belongs to another token")
 		}
 	}
 	rootDir := filepath.Join(s.Root, strconv.Itoa(gid))
-	if _, err := os.Stat(filepath.Join(rootDir, metaName)); err == nil {
-		return errors.New("archive root metadata exists with unknown ownership")
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(rootDir, strconv.Itoa(gid)+".zip")); err == nil {
-		return errors.New("archive file already exists without matching shelf ownership")
-	} else if !os.IsNotExist(err) {
+	if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
+		return errors.New("archive root directory already exists without matching shelf ownership")
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -564,7 +842,7 @@ func (s *Store) ListReady(page, perPage int) []eh.ArchiveInfo {
 		activeGID, activeToken := s.activeIdentity(rec)
 		item := eh.ArchiveInfo{GID: rootGID, Token: rootToken, ActiveGID: activeGID, ActiveToken: activeToken, Title: toString(m["title"]), PageCount: toInt(m["page_count"]), CreatedAt: toInt64(m["created_at"]), Quality: toString(m["quality"]), Status: "ready", MetadataAt: toInt64(m["metadata_at"])}
 		if item.PageCount == 0 {
-			item.PageCount = s.pageCountLocked(rec, activeGID)
+			item.PageCount = s.pageCountLocked(rec, activeGID, activeToken)
 		}
 		all = append(all, item)
 	}
@@ -581,8 +859,8 @@ func (s *Store) ListReady(page, perPage int) []eh.ArchiveInfo {
 	return all[start:end]
 }
 
-func (s *Store) pageCountLocked(rec *rootRecord, gid int) int {
-	r, err := zip.OpenReader(s.archivePathLocked(rec, gid))
+func (s *Store) pageCountLocked(rec *rootRecord, gid int, token string) int {
+	r, err := zip.OpenReader(s.archivePathLocked(rec, gid, token))
 	if err != nil {
 		return 0
 	}
@@ -597,7 +875,7 @@ func (s *Store) PageCount(gid int, token string) int {
 	if rec == nil {
 		return 0
 	}
-	return s.pageCountLocked(rec, gid)
+	return s.pageCountLocked(rec, gid, token)
 }
 
 func (s *Store) GetPage(gid int, token string, page int) ([]byte, bool, error) {
@@ -610,7 +888,7 @@ func (s *Store) GetPage(gid int, token string, page int) ([]byte, bool, error) {
 		s.mu.RUnlock()
 		return nil, false, nil
 	}
-	p := s.archivePathLocked(rec, gid)
+	p := s.archivePathLocked(rec, gid, token)
 	s.mu.RUnlock()
 	r, err := zip.OpenReader(p)
 	if err != nil {
@@ -633,11 +911,11 @@ func (s *Store) versionStateLocked(rec *rootRecord, gid int, token string) map[s
 	if rec == nil {
 		return nil
 	}
-	if gid == toInt(rec.meta["gid"]) && token == toString(rec.meta["token"]) {
-		return rec.meta
-	}
 	versions, _ := rec.meta[versionsName].(map[string]any)
 	state, _ := versions[key(gid, token)].(map[string]any)
+	if state == nil && gid == toInt(rec.meta["gid"]) && token == toString(rec.meta["token"]) {
+		return rec.meta
+	}
 	return state
 }
 
@@ -818,17 +1096,16 @@ func (s *Store) CanAddVersion(rootGID int, rootToken string, targetGID int, targ
 			return errors.New("target gallery gid already belongs to another token")
 		}
 	}
-	if _, err := os.Stat(s.archivePathLocked(rec, targetGID)); err == nil {
-		return errors.New("target archive file already exists without matching shelf ownership")
+	if _, err := os.Stat(filepath.Join(s.Root, strconv.Itoa(targetGID))); err == nil {
+		return errors.New("target gallery directory already exists without matching shelf ownership")
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-// ActivateVersion atomically publishes an already validated target ZIP and
-// its matching snapshot as the shelf's new active version. Recovery uses the
-// journal and staged sidecars to finish or roll back after process failure.
+// ActivateVersion publishes sidecars into the target's own physical directory,
+// durably flips the stable root pointer, then removes only the previous ZIP.
 func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, targetToken string, snapshot map[string]any, cover []byte, hasCover bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -836,14 +1113,19 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 	if rec == nil || rec.key != key(rootGID, rootToken) || !s.flatOwnedLocked(rec) {
 		return errors.New("archive root identity or ownership conflict")
 	}
+	if cleanup, _ := rec.meta["cleanup_previous_zip"].(map[string]any); cleanup != nil {
+		if err := s.cleanupPreviousZipLocked(rec); err != nil {
+			return errors.New("previous ZIP cleanup is incomplete; refusing another activation")
+		}
+	}
 	if s.identityRoot[key(targetGID, targetToken)] != rec.key {
 		return errors.New("target gallery is not owned by this shelf")
 	}
-	version := versionRecords(rec.meta)[key(targetGID, targetToken)]
-	if version == nil || version["status"] != "ready" {
-		return errors.New("target archive is not ready")
+	version := s.versionStateLocked(rec, targetGID, targetToken)
+	if version == nil || version["status"] != "ready" || !s.versionDirOwnedLocked(rec, targetGID, targetToken) {
+		return errors.New("target archive is not ready or its directory is not owned")
 	}
-	archivePath := s.archivePathLocked(rec, targetGID)
+	archivePath := s.archivePathLocked(rec, targetGID, targetToken)
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return errors.New("target archive failed validation")
@@ -853,6 +1135,7 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 		return errors.New("target archive has no pages")
 	}
 	_ = zr.Close()
+	dir, _ := s.versionDirLocked(rec, targetGID, targetToken)
 	snapshot = cloneMap(snapshot)
 	snapshot["gid"], snapshot["token"] = targetGID, targetToken
 	if snapshot["saved_at"] == nil {
@@ -862,18 +1145,17 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 	if err != nil {
 		return err
 	}
-	metaPath := filepath.Join(rec.dir, metadataName)
-	coverPath := filepath.Join(rec.dir, coverName)
+	metaPath := filepath.Join(dir, s.galleryFileNameLocked(rec, targetGID, targetToken))
+	coverPath := filepath.Join(dir, coverName)
 	if err = s.writeAtomic(metaPath+".next", metaBytes); err != nil {
 		return err
 	}
-	coverMarker := filepath.Join(rec.dir, ".cover.none")
+	coverMarker := filepath.Join(dir, ".cover.none")
 	_ = os.Remove(coverMarker)
 	if hasCover {
 		if err = s.writeAtomic(coverPath+".next", cover); err != nil {
 			return err
 		}
-		_ = os.Remove(coverMarker)
 	} else {
 		_ = os.Remove(coverPath + ".next")
 		if err = s.writeAtomic(coverMarker, []byte("none")); err != nil {
@@ -890,41 +1172,52 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 		_ = os.Remove(coverMarker)
 		return err
 	}
-	recoverAfterError := func(cause error) error {
+	if err = s.completeActivationLocked(rec, targetGID, targetToken); err != nil {
 		if recoveryErr := s.recoverActivationLocked(rec); recoveryErr != nil {
-			return errors.Join(cause, recoveryErr)
+			return errors.Join(err, recoveryErr)
 		}
-		if activeGID, activeToken := s.activeIdentity(rec); activeGID == targetGID && activeToken == targetToken {
+		activeGID, activeToken := s.activeIdentity(rec)
+		if activeGID == targetGID && activeToken == targetToken {
 			return nil
 		}
-		return cause
+		return err
 	}
-	if _, err = os.Stat(metaPath); err == nil {
-		_ = os.Remove(metaPath + ".previous")
-		if err = os.Rename(metaPath, metaPath+".previous"); err != nil {
-			return recoverAfterError(err)
-		}
-	}
-	if _, err = os.Stat(coverPath); err == nil {
-		_ = os.Remove(coverPath + ".previous")
-		if err = os.Rename(coverPath, coverPath+".previous"); err != nil {
-			return recoverAfterError(err)
-		}
-	}
-	if err = os.Rename(metaPath+".next", metaPath); err != nil {
-		return recoverAfterError(err)
-	}
-	if hasCover {
-		if err = os.Rename(coverPath+".next", coverPath); err != nil {
-			return recoverAfterError(err)
-		}
-	} else {
-		_ = os.Remove(coverPath)
-	}
-	if err = s.finishActivationLocked(rec, targetGID, targetToken); err != nil {
-		return recoverAfterError(err)
-	}
+	_ = s.cleanupPreviousZipLocked(rec)
 	return nil
+}
+
+func (s *Store) completeActivationLocked(rec *rootRecord, targetGID int, targetToken string) error {
+	dir, ok := s.versionDirLocked(rec, targetGID, targetToken)
+	if !ok || !s.versionDirOwnedLocked(rec, targetGID, targetToken) {
+		return errors.New("target archive directory ownership conflict")
+	}
+	metaPath, coverPath := filepath.Join(dir, s.galleryFileNameLocked(rec, targetGID, targetToken)), filepath.Join(dir, coverName)
+	nextMeta, nextCover := metaPath+".next", coverPath+".next"
+	marker := filepath.Join(dir, ".cover.none")
+	metaAvailable := false
+	if b, err := os.ReadFile(metaPath); err == nil {
+		var m map[string]any
+		metaAvailable = json.Unmarshal(b, &m) == nil && toInt(m["gid"]) == targetGID && toString(m["token"]) == targetToken
+	}
+	if !metaAvailable {
+		if _, err := os.Stat(nextMeta); err != nil {
+			return errors.New("target metadata snapshot was not staged")
+		}
+		if err := os.Rename(nextMeta, metaPath); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		_ = os.Remove(coverPath)
+		_ = os.Remove(nextCover)
+	} else if _, err := os.Stat(nextCover); err == nil {
+		if err := os.Rename(nextCover, coverPath); err != nil {
+			return err
+		}
+	} else if _, err := os.Stat(coverPath); os.IsNotExist(err) {
+		return errors.New("target cover publication was not staged")
+	}
+	return s.finishActivationLocked(rec, targetGID, targetToken)
 }
 
 func (s *Store) finishActivationLocked(rec *rootRecord, targetGID int, targetToken string) error {
@@ -934,6 +1227,7 @@ func (s *Store) finishActivationLocked(rec *rootRecord, targetGID int, targetTok
 	if version == nil {
 		return errors.New("target version disappeared")
 	}
+	oldGID, oldToken := s.activeIdentity(rec)
 	for _, field := range []string{"title", "quality", "or", "gp_price", "download_url", "page_count", "bytes", "total_bytes", "metadata_at", "status", "error"} {
 		if value, ok := version[field]; ok {
 			rec.meta[field] = value
@@ -941,15 +1235,51 @@ func (s *Store) finishActivationLocked(rec *rootRecord, targetGID int, targetTok
 	}
 	rec.meta["active_gid"], rec.meta["active_token"] = targetGID, targetToken
 	rec.meta["activation_pending"] = nil
+	if oldGID != targetGID || oldToken != targetToken {
+		rec.meta["cleanup_previous_zip"] = map[string]any{"gid": oldGID, "token": oldToken, "target_gid": targetGID, "target_token": targetToken}
+	}
 	if err := s.persistLocked(rec); err != nil {
 		rec.meta = oldMeta
 		return err
 	}
-	_ = os.Remove(filepath.Join(rec.dir, metadataName+".previous"))
-	_ = os.Remove(filepath.Join(rec.dir, coverName+".previous"))
-	_ = os.Remove(filepath.Join(rec.dir, metadataName+".next"))
-	_ = os.Remove(filepath.Join(rec.dir, coverName+".next"))
-	_ = os.Remove(filepath.Join(rec.dir, ".cover.none"))
+	return nil
+}
+
+func (s *Store) cleanupPreviousZipLocked(rec *rootRecord) error {
+	cleanup, _ := rec.meta["cleanup_previous_zip"].(map[string]any)
+	if cleanup == nil {
+		return nil
+	}
+	activeGID, activeToken := s.activeIdentity(rec)
+	if activeGID != toInt(cleanup["target_gid"]) || activeToken != toString(cleanup["target_token"]) {
+		return errors.New("previous ZIP cleanup target is no longer active")
+	}
+	targetPath := s.archivePathLocked(rec, activeGID, activeToken)
+	zr, err := zip.OpenReader(targetPath)
+	if err != nil {
+		return errors.New("active target ZIP is missing; preserving previous ZIP")
+	}
+	if len(zr.File) == 0 {
+		_ = zr.Close()
+		return errors.New("active target ZIP is empty; preserving previous ZIP")
+	}
+	_ = zr.Close()
+	oldGID, oldToken := toInt(cleanup["gid"]), toString(cleanup["token"])
+	if oldGID != activeGID || oldToken != activeToken {
+		oldPath := s.archivePathLocked(rec, oldGID, oldToken)
+		if oldPath == "" || filepath.Clean(oldPath) == filepath.Clean(targetPath) {
+			return errors.New("previous ZIP ownership conflict")
+		}
+		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	oldMeta := cloneMap(rec.meta)
+	delete(rec.meta, "cleanup_previous_zip")
+	if err := s.persistLocked(rec); err != nil {
+		rec.meta = oldMeta
+		return err
+	}
 	return nil
 }
 
@@ -959,87 +1289,28 @@ func (s *Store) recoverActivationLocked(rec *rootRecord) error {
 		return nil
 	}
 	targetGID, targetToken := toInt(pending["target_gid"]), toString(pending["target_token"])
-	metaPath := filepath.Join(rec.dir, metadataName)
-	coverPath := filepath.Join(rec.dir, coverName)
-	nextMeta, nextCover := metaPath+".next", coverPath+".next"
-	marker := filepath.Join(rec.dir, ".cover.none")
-	zipPath := s.archivePathLocked(rec, targetGID)
+	zipPath := s.archivePathLocked(rec, targetGID, targetToken)
 	validZip := false
 	if zr, err := zip.OpenReader(zipPath); err == nil {
 		validZip = len(zr.File) > 0
 		_ = zr.Close()
 	}
-	metaAvailable := false
-	if b, err := os.ReadFile(metaPath); err == nil {
-		var m map[string]any
-		if json.Unmarshal(b, &m) == nil && toInt(m["gid"]) == targetGID && toString(m["token"]) == targetToken {
-			metaAvailable = true
+	if validZip {
+		if err := s.completeActivationLocked(rec, targetGID, targetToken); err == nil {
+			return nil
 		}
 	}
-	if !metaAvailable {
-		if _, err := os.Stat(nextMeta); err == nil && validZip {
-			if _, oldErr := os.Stat(metaPath); oldErr == nil {
-				_ = os.Remove(metaPath + ".previous")
-				_ = os.Rename(metaPath, metaPath+".previous")
-			}
-			if err := os.Rename(nextMeta, metaPath); err != nil {
-				return err
-			}
-			metaAvailable = true
-		}
+	// Incomplete target publication stays hidden; keep the old active pointer
+	// and remove only staged files owned by the target version.
+	dir, ok := s.versionDirLocked(rec, targetGID, targetToken)
+	if ok && s.versionDirOwnedLocked(rec, targetGID, targetToken) {
+		_ = os.Remove(filepath.Join(dir, s.galleryFileNameLocked(rec, targetGID, targetToken)+".next"))
+		_ = os.Remove(filepath.Join(dir, coverName+".next"))
+		_ = os.Remove(filepath.Join(dir, ".cover.none"))
 	}
-	coverAvailable := false
-	if _, err := os.Stat(marker); err == nil {
-		if _, coverErr := os.Stat(coverPath); coverErr == nil {
-			if _, backupErr := os.Stat(coverPath + ".previous"); os.IsNotExist(backupErr) {
-				_ = os.Rename(coverPath, coverPath+".previous")
-			}
-		}
-		_ = os.Remove(coverPath)
-		_ = os.Remove(nextCover)
-		coverAvailable = true
-	} else if _, err := os.Stat(nextCover); err == nil {
-		if _, oldErr := os.Stat(coverPath); oldErr == nil {
-			_ = os.Remove(coverPath + ".previous")
-			_ = os.Rename(coverPath, coverPath+".previous")
-		}
-		if err := os.Rename(nextCover, coverPath); err != nil {
-			return err
-		}
-		coverAvailable = true
-	} else if _, err := os.Stat(coverPath); err == nil {
-		coverAvailable = true
-	}
-	if validZip && metaAvailable && coverAvailable {
-		return s.finishActivationLocked(rec, targetGID, targetToken)
-	}
-	// Incomplete publication: restore the prior sidecars and keep the prior
-	// active pointer. The validated target ZIP remains available as history.
-	if _, err := os.Stat(metaPath + ".previous"); err == nil {
-		_ = os.Remove(metaPath)
-		if err := os.Rename(metaPath+".previous", metaPath); err != nil {
-			return err
-		}
-	} else if b, readErr := os.ReadFile(metaPath); readErr == nil {
-		var current map[string]any
-		if json.Unmarshal(b, &current) == nil && toInt(current["gid"]) == targetGID && toString(current["token"]) == targetToken {
-			_ = os.Remove(metaPath)
-		}
-	}
-	if _, err := os.Stat(coverPath + ".previous"); err == nil {
-		_ = os.Remove(coverPath)
-		if err := os.Rename(coverPath+".previous", coverPath); err != nil {
-			return err
-		}
-	} else {
-		_ = os.Remove(coverPath)
-	}
+	oldMeta := cloneMap(rec.meta)
 	rec.meta["active_gid"], rec.meta["active_token"] = pending["old_gid"], pending["old_token"]
 	rec.meta["activation_pending"] = nil
-	_ = os.Remove(nextMeta)
-	_ = os.Remove(nextCover)
-	_ = os.Remove(marker)
-	oldMeta := cloneMap(rec.meta)
 	if err := s.persistLocked(rec); err != nil {
 		rec.meta = oldMeta
 		return err
@@ -1054,8 +1325,25 @@ func (s *Store) Remove(gid int, token string) bool {
 		return false
 	}
 	rec := s.rootLocked(gid, token)
-	if rec == nil || rec.key != key(gid, token) {
+	if rec == nil || rec.key != key(gid, token) || !s.flatOwnedLocked(rec) {
 		return false
+	}
+	versionDirs := map[string]bool{}
+	for id, state := range versionRecords(rec.meta) {
+		versionGID, versionToken, ok := parseKey(id)
+		if !ok || (versionGID == gid && versionToken == token) || toString(state["storage_dir"]) == "" || toString(state["storage_dir"]) == "." {
+			continue
+		}
+		dir, ok := s.versionDirLocked(rec, versionGID, versionToken)
+		if !ok || !s.versionDirOwnedLocked(rec, versionGID, versionToken) {
+			return false
+		}
+		versionDirs[dir] = true
+	}
+	for dir := range versionDirs {
+		if os.RemoveAll(dir) != nil {
+			return false
+		}
 	}
 	if os.RemoveAll(rec.dir) != nil {
 		return false
@@ -1093,7 +1381,8 @@ func (s *Store) Stats() map[string]any {
 		}
 		for _, version := range versions {
 			gid := toInt(version["gid"])
-			if st, err := os.Stat(s.archivePathLocked(rec, gid)); err == nil {
+			token := toString(version["token"])
+			if st, err := os.Stat(s.archivePathLocked(rec, gid, token)); err == nil {
 				bytes += st.Size()
 			}
 		}
@@ -1115,7 +1404,7 @@ func (s *Store) Entries() []map[string]any {
 		m["gid"], m["token"] = rootGID, rootToken
 		m["root_gid"], m["root_token"] = rootGID, rootToken
 		m["active_gid"], m["active_token"] = activeGID, activeToken
-		if st, err := os.Stat(s.archivePathLocked(rec, activeGID)); err == nil {
+		if st, err := os.Stat(s.archivePathLocked(rec, activeGID, activeToken)); err == nil {
 			m["archive_size"] = st.Size()
 		} else {
 			m["archive_size"] = int64(0)

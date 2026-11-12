@@ -4,6 +4,7 @@ const state = reactive({
   mobile: false,
   theme: localStorage.theme || "system",
   busy: false,
+  authChecked: false,
   authRequired: false,
   loginError: "",
   authToken: localStorage.getItem("pandaopds_auth") || "",
@@ -54,6 +55,8 @@ async function api(path, opts = {}) {
   }
   if (r.status === 401) {
     state.authRequired = true;
+    state.authToken = "";
+    localStorage.removeItem("pandaopds_auth");
   }
   if (!r.ok)
     throw Object.assign(
@@ -70,7 +73,7 @@ async function run(fn) {
   try {
     await fn();
   } catch (e) {
-    state.error = e.message || String(e);
+    if (e.status !== 401) state.error = e.message || String(e);
   } finally {
     state.busy = false;
   }
@@ -94,7 +97,9 @@ async function loadStatus() {
   try {
     state.status = (await api("/api/status")).data;
   } catch (e) {
-    state.error = e.message;
+    if (e.status !== 401) state.error = e.message;
+  } finally {
+    state.authChecked = true;
   }
 }
 async function loadConfig() {
@@ -107,11 +112,12 @@ async function loadConfig() {
     for (const [k, v] of Object.entries(r.data.fields || {}))
       state.form[k] = v.saved ?? v.active ?? "";
   } catch (e) {
+    if (e.status === 401) return;
     try {
       state.config = { legacy: (await api("/api/config")).data };
       state.error = "编辑接口不可用，当前显示只读配置";
-    } catch {
-      state.error = e.message;
+    } catch (fallbackErr) {
+      if (fallbackErr.status !== 401) state.error = e.message;
     }
   }
 }
@@ -164,11 +170,12 @@ async function loadHome() {
     };
     state.homeDirty = false;
   } catch (e) {
+    if (e.status === 401) return;
     try {
       state.home = { legacy: (await api("/api/home")).data };
       state.error = "首页编辑接口不可用，当前显示只读布局";
-    } catch {
-      state.error = e.message;
+    } catch (fallbackErr) {
+      if (fallbackErr.status !== 401) state.error = e.message;
     }
   }
 }
@@ -281,7 +288,7 @@ async function loadArchives() {
     state.archives = d.entries || d.items || (Array.isArray(d) ? d : []);
     state.archiveStats = d.stats || {};
   } catch (e) {
-    state.error = e.message;
+    if (e.status !== 401) state.error = e.message;
   }
 }
 function parseInput() {
@@ -289,7 +296,7 @@ function parseInput() {
   let m =
     s.match(/\/(?:g|mpv)\/(\d+)\/([0-9a-fA-F]+)/) ||
     s.match(/(?:gid|g)=?(\d+)[^0-9a-fA-F]+(?:token|t)=?([0-9a-fA-F]+)/) ||
-    s.match(/^(\d+)[\s,;]+([0-9a-fA-F]{8,})$/);
+    s.match(/^(\d+)[\s,;\/]+([0-9a-fA-F]{6,})\/?$/);
   return m ? { gid: m[1], token: m[2] } : null;
 }
 async function getQuote(action = "start", target = null) {
@@ -302,7 +309,7 @@ async function getQuote(action = "start", target = null) {
   state.quoteTarget = target;
   if (!gallery) {
     state.error =
-      "无法解析 gid/token。请输入画廊 URL、archiver URL 或 gid token。";
+      "无法解析 gid/token。请输入画廊 URL、archiver URL 或 123456/abcdef。";
     return;
   }
   await run(async () => {
@@ -519,12 +526,23 @@ async function login(username, password) {
     });
     state.authToken = token;
     localStorage.setItem("pandaopds_auth", token);
+    state.authChecked = true;
     state.authRequired = false;
+    state.error = "";
     state.status = r.data;
     state.loginError = "";
+    if (state.page === "config") loadConfig();
+    if (state.page === "home") loadHome();
+    if (state.page === "archive") {
+      loadArchives();
+      loadCategories();
+    }
     return true;
   } catch (e) {
-    state.loginError = "用户名或密码错误，请重试";
+    state.loginError =
+      e.status === 401
+        ? "用户名或密码错误，请重试"
+        : e.message || "登录失败，请检查网络或服务配置";
     return false;
   } finally {
     state.busy = false;
@@ -535,6 +553,9 @@ function logout() {
   state.authToken = "";
   localStorage.removeItem("pandaopds_auth");
   state.status = null;
+  state.error = "";
+  state.notice = "";
+  state.loginError = "";
   state.authRequired = true;
 }
 
@@ -545,10 +566,10 @@ function init() {
   media.addEventListener?.("change", applyTheme);
   loadStatus();
   timer = setInterval(() => {
-    if (!state.authRequired && state.page === "dashboard") loadStatus();
+    if (state.authChecked && !state.authRequired && state.page === "dashboard") loadStatus();
   }, 15000);
   archiveTimer = setInterval(() => {
-    if (!state.authRequired && state.page === "archive") loadArchives();
+    if (state.authChecked && !state.authRequired && state.page === "archive") loadArchives();
   }, 10000);
 }
 function destroy() {

@@ -477,7 +477,11 @@ const filteredArchives = computed(() => {
 </script>
 <template>
   <div
-    v-if="s.authRequired.value"
+    v-if="!s.authChecked.value"
+    class="min-h-svh w-full bg-background"
+  />
+  <div
+    v-else-if="s.authRequired.value"
     class="flex min-h-svh w-full items-center justify-center p-6 md:p-10 bg-background"
   >
     <div class="w-full max-w-sm">
@@ -1283,6 +1287,12 @@ const filteredArchives = computed(() => {
               <h1>归档</h1>
               <p>归档操作可能消耗账户 GP；每次开始前会明确确认。</p>
             </div>
+            <Button
+              class="primary-action"
+              @click="openCreateArchiveDialog"
+            >
+              <Plus />新建归档
+            </Button>
           </div>
           <div class="archive-action-bar">
             <!-- 左侧分段器：全部 / 可更新 / 下载中 / 失败 -->
@@ -1436,19 +1446,10 @@ const filteredArchives = computed(() => {
               >
                 重置
               </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                class="h-8 gap-1.5 font-medium shadow-xs"
-                @click="openCreateArchiveDialog"
-              >
-                <Plus class="size-3.5" />新建归档
-              </Button>
             </div>
           </div>
           <div class="section-title">
-            <h2>归档图库</h2>
+            <h2>浏览</h2>
             <span>{{
               isFiltered
                 ? `显示 ${filteredArchives.length} / ${s.archives.value.length} 个项目`
@@ -1688,8 +1689,7 @@ const filteredArchives = computed(() => {
           <AlertDialogHeader>
             <AlertDialogTitle>新建画廊归档</AlertDialogTitle>
             <AlertDialogDescription>
-              输入画廊 URL、archiver URL 或 gid token。归档需要已配置 IPB
-              登录态和星会员资格。
+              请输入画廊 URL 或 GID/TOKEN。归档需要已配置 IPB 登录凭据。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div class="space-y-3 my-2 text-left">
@@ -1704,7 +1704,7 @@ const filteredArchives = computed(() => {
             <div class="flex gap-2">
               <Input
                 v-model="s.archiveInput.value"
-                placeholder="https://e-hentai.org/g/123456/abcdef/ 或 gid token"
+                placeholder="https://e-hentai.org/g/123456/abcdef/ 或 123456/abcdef"
                 @keydown.enter.prevent="s.getQuote('start')"
                 class="text-xs flex-1"
               />
@@ -1714,7 +1714,7 @@ const filteredArchives = computed(() => {
                 :disabled="!s.status.value?.site?.has_ipb || s.busy.value || !s.archiveInput.value.trim()"
                 @click="s.getQuote('start')"
               >
-                <Search class="size-3.5" />查询报价
+                <Search class="size-3.5" />查询
               </Button>
             </div>
             <div v-if="s.quote.value" class="rounded-md border border-border bg-muted/40 p-3 space-y-2">
@@ -1763,7 +1763,7 @@ const filteredArchives = computed(() => {
                 :disabled="!s.quote.value || !s.selectedQuality.value || s.busy.value"
                 @click="confirmAndStartArchive"
               >
-                确认开始归档
+                确认
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>

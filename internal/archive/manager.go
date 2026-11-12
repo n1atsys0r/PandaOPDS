@@ -905,14 +905,13 @@ func (m *Manager) finalize(ctx context.Context, gid int, token string) error {
 	if e != nil {
 		return fmt.Errorf("archive zip failed validation: %w", e)
 	}
-	target := m.Store.archivePath(gid, token)
-	if target == "" {
-		return errors.New("archive root ownership conflict")
+	target, publish, err := m.Store.ArchivePublishPath(gid, token)
+	if err != nil {
+		return err
 	}
 	if e = os.MkdirAll(filepath.Dir(target), 0o755); e != nil {
 		return e
 	}
-	publish := target + ".publish.tmp"
 	_ = os.Remove(publish)
 	defer os.Remove(publish)
 	validatedStat, e := os.Stat(validatedPath)
@@ -925,7 +924,7 @@ func (m *Manager) finalize(ctx context.Context, gid int, token string) error {
 	if e = ctx.Err(); e != nil {
 		return e
 	}
-	if e = os.Rename(publish, target); e != nil {
+	if e = m.Store.PublishArchive(gid, token, publish); e != nil {
 		return e
 	}
 	_, e = m.Store.Upsert(gid, token, map[string]any{"status": "ready", "page_count": count, "total_bytes": validatedStat.Size(), "error": nil, "upgrade_backup": map[string]any{}})
@@ -1048,7 +1047,7 @@ func (m *Manager) fail(gid int, token, message string) {
 	}
 	backup, _ := meta["upgrade_backup"].(map[string]any)
 	if len(backup) > 0 {
-		if _, e := os.Stat(filepath.Join(m.Store.dir(gid, token), zipName)); e == nil {
+		if _, e := os.Stat(m.Store.archivePath(gid, token)); e == nil {
 			patch := map[string]any{"status": "ready", "error": message, "upgrade_backup": map[string]any{}}
 			for _, k := range []string{"or", "quality", "gp_price", "download_url", "page_count", "bytes", "total_bytes"} {
 				if v, ok := backup[k]; ok {

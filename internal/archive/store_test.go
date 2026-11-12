@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"pandaopds/internal/eh"
@@ -72,9 +73,12 @@ func TestFlatShelfSwitchKeepsOriginalAndVersionStreams(t *testing.T) {
 	if len(listing) != 1 || listing[0].GID != 101 || listing[0].Token != "original" || listing[0].ActiveGID != 202 || listing[0].ActiveToken != "new-version" || listing[0].Title != "New title" || listing[0].PageCount != 1 {
 		t.Fatalf("unexpected active shelf listing: %#v", listing)
 	}
-	oldPage, ok, err := store.GetPage(101, "original", 0)
-	if err != nil || !ok || string(oldPage) != "old-page" {
-		t.Fatalf("original stream page=%q ok=%t err=%v", oldPage, ok, err)
+	oldArchive := filepath.Join(root, "101", zipName)
+	if _, err := os.Stat(oldArchive); !os.IsNotExist(err) {
+		t.Fatalf("previous ZIP should be removed after activation: %v", err)
+	}
+	if count := store.PageCount(101, "original"); count != 0 {
+		t.Fatalf("removed original stream still reports %d pages", count)
 	}
 	newPage, ok, err := store.GetPage(202, "new-version", 0)
 	if err != nil || !ok || string(newPage) != "new-page" {
@@ -89,22 +93,24 @@ func TestFlatShelfSwitchKeepsOriginalAndVersionStreams(t *testing.T) {
 	if cover, ok := store.Cover(202, "new-version"); !ok || string(cover) != "new-cover" {
 		t.Fatalf("active cover=%q found=%t", cover, ok)
 	}
+	targetDir := filepath.Join(root, "202")
 	for _, path := range []string{
-		filepath.Join(root, "101", "meta.json"),
-		filepath.Join(root, "101", "metadata.json"),
+		filepath.Join(root, "101", stateName),
+		filepath.Join(root, "101", galleryName),
 		filepath.Join(root, "101", "cover.jpg"),
-		filepath.Join(root, "101", "101.zip"),
-		filepath.Join(root, "101", "202.zip"),
+		filepath.Join(targetDir, stateName),
+		filepath.Join(targetDir, galleryName),
+		filepath.Join(targetDir, "cover.jpg"),
+		filepath.Join(targetDir, zipName),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected flat archive file %s: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "101", "new-version", metaName)); !os.IsNotExist(err) {
-		t.Fatalf("flat update created a per-version meta file: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "202", metaName)); !os.IsNotExist(err) {
-		t.Fatalf("flat update created a separate shelf root for target: %v", err)
+	var targetMeta map[string]any
+	b, err := os.ReadFile(filepath.Join(targetDir, stateName))
+	if err != nil || json.Unmarshal(b, &targetMeta) != nil || toInt(targetMeta["root_gid"]) != 101 || toString(targetMeta["root_token"]) != "original" {
+		t.Fatalf("target physical version metadata does not retain original shelf identity: %#v err=%v", targetMeta, err)
 	}
 
 	restarted, err := NewStore(root)
@@ -114,9 +120,46 @@ func TestFlatShelfSwitchKeepsOriginalAndVersionStreams(t *testing.T) {
 	if gid, token := restarted.ResolveActive(101, "original"); gid != 202 || token != "new-version" {
 		t.Fatalf("reloaded active identity=(%d,%q)", gid, token)
 	}
-	oldPage, ok, err = restarted.GetPage(101, "original", 0)
-	if err != nil || !ok || string(oldPage) != "old-page" {
-		t.Fatalf("reloaded original stream=%q ok=%t err=%v", oldPage, ok, err)
+	if _, err := os.Stat(oldArchive); !os.IsNotExist(err) {
+		t.Fatalf("restart recreated the removed previous ZIP: %v", err)
+	}
+	newPage, ok, err = restarted.GetPage(202, "new-version", 0)
+	if err != nil || !ok || string(newPage) != "new-page" {
+		t.Fatalf("reloaded active stream=%q ok=%t err=%v", newPage, ok, err)
+	}
+	if err := restarted.CanAddVersion(101, "original", 303, "newest"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Upsert(303, "newest", map[string]any{"root_gid": 101, "root_token": "original", "is_version_update": true, "status": "ready", "title": "Newest", "quality": "Original", "or": "org", "page_count": 1, "metadata_at": float64(30)}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, restarted.archivePath(303, "newest"), "newest.jpg", "newest-page")
+	if err := restarted.ActivateVersion(101, "original", 303, "newest", map[string]any{"gid": 303, "token": "newest", "title": "Newest", "saved_at": float64(30)}, []byte("newest-cover"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "202", zipName)); !os.IsNotExist(err) {
+		t.Fatalf("second switch did not remove the prior active ZIP: %v", err)
+	}
+	for _, path := range []string{filepath.Join(root, "202", stateName), filepath.Join(root, "202", galleryName), filepath.Join(root, "202", coverName)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("second switch removed prior active sidecar %s: %v", path, err)
+		}
+	}
+	if count := restarted.PageCount(202, "new-version"); count != 0 {
+		t.Fatalf("prior active stream still reports %d pages after ZIP cleanup", count)
+	}
+	if _, err := restarted.Upsert(400, "independent", map[string]any{"status": "ready", "title": "Independent"}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, restarted.archivePath(400, "independent"), "independent.jpg", "keep")
+	if !restarted.Remove(101, "original") {
+		t.Fatal("removing the shelf root failed")
+	}
+	if _, err := os.Stat(filepath.Join(root, "202")); !os.IsNotExist(err) {
+		t.Fatalf("shelf deletion left an owned physical version directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "400", stateName)); err != nil {
+		t.Fatalf("shelf deletion removed an independent gid directory: %v", err)
 	}
 }
 
@@ -180,6 +223,44 @@ func TestActivationJournalFinishesAfterRestartWithoutMixingSidecars(t *testing.T
 	if err := store.WriteCover(70, "root", []byte("old-cover")); err != nil {
 		t.Fatal(err)
 	}
+	// Preserve historical filenames for this existing root while creating a
+	// new physical version with state.json and gallery.json.
+	if err := os.Rename(filepath.Join(root, "70", stateName), filepath.Join(root, "70", metaName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "70", galleryName), filepath.Join(root, "70", metadataName)); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	rootRec := store.rootLocked(70, "root")
+	rootRec.stateFileName = metaName
+	rootVersions := versionRecords(rootRec.meta)
+	rootVersions[key(70, "root")]["state_file"] = metaName
+	rootVersions[key(70, "root")]["gallery_file"] = metadataName
+	if err := store.persistLocked(rootRec); err != nil {
+		store.mu.Unlock()
+		t.Fatal(err)
+	}
+	store.mu.Unlock()
+	store, err = NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteMetadata(70, "root", map[string]any{"gid": 70, "token": "root", "title": "Old refreshed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "70", metaName)); err != nil {
+		t.Fatalf("reloaded legacy root state filename was not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "70", metadataName)); err != nil {
+		t.Fatalf("reloaded legacy gallery filename was not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "70", stateName)); !os.IsNotExist(err) {
+		t.Fatalf("legacy root was migrated to the new state filename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "70", galleryName)); !os.IsNotExist(err) {
+		t.Fatalf("legacy root was migrated to the new gallery filename: %v", err)
+	}
 	if _, err := store.Upsert(71, "next", map[string]any{"root_gid": 70, "root_token": "root", "is_version_update": true, "status": "ready", "title": "New", "or": "org", "page_count": 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +270,11 @@ func TestActivationJournalFinishesAfterRestartWithoutMixingSidecars(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	targetDir := store.dir(71, "next")
 	store.mu.Lock()
 	rec := store.rootLocked(70, "root")
-	metaPath := filepath.Join(rec.dir, metadataName)
-	coverPath := filepath.Join(rec.dir, coverName)
+	metaPath := filepath.Join(targetDir, galleryName)
+	coverPath := filepath.Join(targetDir, coverName)
 	if err = store.writeAtomic(metaPath+".next", newSidecar); err != nil {
 		t.Fatal(err)
 	}
@@ -203,13 +285,7 @@ func TestActivationJournalFinishesAfterRestartWithoutMixingSidecars(t *testing.T
 	if err = store.persistLocked(rec); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Rename(metaPath, metaPath+".previous"); err != nil {
-		t.Fatal(err)
-	}
 	if err = os.Rename(metaPath+".next", metaPath); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Rename(coverPath, coverPath+".previous"); err != nil {
 		t.Fatal(err)
 	}
 	store.mu.Unlock()
@@ -229,9 +305,12 @@ func TestActivationJournalFinishesAfterRestartWithoutMixingSidecars(t *testing.T
 	if !ok || string(cover) != "new-cover" {
 		t.Fatalf("recovered cover=%q found=%t", cover, ok)
 	}
-	old, oldOK, err := restarted.GetPage(70, "root", 0)
-	if err != nil || !oldOK || string(old) != "old" {
-		t.Fatalf("recovered original ZIP page=%q found=%t err=%v", old, oldOK, err)
+	if _, err := os.Stat(filepath.Join(root, "70", zipName)); !os.IsNotExist(err) {
+		t.Fatalf("startup did not retry previous ZIP cleanup: %v", err)
+	}
+	oldSidecar, err := os.ReadFile(filepath.Join(root, "70", metadataName))
+	if err != nil || !strings.Contains(string(oldSidecar), "Old") {
+		t.Fatalf("cleanup removed or changed previous metadata sidecar: %s err=%v", oldSidecar, err)
 	}
 }
 
@@ -254,8 +333,8 @@ func TestNoCoverActivationClearsStaleStagedCover(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeStoreTestZIP(t, store.archivePath(81, "next"), "new.jpg", "new")
-	recDir := store.dir(80, "root")
-	if err := os.WriteFile(filepath.Join(recDir, coverName+".next"), []byte("stale"), 0o600); err != nil {
+	targetDir := store.dir(81, "next")
+	if err := os.WriteFile(filepath.Join(targetDir, coverName+".next"), []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.ActivateVersion(80, "root", 81, "next", map[string]any{"gid": 81, "token": "next", "title": "New"}, nil, false); err != nil {
@@ -263,5 +342,101 @@ func TestNoCoverActivationClearsStaleStagedCover(t *testing.T) {
 	}
 	if cover, ok := store.Cover(81, "next"); ok {
 		t.Fatalf("no-cover activation exposed stale cover bytes: %q", cover)
+	}
+	if cover, err := os.ReadFile(filepath.Join(store.dir(80, "root"), coverName)); err != nil || string(cover) != "old-cover" {
+		t.Fatalf("activation removed the previous version cover sidecar: %q err=%v", cover, err)
+	}
+}
+
+func TestCleanupRetriesAfterCommitAndPreservesSourceWhenTargetZIPIsMissing(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(120, "root", map[string]any{"status": "ready", "title": "Old", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(120, "root"), "old.jpg", "old")
+	if err := store.WriteMetadata(120, "root", map[string]any{"gid": 120, "token": "root", "title": "Old"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(121, "next", map[string]any{"root_gid": 120, "root_token": "root", "is_version_update": true, "status": "ready", "title": "New", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	writeStoreTestZIP(t, store.archivePath(121, "next"), "new.jpg", "new")
+	if err := store.ActivateVersion(120, "root", 121, "next", map[string]any{"gid": 121, "token": "next", "title": "New"}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	previousPath, activePath := store.archivePath(120, "root"), store.archivePath(121, "next")
+	writeStoreTestZIP(t, previousPath, "old.jpg", "old")
+	if err := os.Remove(activePath); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	rec := store.rootLocked(120, "root")
+	rec.meta["cleanup_previous_zip"] = map[string]any{"gid": 120, "token": "root", "target_gid": 121, "target_token": "next"}
+	if err := store.persistLocked(rec); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Unlock()
+
+	interrupted, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(previousPath); err != nil {
+		t.Fatalf("cleanup removed the source while active ZIP was missing: %v", err)
+	}
+	if interrupted.Get(120, "root")["active_gid"] != 121 {
+		t.Fatal("restart lost the committed active pointer")
+	}
+	writeStoreTestZIP(t, activePath, "new.jpg", "new")
+	retried, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(previousPath); !os.IsNotExist(err) {
+		t.Fatalf("startup cleanup did not remove source ZIP after target recovery: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "120", stateName)); err != nil {
+		t.Fatalf("source identity metadata was removed with its ZIP: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "120", galleryName)); err != nil {
+		t.Fatalf("source snapshot sidecar was removed with its ZIP: %v", err)
+	}
+	if gid, token := retried.ResolveActive(120, "root"); gid != 121 || token != "next" {
+		t.Fatalf("active identity after cleanup retry=(%d,%q)", gid, token)
+	}
+}
+
+func TestRemoveRefusesVersionDirectoryWithDifferentOwner(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(130, "root", map[string]any{"status": "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(131, "next", map[string]any{"root_gid": 130, "root_token": "root", "is_version_update": true, "status": "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	foreignMeta := map[string]any{"gid": 131, "token": "next", "root_gid": 131, "root_token": "next", "active_gid": 131, "active_token": "next", "layout": versionDirLayout, "status": "ready"}
+	b, err := json.Marshal(foreignMeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "131", stateName), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if store.Remove(130, "root") {
+		t.Fatal("remove deleted a version directory whose owner no longer matched the shelf")
+	}
+	if _, err := os.Stat(filepath.Join(root, "130", stateName)); err != nil {
+		t.Fatalf("failed ownership check removed the original shelf: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "131", stateName)); err != nil {
+		t.Fatalf("failed ownership check removed the foreign directory: %v", err)
 	}
 }

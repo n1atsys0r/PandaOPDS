@@ -23,7 +23,20 @@ func (archiveOnlyTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestArchivedOPDSKeepsRootRoutesAndUsesActiveVersionAfterRestart(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "archives")
+	t.Run("existing grouped layout", func(t *testing.T) {
+		root := t.TempDir()
+		prepareGroupedArchive(t, root)
+		checkArchivedOPDSAfterRestart(t, root, true)
+	})
+	t.Run("per version directories", func(t *testing.T) {
+		root := t.TempDir()
+		prepareUpdatedArchive(t, root)
+		checkArchivedOPDSAfterRestart(t, root, false)
+	})
+}
+
+func prepareGroupedArchive(t *testing.T, root string) {
+	t.Helper()
 	rootDir := filepath.Join(root, "100")
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -44,7 +57,10 @@ func TestArchivedOPDSKeepsRootRoutesAndUsesActiveVersionAfterRestart(t *testing.
 		"gid": 200, "token": "bbbb", "title": "Active title", "title_jpn": "Active title",
 		"category": "Manga", "posted": 1700000000, "tags": map[string]any{},
 	})
+}
 
+func checkArchivedOPDSAfterRestart(t *testing.T, root string, hasOldZIP bool) {
+	t.Helper()
 	// Reopening from disk exercises the same identity and active-version mapping
 	// that a process restart sees.
 	store, err := archive.NewStore(root)
@@ -80,7 +96,11 @@ func TestArchivedOPDSKeepsRootRoutesAndUsesActiveVersionAfterRestart(t *testing.
 	if err := json.Unmarshal(get("/opds/v2.0/archives").Body.Bytes(), &shelf20); err != nil {
 		t.Fatal(err)
 	}
-	pub := shelf20["publications"].([]any)[0].(map[string]any)
+	publications := shelf20["publications"].([]any)
+	if len(publications) != 1 {
+		t.Fatalf("expected one shelf entry, got %d", len(publications))
+	}
+	pub := publications[0].(map[string]any)
 	if got := pub["metadata"].(map[string]any)["identifier"]; got != "urn:ehentai:gallery:100:aaaa" {
 		t.Fatalf("OPDS 2.0 archive identifier = %v", got)
 	}
@@ -129,13 +149,42 @@ func TestArchivedOPDSKeepsRootRoutesAndUsesActiveVersionAfterRestart(t *testing.
 		t.Fatalf("cover link = %v", got)
 	}
 
-	// Resource URLs remain version-specific: the old URL still reads the old
-	// archive, and the active URL reads the newly selected archive.
-	for path, want := range map[string]string{"/stream/100/aaaa/page/1": "old-page", "/stream/200/bbbb/page/1": "active-page"} {
+	expectedPages := map[string]string{"/stream/200/bbbb/page/1": "active-page"}
+	if hasOldZIP {
+		expectedPages["/stream/100/aaaa/page/1"] = "old-page"
+	}
+	for path, want := range expectedPages {
 		response := get(path)
 		if got := response.Body.String(); got != want {
 			t.Fatalf("GET %s returned %q, want %q", path, got, want)
 		}
+	}
+}
+
+func prepareUpdatedArchive(t *testing.T, root string) {
+	t.Helper()
+	store, err := archive.NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(100, "aaaa", map[string]any{"status": "ready", "title": "Original title", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	oldZIP := filepath.Join(root, "100", "archive.zip")
+	writeTestArchive(t, oldZIP, "old-page")
+	if err := store.WriteMetadata(100, "aaaa", map[string]any{"gid": 100, "token": "aaaa", "title": "Original title"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(200, "bbbb", map[string]any{"root_gid": 100, "root_token": "aaaa", "is_version_update": true, "status": "ready", "title": "Active title", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestArchive(t, filepath.Join(root, "200", "archive.zip"), "active-page")
+	snapshot := map[string]any{"gid": 200, "token": "bbbb", "title": "Active title", "category": "Manga", "posted": 1700000000}
+	if err := store.ActivateVersion(100, "aaaa", 200, "bbbb", snapshot, []byte("active-cover"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldZIP); !os.IsNotExist(err) {
+		t.Fatalf("previous ZIP should be removed after activation, got %v", err)
 	}
 }
 

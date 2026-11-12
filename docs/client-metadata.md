@@ -175,7 +175,7 @@
 - **`OPDS_ACQ_DETAIL=true`（detail）**：acquisition 指向详情文档——客户端二次请求详情（完整元数据）后再读。
 - 未知页数时（无 `page_count`）：`direct` 模式不输出 acquisition/stream；`detail` 模式保留指向详情文档的 acquisition（无 `numberOfItems`）。
 
-归档条目切换到新版后，详情入口仍用原条目的 gid/token，图片流和封面链接使用实际版本的 gid/token。已发布的旧图片流地址继续指向旧版。
+归档条目切换到新版后，详情入口仍用原条目的 gid/token，图片流和封面链接使用实际版本的 gid/token。切换成功后会自动删除旧 ZIP，已发布的旧图片流地址仍请求旧版，由缓存或上游提供。
 
 | rel | href | type | 附加 |
 |---|---|---|---|
