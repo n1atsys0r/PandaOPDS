@@ -36,6 +36,71 @@ const state = reactive({
   form: {},
   layout: { groups: [], sections: [] },
 });
+const coverCache = new Map();
+const coverInflight = new Map();
+
+function clearCoverCache() {
+  for (const url of coverCache.values()) {
+    if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+  }
+  coverCache.clear();
+  coverInflight.clear();
+}
+
+function clearAuthOn401() {
+  state.authRequired = true;
+  state.authToken = "";
+  localStorage.removeItem("pandaopds_auth");
+  clearCoverCache();
+}
+
+function peekCoverUrl(path) {
+  if (!path) return "";
+  const token = state.authToken || localStorage.getItem("pandaopds_auth");
+  if (!token) return path;
+  return coverCache.get(`${token}:${path}`) || "";
+}
+
+async function resolveCoverUrl(path) {
+  if (!path) return "";
+  const token = state.authToken || localStorage.getItem("pandaopds_auth");
+  if (!token) return path;
+  const cacheKey = `${token}:${path}`;
+  if (coverCache.has(cacheKey)) return coverCache.get(cacheKey);
+  if (coverInflight.has(cacheKey)) return coverInflight.get(cacheKey);
+  const task = (async () => {
+    try {
+      const r = await fetch(path, {
+        headers: {
+          Authorization: `Basic ${token}`,
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      if (r.status === 401) {
+        clearAuthOn401();
+        return "";
+      }
+      if (!r.ok) return "";
+      const blob = await r.blob();
+      if (!blob || blob.size === 0) return "";
+      const objectUrl = URL.createObjectURL(blob);
+      const activeToken = state.authToken || localStorage.getItem("pandaopds_auth");
+      if (activeToken !== token) {
+        URL.revokeObjectURL(objectUrl);
+        return "";
+      }
+      coverCache.set(cacheKey, objectUrl);
+      return objectUrl;
+    } catch {
+      return "";
+    } finally {
+      coverInflight.delete(cacheKey);
+    }
+  })();
+  coverInflight.set(cacheKey, task);
+  return task;
+}
+
 async function api(path, opts = {}) {
   const token = state.authToken || localStorage.getItem("pandaopds_auth");
   const headers = {
@@ -54,9 +119,7 @@ async function api(path, opts = {}) {
     data = { detail: raw };
   }
   if (r.status === 401) {
-    state.authRequired = true;
-    state.authToken = "";
-    localStorage.removeItem("pandaopds_auth");
+    clearAuthOn401();
   }
   if (!r.ok)
     throw Object.assign(
@@ -552,6 +615,7 @@ async function login(username, password) {
 function logout() {
   state.authToken = "";
   localStorage.removeItem("pandaopds_auth");
+  clearCoverCache();
   state.status = null;
   state.error = "";
   state.notice = "";
@@ -614,5 +678,8 @@ export function useApp() {
     confirmFavoriteRemoval,
     init,
     destroy,
+    peekCoverUrl,
+    resolveCoverUrl,
+    clearCoverCache,
   };
 }

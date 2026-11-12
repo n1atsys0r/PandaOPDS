@@ -40,6 +40,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
+import CoverImage from "@/components/CoverImage.vue";
 import LoginForm from "@/components/LoginForm.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
 import {
@@ -1472,12 +1473,11 @@ const filteredArchives = computed(() => {
               class="gallery-card"
             >
               <div class="cover">
-                <img
+                <CoverImage
                   v-if="a.cover_url"
                   :src="a.cover_url"
                   :alt="a.title || '封面'"
-                  loading="lazy"
-                /><span v-if="!a.cover_url">暂无封面</span
+                /><span v-else>暂无封面</span
                 ><b>{{
                   a.metadata?.title_jpn ||
                   a.metadata?.title ||

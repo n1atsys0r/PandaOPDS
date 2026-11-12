@@ -158,8 +158,9 @@ func TestWebUIArchiveBundle(t *testing.T) {
 	body := readBundledWebUIScript(t)
 	for _, want := range []string{
 		"浏览",
-		"请输入画廊URL或GID/TOKEN。归档需要已配置 IPB 登录凭据。",
+		"GID/TOKEN。归档需要已配置 IPB 登录凭据。",
 		"https://e-hentai.org/g/123456/abcdef/ 或 123456/abcdef",
+		"createObjectURL",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected bundled web UI to contain %q", want)
