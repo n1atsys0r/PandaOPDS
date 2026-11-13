@@ -173,12 +173,8 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.Settings
 		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit"
-		if editRoute && !cfg.AuthEnabled() {
-			writeJSON(w, 403, map[string]any{"detail": "admin Basic Auth is required for editing"})
-			return
-		}
 		isWebUI := r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/webui-assets/") || r.URL.Path == "/favicon.ico"
-		if !editRoute && (!cfg.AuthEnabled() || r.URL.Path == "/health" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path)) {
+		if !cfg.AuthEnabled() || (!editRoute && (r.URL.Path == "/health" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path))) {
 			next.ServeHTTP(w, r)
 			return
 		}

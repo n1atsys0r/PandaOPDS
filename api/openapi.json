@@ -4214,7 +4214,8 @@
         "security": [
           {
             "basicAuth": []
-          }
+          },
+          {}
         ],
         "responses": {
           "200": {
@@ -4237,9 +4238,6 @@
           "400": {
             "description": "Invalid input or malformed persisted file"
           },
-          "403": {
-            "description": "Admin Basic Auth required; exempt paths do not apply"
-          },
           "412": {
             "description": "If-Match is stale"
           },
@@ -4259,7 +4257,8 @@
         "security": [
           {
             "basicAuth": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -4323,7 +4322,7 @@
             "description": "Invalid input or malformed persisted file"
           },
           "403": {
-            "description": "Admin Basic Auth required; exempt paths do not apply"
+            "description": "Cross-origin edit rejected"
           },
           "412": {
             "description": "If-Match is stale"
@@ -4346,7 +4345,8 @@
         "security": [
           {
             "basicAuth": []
-          }
+          },
+          {}
         ],
         "responses": {
           "200": {
@@ -4390,9 +4390,6 @@
           "400": {
             "description": "Invalid input or malformed persisted file"
           },
-          "403": {
-            "description": "Admin Basic Auth required; exempt paths do not apply"
-          },
           "412": {
             "description": "If-Match is stale"
           },
@@ -4412,7 +4409,8 @@
         "security": [
           {
             "basicAuth": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -4501,7 +4499,7 @@
             "description": "Invalid input or malformed persisted file"
           },
           "403": {
-            "description": "Admin Basic Auth required; exempt paths do not apply"
+            "description": "Cross-origin edit rejected"
           },
           "412": {
             "description": "If-Match is stale"

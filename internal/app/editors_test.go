@@ -269,18 +269,99 @@ func TestConfigEditorETagTracksCredentialRotationWithoutExposure(t *testing.T) {
 }
 
 func TestAdminEditAuthIgnoresExemptions(t *testing.T) {
+	paths := []struct {
+		path, method string
+	}{
+		{"/api/config/edit", http.MethodGet},
+		{"/api/config/edit", http.MethodPatch},
+		{"/api/home/edit", http.MethodGet},
+		{"/api/home/edit", http.MethodPut},
+	}
+	for _, route := range paths {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			t.Run("authentication disabled permits anonymous access", func(t *testing.T) {
+				s := &Server{Settings: config.Settings{AuthExemptPaths: []string{route.path}, AuthExemptPrefixes: []string{"/api/"}}}
+				h := s.basicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+				rr := httptest.NewRecorder()
+				h.ServeHTTP(rr, httptest.NewRequest(route.method, route.path, nil))
+				if rr.Code != 204 {
+					t.Fatalf("anonymous status=%d want 204", rr.Code)
+				}
+			})
+			t.Run("authentication enabled requires correct credentials despite exemptions", func(t *testing.T) {
+				s := &Server{Settings: config.Settings{AuthUsername: "u", AuthPassword: "p", AuthExemptPaths: []string{route.path}, AuthExemptPrefixes: []string{"/api/"}}}
+				h := s.basicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+				for _, creds := range []struct {
+					name, username, password string
+					want                     int
+				}{{"missing", "", "", 401}, {"wrong", "u", "bad", 401}, {"valid", "u", "p", 204}} {
+					t.Run(creds.name, func(t *testing.T) {
+						req := httptest.NewRequest(route.method, route.path, nil)
+						if creds.username != "" {
+							req.SetBasicAuth(creds.username, creds.password)
+						}
+						rr := httptest.NewRecorder()
+						h.ServeHTTP(rr, req)
+						if rr.Code != creds.want {
+							t.Fatalf("status=%d want %d", rr.Code, creds.want)
+						}
+					})
+				}
+			})
+		})
+	}
+}
+
+func TestEditorWritesRejectCrossOriginRequests(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		cfg  config.Settings
-		want int
-	}{{"disabled", config.Settings{AuthExemptPaths: []string{"/api/config/edit"}}, 403}, {"enabled and exempt", config.Settings{AuthUsername: "u", AuthPassword: "p", AuthExemptPaths: []string{"/api/config/edit"}}, 401}} {
+		name    string
+		handler func(*Server, http.ResponseWriter, *http.Request)
+		method  string
+		body    string
+	}{
+		{"config", (*Server).configEdit, http.MethodPatch, `{"eh_site":"exhentai"}`},
+		{"home", (*Server).homeEdit, http.MethodPut, `{"sections":[]}`},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{Settings: tc.cfg}
-			h := s.basicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
-			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/config/edit", nil))
-			if rr.Code != tc.want {
-				t.Fatalf("status=%d want %d", rr.Code, tc.want)
+			t.Setenv("EH_SITE", "")
+			_ = os.Unsetenv("EH_SITE")
+			t.Setenv("OPDS_ACQ_MODE", "")
+			_ = os.Unsetenv("OPDS_ACQ_MODE")
+			dir := t.TempDir()
+			s := &Server{Settings: config.Settings{HomeConfigPath: filepath.Join(dir, "home.toml")}, settingsPath: filepath.Join(dir, "settings.toml"), editKey: []byte("test-only-etag-key")}
+			h := s.basicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tc.handler(s, w, r) }))
+			get := httptest.NewRecorder()
+			getReq := httptest.NewRequest(http.MethodGet, "/api/"+tc.name+"/edit", nil)
+			h.ServeHTTP(get, getReq)
+			if get.Code != http.StatusOK {
+				t.Fatalf("GET status=%d body=%s", get.Code, get.Body.String())
+			}
+			save := httptest.NewRequest(tc.method, "/api/"+tc.name+"/edit", strings.NewReader(tc.body))
+			save.Host = "reader.example"
+			save.Header.Set("Origin", "http://reader.example")
+			save.Header.Set("Content-Type", "application/json")
+			save.Header.Set("If-Match", get.Header().Get("ETag"))
+			saved := httptest.NewRecorder()
+			h.ServeHTTP(saved, save)
+			if saved.Code != http.StatusOK {
+				t.Fatalf("anonymous same-origin save status=%d body=%s", saved.Code, saved.Body.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, map[string]string{"config": "settings.toml", "home": "home.toml"}[tc.name])); err != nil {
+				t.Fatalf("anonymous save did not persist file: %v", err)
+			}
+
+			get = httptest.NewRecorder()
+			getReq = httptest.NewRequest(http.MethodGet, "/api/"+tc.name+"/edit", nil)
+			h.ServeHTTP(get, getReq)
+			req := httptest.NewRequest(tc.method, "/api/"+tc.name+"/edit", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("If-Match", get.Header().Get("ETag"))
+			req.Header.Set("Origin", "https://attacker.example")
+			req.Host = "reader.example"
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+			if resp.Code != http.StatusForbidden {
+				t.Fatalf("cross-origin write status=%d body=%s", resp.Code, resp.Body.String())
 			}
 		})
 	}
