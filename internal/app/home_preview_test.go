@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,7 @@ func newHomePreviewServer(t *testing.T, homeTOML string, transport http.RoundTri
 
 const twoPreviewSections = `[[section]]
 kind = "publication"
+group = true
 title = "Popular preview"
 type = "preset"
 query = "popular"
@@ -52,6 +54,7 @@ count = 1
 
 [[section]]
 kind = "publication"
+group = true
 title = "Search preview"
 type = "search"
 query = "slow-query"
@@ -59,6 +62,7 @@ count = 1
 
 [[section]]
 kind = "navigation"
+group = true
 title = "Browse"
 type = "preset"
 query = "latest"
@@ -121,6 +125,20 @@ func TestRootV20FetchesPublicationPreviewsConcurrentlyInOrder(t *testing.T) {
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "public, max-age=300" {
 		t.Fatalf("status=%d cache=%q body=%s", response.Code, response.Header().Get("Cache-Control"), body)
 	}
+	var doc struct {
+		Groups []map[string]json.RawMessage
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &doc); err != nil || len(doc.Groups) != 3 {
+		t.Fatalf("expected three independent groups: %v, %s", err, body)
+	}
+	for i, group := range doc.Groups {
+		if i < 2 && (group["publications"] == nil || group["navigation"] != nil) ||
+			i == 2 && (group["navigation"] == nil || group["publications"] != nil) ||
+			group["groups"] != nil || group["facets"] != nil {
+			t.Fatalf("group %d contains an unexpected collection: %s", i, body)
+		}
+	}
+
 	popularIndex, searchIndex := strings.Index(body, "Popular Item"), strings.Index(body, "Search Item")
 	if popularIndex < 0 || searchIndex < 0 || popularIndex >= searchIndex || !strings.Contains(body, `"title": "Browse"`) {
 		t.Fatalf("previews/navigation missing or reordered: %s", body)
@@ -161,5 +179,45 @@ func TestRootV20ReturnsPartialHomepageWithoutCachingAfterPreviewDeadline(t *test
 	}
 	if !strings.Contains(body, "Fast Item") || strings.Contains(body, "Search Item") || !strings.Contains(body, `"title": "Browse"`) {
 		t.Fatalf("partial success or navigation was lost: %s", body)
+	}
+}
+
+func TestRootV20FacetsReuseRootSourceAndFallback(t *testing.T) {
+	calls := 0
+	homeTOML := `[[section]]
+kind="publication"
+type="search"
+query="language:chinese"
+title="Chinese"
+count=1
+
+[[section]]
+kind="facets"
+type="search"
+query="language:chinese"
+title="Category"
+`
+	server := newHomePreviewServer(t, homeTOML, homePreviewTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if strings.HasPrefix(r.URL.Path, "/") && r.URL.Query().Get("f_search") == "" {
+			return homePreviewResponse(r, `<html>session</html>`), nil
+		}
+		return homePreviewResponse(r, `<div class="gl1e"><a class="glink" href="/g/101/aaa/">Chinese Item</a></div>`), nil
+	}))
+	server.Settings.Facets = []config.Facet{{Name: "Doujinshi", Mask: 1021}, {Name: "Manga", Mask: 1019}}
+	rr := httptest.NewRecorder()
+	server.rootV20(rr, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"title": "Category"`) || !strings.Contains(rr.Body.String(), `category=Doujinshi`) || !strings.Contains(rr.Body.String(), `query=language%3Achinese`) {
+		t.Fatalf("facets/root source missing: %s", rr.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("facet rendering fetched extra data: %d requests", calls)
+	}
+
+	empty := newHomePreviewServer(t, "", homePreviewTransport(func(r *http.Request) (*http.Response, error) { return nil, context.Canceled }))
+	fallback := httptest.NewRecorder()
+	empty.rootV20(fallback, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
+	if fallback.Code != http.StatusOK || !strings.Contains(fallback.Body.String(), `"title": "Latest"`) {
+		t.Fatalf("empty layout fallback missing: %s", fallback.Body.String())
 	}
 }

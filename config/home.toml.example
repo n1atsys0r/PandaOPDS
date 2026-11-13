@@ -1,53 +1,37 @@
-# PandaOPDS 首页布局
-# ====================
+# PandaOPDS OPDS 2.0 首页布局
 #
-# [[group]]         声明命名组（决定 groups[] 顺序和标题）
-#   id              = 唯一标识符
-#   title           = 组的 metadata.title
+# 每个 [[section]] 声明一个栏目。
+#   kind         = "publication" | "navigation" | "facets"
+#   group        = true 时，publication 或 navigation 形成独立分组；缺省为 false
+#   title        = 栏目标题
+#   type / query = "preset" + 内置预设，或 "search" + 搜索表达式
+#   count        = publication 的预览条数，缺省为 10，填 0 关闭预览
 #
-# [[section]]       挂载到组或独立出现
-#   group           = 引用 [[group]] 的 id；不设 → 独立
-#   kind            = "publication"（含内嵌预览）| "navigation"（纯链接）
-#   type / query    = "preset" + 内置 key 或 "search" + 搜索表达式
-#   preset key      = latest / popular / watched / favorites / favorites:N / archives /
-#                     toplist:yesterday / toplist:month / toplist:year / toplist:alltime
-#                     （favorites:N 按收藏目录收敛，对应上游 /favorites.php?favcat=N；
-#                      仅 v2.0，需手写 section，不进入默认模板）
-#   count           = publication 时生效，内嵌预览条数；缺省 = 10，显式 0 = 禁用
-#
-# 规则：
-#   - 同一 group 的 section 合并进一个 groups[] 槽位（publication + navigation 可混）
-#   - 无 group 的 publication → 独立 groups[] 槽位
-#   - 无 group 的 navigation  → 根 navigation[]
+# 顶层 publications 与 groups 互斥；顶层 navigation 可与其中任一形式并存。
+# facets 只能与顶层 publication 并用，type 和 query 须与其相同。
+# 内置预设：latest、popular、watched、favorites、favorites:N、archives、
+# toplist:yesterday、toplist:month、toplist:year、toplist:alltime。
 
-[[group]]
-id = "rankings"
-title = "Rankings"
-
-[[group]]
-id = "browse"
-title = "Browse"
-
-# ---- 排行榜组 ----
+# ---- 排行榜 ----
 
 [[section]]
-group = "rankings"
 kind = "publication"
+group = true
 title = "Toplist: Yesterday"
 type = "preset"
 query = "toplist:yesterday"
 count = 5
 
 [[section]]
-group = "rankings"
 kind = "navigation"
+group = true
 title = "Toplist: Month"
 type = "preset"
 query = "toplist:month"
 
 [[section]]
-group = "rankings"
 kind = "navigation"
+group = true
 title = "Toplist: Year"
 type = "preset"
 query = "toplist:year"
@@ -55,57 +39,56 @@ query = "toplist:year"
 # ---- 浏览组 ----
 
 [[section]]
-group = "browse"
 kind = "publication"
+group = true
 title = "Popular"
 type = "preset"
 query = "popular"
 count = 10
 
 [[section]]
-group = "browse"
 kind = "navigation"
+group = true
 title = "Latest"
 type = "preset"
 query = "latest"
 
-# ---- 独立 publication ----
-
-[[section]]
-kind = "publication"
-title = "Chinese Doujinshi"
-type = "search"
-query = "language:chinese"
-count = 15
+# 本示例使用 groups，因此不配置顶层 publication / facets。
+# 另一种布局可将 publication 和 facets 设为 group=false，并移除所有 group=true 栏目。
 
 # ---- 根 navigation ----
 
 [[section]]
 kind = "navigation"
+group = false
 title = "Toplist: All Time"
 type = "preset"
 query = "toplist:alltime"
 
 [[section]]
 kind = "navigation"
+group = false
 title = "Watched"
 type = "preset"
 query = "watched"
 
 [[section]]
 kind = "navigation"
+group = false
 title = "Favorites"
 type = "preset"
 query = "favorites"
 
 [[section]]
 kind = "navigation"
+group = false
 title = "Japanese Original"
 type = "search"
 query = "language:japanese"
 
 [[section]]
 kind = "navigation"
+group = false
 title = "Archives"
 type = "preset"
 query = "archives"

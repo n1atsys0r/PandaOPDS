@@ -630,7 +630,7 @@
           "opds2"
         ],
         "summary": "Root Feed",
-        "description": "Root OPDS 2.0 document.\n\nLayout is driven by a TOML config: ``[[group]]`` declares named groups;\n``[[section]]`` references a group via ``group`` field.  Publication and\nnavigation sections can co-exist in the same group.\n\nSections without a ``group``:\n* ``kind=\"publication\"`` → standalone ``groups[]`` entry\n* ``kind=\"navigation\"``  → root ``navigation[]`` entry\n\nWatched / Favorites are auth-gated: omitted when no IPB cookie is set.\nThe Archives preset (``query=\"archives\"``) is store-gated: omitted\nwhile the archive store holds no ready entries.",
+        "description": "Root OPDS 2.0 document. Each TOML [[section]] selects a source and placement. A grouped publication or navigation section creates one groups[] item containing one collection. Ungrouped sections populate top-level publications, navigation, or facets. Top-level publications and groups are mutually exclusive; top-level navigation may coexist with either. A facet section requires a matching ungrouped publication source. Watched and Favorites require IPB cookies; Archives requires ready entries. If no content collection can be shown, the feed contains a Latest navigation link.",
         "operationId": "root_feed_opds_v2_0_get",
         "responses": {
           "200": {
@@ -669,7 +669,7 @@
                   ],
                   "navigation": [
                     {
-                      "title": "",
+                      "title": "Archives",
                       "href": "https://catalog.example/opds/v2.0/archives",
                       "rel": "subsection",
                       "type": "application/opds+json;profile=acquisition"
@@ -4000,16 +4000,25 @@
                         "null"
                       ]
                     },
-                    "groups": {
-                      "type": "array",
-                      "items": {
-                        "type": "object"
-                      }
-                    },
                     "sections": {
                       "type": "array",
                       "items": {
-                        "type": "object"
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/HomeSection"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "href": {
+                                "type": "string"
+                              },
+                              "auth_required": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        ]
                       }
                     }
                   }
@@ -4018,7 +4027,6 @@
                   "path": "/config/home.toml",
                   "using_file": true,
                   "error": null,
-                  "groups": [],
                   "sections": [
                     {
                       "kind": "navigation",
@@ -4026,7 +4034,7 @@
                       "type": "preset",
                       "query": "archives",
                       "count": 0,
-                      "group": null,
+                      "group": false,
                       "href": "/opds/v2.0/archives",
                       "auth_required": false
                     }
@@ -4353,7 +4361,28 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "using_file": {
+                      "type": "boolean"
+                    },
+                    "sections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeSection"
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "validation_error": {
+                      "type": "string",
+                      "description": "The file is decodable but violates current home output rules; a valid PUT can repair it."
+                    }
+                  }
                 }
               }
             }
@@ -4402,23 +4431,29 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "groups",
                   "sections"
                 ],
+                "additionalProperties": false,
                 "properties": {
-                  "groups": {
-                    "type": "array",
-                    "items": {
-                      "type": "object"
-                    }
-                  },
                   "sections": {
                     "type": "array",
                     "items": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/HomeSection"
                     }
                   }
                 }
+              },
+              "example": {
+                "sections": [
+                  {
+                    "kind": "publication",
+                    "group": true,
+                    "title": "Popular",
+                    "type": "preset",
+                    "query": "popular",
+                    "count": 20
+                  }
+                ]
               }
             }
           }
@@ -4436,7 +4471,28 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "using_file": {
+                      "type": "boolean"
+                    },
+                    "sections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeSection"
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "validation_error": {
+                      "type": "string",
+                      "description": "The file is decodable but violates current home output rules; a valid PUT can repair it."
+                    }
+                  }
                 }
               }
             }
@@ -4456,7 +4512,8 @@
           "401": {
             "description": "Basic Auth credentials required when editor authentication is configured"
           }
-        }
+        },
+        "description": "Replaces the entire home layout. Top-level publications and groups cannot coexist; top-level navigation may coexist with either. A valid replacement can repair a decodable legacy layout that violates current rules; the original file is backed up."
       }
     }
   },
@@ -5038,7 +5095,7 @@
           "groups": {
             "type": "array",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/HomeFeedGroup"
             }
           },
           "facets": {
@@ -5046,6 +5103,103 @@
             "items": {
               "type": "object"
             }
+          }
+        }
+      },
+      "HomeFeedGroup": {
+        "type": "object",
+        "required": [
+          "metadata"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "publications"
+            ]
+          },
+          {
+            "required": [
+              "navigation"
+            ]
+          }
+        ],
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "required": [
+              "title"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "publications": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Publication"
+            }
+          },
+          "navigation": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          }
+        }
+      },
+      "HomeSection": {
+        "type": "object",
+        "required": [
+          "kind",
+          "type",
+          "query"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "publication",
+              "navigation",
+              "facets"
+            ]
+          },
+          "group": {
+            "type": "boolean",
+            "default": false,
+            "description": "Create one independent group for this section. Facets must use false."
+          },
+          "title": {
+            "type": "string",
+            "description": "Display title. Defaults to the query when omitted."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "preset",
+              "search"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Publication preview limit. Null or omitted uses 10; 0 disables the preview."
           }
         }
       }

@@ -10,12 +10,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-type Group struct {
-	ID    string `toml:"id"`
-	Title string `toml:"title"`
-}
 type Section struct {
-	Group string `toml:"group"`
+	Group bool   `toml:"group"`
 	Kind  string `toml:"kind"`
 	Title string `toml:"title"`
 	Type  string `toml:"type"`
@@ -23,18 +19,17 @@ type Section struct {
 	Count *int   `toml:"count"`
 }
 type Config struct {
-	Groups   []Group   `toml:"group"`
 	Sections []Section `toml:"section"`
 }
 
 func Default() Config {
-	return Config{Groups: []Group{{"rankings", "Rankings"}, {"browse", "Browse"}}, Sections: []Section{
-		{Group: "rankings", Kind: "publication", Title: "Toplist: Yesterday", Type: "preset", Query: "toplist:yesterday", Count: intp(20)},
-		{Group: "rankings", Kind: "navigation", Title: "Toplist: Month", Type: "preset", Query: "toplist:month"},
-		{Group: "rankings", Kind: "navigation", Title: "Toplist: Year", Type: "preset", Query: "toplist:year"},
-		{Group: "browse", Kind: "publication", Title: "Popular", Type: "preset", Query: "popular", Count: intp(20)},
-		{Group: "browse", Kind: "navigation", Title: "Latest", Type: "preset", Query: "latest"},
-		{Kind: "publication", Title: "Chinese Doujinshi", Type: "search", Query: "language:chinese", Count: intp(20)},
+	return Config{Sections: []Section{
+		{Group: true, Kind: "publication", Title: "Toplist: Yesterday", Type: "preset", Query: "toplist:yesterday", Count: intp(20)},
+		{Group: true, Kind: "navigation", Title: "Toplist: Month", Type: "preset", Query: "toplist:month"},
+		{Group: true, Kind: "navigation", Title: "Toplist: Year", Type: "preset", Query: "toplist:year"},
+		{Group: true, Kind: "publication", Title: "Popular", Type: "preset", Query: "popular", Count: intp(20)},
+		{Group: true, Kind: "navigation", Title: "Latest", Type: "preset", Query: "latest"},
+		{Group: true, Kind: "publication", Title: "Chinese Doujinshi", Type: "search", Query: "language:chinese", Count: intp(20)},
 		{Kind: "navigation", Title: "Toplist: All Time", Type: "preset", Query: "toplist:alltime"},
 		{Kind: "navigation", Title: "Watched", Type: "preset", Query: "watched"},
 		{Kind: "navigation", Title: "Favorites", Type: "preset", Query: "favorites"},
@@ -45,18 +40,10 @@ func Default() Config {
 func intp(v int) *int { return &v }
 
 func Validate(c Config) error {
-	ids := map[string]bool{}
-	for _, g := range c.Groups {
-		if strings.TrimSpace(g.ID) == "" || ids[g.ID] {
-			return fmt.Errorf("group IDs must be nonempty and unique")
-		}
-		ids[g.ID] = true
-	}
+	var rootPublication *Section
+	groupedSection := false
 	for _, s := range c.Sections {
-		if s.Group != "" && !ids[s.Group] {
-			return fmt.Errorf("unknown group reference %q", s.Group)
-		}
-		if s.Kind != "publication" && s.Kind != "navigation" {
+		if s.Kind != "publication" && s.Kind != "navigation" && s.Kind != "facets" {
 			return fmt.Errorf("invalid section kind %q", s.Kind)
 		}
 		if s.Type != "preset" && s.Type != "search" {
@@ -71,6 +58,32 @@ func Validate(c Config) error {
 		}
 		if s.Count != nil && *s.Count < 0 {
 			return fmt.Errorf("section count must be nonnegative")
+		}
+		if s.Kind == "publication" && !s.Group {
+			if rootPublication != nil {
+				return fmt.Errorf("only one ungrouped publication section is allowed")
+			}
+			rootPublication = &s
+		}
+		if s.Group {
+			groupedSection = true
+		}
+		if s.Kind == "facets" && s.Group {
+			return fmt.Errorf("facet sections cannot be grouped")
+		}
+		if s.Kind == "facets" && s.Type == "preset" {
+			kind, _, _ := ResolvePreset(s.Query)
+			if kind != "search" && kind != "toplist" && kind != "favorites" {
+				return fmt.Errorf("preset has no facet provider: %s", s.Query)
+			}
+		}
+	}
+	if rootPublication != nil && groupedSection {
+		return fmt.Errorf("top-level publications and groups cannot coexist")
+	}
+	for _, s := range c.Sections {
+		if s.Kind == "facets" && (rootPublication == nil || rootPublication.Type != s.Type || rootPublication.Query != s.Query) {
+			return fmt.Errorf("facet source must match an ungrouped publication section")
 		}
 	}
 	return nil
@@ -127,7 +140,11 @@ func Load(path string) (Config, error) {
 	if e != nil {
 		return Default(), e
 	}
-	return normalize(c), nil
+	c = normalize(c)
+	if err := Validate(c); err != nil {
+		return Default(), err
+	}
+	return c, nil
 }
 func normalize(c Config) Config {
 	for i := range c.Sections {
@@ -147,11 +164,6 @@ func normalize(c Config) Config {
 				n = 10
 			}
 			s.Count = &n
-		}
-	}
-	for i := range c.Groups {
-		if c.Groups[i].Title == "" {
-			c.Groups[i].Title = c.Groups[i].ID
 		}
 	}
 	return c
@@ -176,16 +188,82 @@ func DecodeEditor(b []byte) (Config, error) {
 	return c, nil
 }
 func decodeHome(b []byte, strict bool) (Config, error) {
-	var c Config
-	md, err := toml.Decode(string(b), &c)
+	var data struct {
+		Groups []struct {
+			ID    string `toml:"id"`
+			Title string `toml:"title"`
+		} `toml:"group"`
+		Sections []map[string]any `toml:"section"`
+	}
+	metadata, err := toml.Decode(string(b), &data)
 	if err != nil {
 		return Default(), fmt.Errorf("invalid home configuration TOML")
 	}
-	if strict && len(md.Undecoded()) > 0 {
+	if strict && len(metadata.Undecoded()) > 0 {
 		return Default(), fmt.Errorf("unknown home configuration field")
+	}
+	legacy := len(data.Groups) > 0
+	for _, m := range data.Sections {
+		if _, ok := m["group"].(string); ok {
+			legacy = true
+		}
+	}
+	c := Config{Sections: make([]Section, 0, len(data.Sections))}
+	for _, m := range data.Sections {
+		if strict {
+			for k := range m {
+				if k != "group" && k != "kind" && k != "title" && k != "type" && k != "query" && k != "count" {
+					return Default(), fmt.Errorf("unknown home configuration field")
+				}
+			}
+		}
+		for key, value := range m {
+			switch key {
+			case "group":
+				if _, ok := value.(bool); !ok {
+					if _, legacyString := value.(string); !legacyString {
+						return Default(), fmt.Errorf("invalid group value")
+					}
+				}
+			case "kind", "title", "type", "query":
+				if _, ok := value.(string); !ok {
+					return Default(), fmt.Errorf("invalid section field type")
+				}
+			case "count":
+				if _, ok := value.(int64); !ok {
+					return Default(), fmt.Errorf("invalid section count")
+				}
+			}
+		}
+		s := Section{Kind: "publication", Type: "preset", Query: "latest"}
+		if v, ok := m["kind"].(string); ok {
+			s.Kind = v
+		}
+		if v, ok := m["title"].(string); ok {
+			s.Title = v
+		}
+		if v, ok := m["type"].(string); ok {
+			s.Type = v
+		}
+		if v, ok := m["query"].(string); ok {
+			s.Query = v
+		}
+		if v, ok := m["count"].(int64); ok {
+			n := int(v)
+			s.Count = &n
+		}
+		if v, ok := m["group"].(bool); ok {
+			s.Group = v
+		} else if _, ok := m["group"].(string); ok {
+			s.Group = m["group"] != "" || s.Kind == "publication"
+		} else if legacy {
+			s.Group = s.Kind == "publication"
+		}
+		c.Sections = append(c.Sections, s)
 	}
 	return c, nil
 }
+
 func ResolvePreset(q string) (kind, arg string, err error) {
 	switch q {
 	case "latest":

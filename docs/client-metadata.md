@@ -20,81 +20,27 @@
 
 ---
 
-## 2. 主页文档（`GET /opds/v2.0`）——设计主页的核心
+## 2. 主页文档（`GET /opds/v2.0`）
 
-文档包含 `navigation[]`（纯导航链接）和 `groups[]`（含内联 publication 预览的分组区块，OPDS 2.0 §2.5）。真实输出：
+`HOME_CONFIG` 指向首页布局文件，默认使用 `config/home.toml`。每个 `[[section]]` 通过 `kind` 和布尔值 `group` 决定输出位置。配置示例见 [home.toml.example](../config/home.toml.example)。
 
-```json
-{
-  "metadata": { "title": "PandaOPDS", "identifier": "urn:ehentai:root", "modified": "2026-08-11T15:31:30Z" },
-  "links": [
-    { "href": "/opds/v2.0", "rel": "self", "type": "application/opds+json;profile=navigation", "title": "PandaOPDS" },
-    { "href": "/opds/v2.0", "rel": "start", "type": "application/opds+json;profile=navigation", "title": "PandaOPDS" },
-    { "href": "/opds/v2.0/gallery?query={searchTerms}", "rel": "search", "type": "application/opds+json;profile=acquisition", "title": "Search", "templated": true }
-  ],
-  "navigation": [
-    {
-      "metadata": {
-        "title": "Watched",
-        "identifier": "urn:ehentai:subsection:watched",
-        "modified": "2026-08-11T15:31:30Z",
-        "description": "Watched galleries"
-      },
-      "links": [
-        { "href": "/opds/v2.0/gallery?query=watched", "rel": "subsection",
-          "type": "application/opds+json;profile=acquisition", "title": "Watched" }
-      ]
-    }
-  ],
-  "groups": [
-    {
-      "metadata": {
-        "title": "Latest",
-        "identifier": "urn:ehentai:group:latest",
-        "modified": "2026-08-11T15:31:30Z"
-      },
-      "links": [
-        { "rel": "self", "href": "/opds/v2.0/gallery",
-          "type": "application/opds+json;profile=acquisition", "title": "Latest" }
-      ],
-      "publications": [ "…前 N 条 publication（见 §3）…" ]
-    }
-  ]
-}
-```
-
-### 2.1 分区逻辑
-
-| 组件 | 内容 | 说明 |
+| `kind` | `group = false`（默认） | `group = true` |
 |---|---|---|
-| `groups[]` | 内联 publication 预览的分组区块 | `config/home.toml`（`[[group]]`）控制；环境变量 `HOME_CONFIG` 可指定路径 |
-| `navigation[]` | 纯导航链接（不含 `x:*` 扩展字段） | `config/home.toml`（`[[navigation]]`）控制；Watched/Favorites 无 IPB cookie 时不输出 |
-| `links[].rel="search"` | 搜索模板 | 顶层 link，客户端替换 `{searchTerms}` 即得搜索结果 |
+| `publication` | 顶层 `publications[]`，最多一个来源 | 独立的 `groups[]` 项，内含一个 `publications[]` 集合 |
+| `navigation` | 顶层 `navigation[]` 中的一个链接 | 独立的 `groups[]` 项，内含一个 `navigation[]` 集合 |
+| `facets` | 顶层 `facets[]` 中的一套筛选 | 无效配置 |
 
-### 2.2 groups[] 元素结构（OPDS 2.0 标准，§2.5）
+### 2.1 栏目与分组
 
-| 字段 | 说明 |
-|---|---|
-| `metadata.title` | 区块标题（如 `Latest`、`Popular`、`Toplist: Yesterday`） |
-| `metadata.identifier` | `urn:ehentai:group:{key}` |
-| `metadata.modified` | ISO8601（UTC） |
-| `links[0]` | `rel="self"`，`href` = 该区块的完整采集文档 |
-| `publications[]` | 内联预览条目（数量由 TOML `publications` 字段控制），字段见 §3 |
+`type = "preset"` 使用内置来源，`type = "search"` 使用 `query` 指定的搜索表达式。顶层 `publications[]` 与 `groups[]` 互斥：配置任一 `group = false` 的 publication 后，不得再有任何 `group = true` 栏目；反之亦然。顶层 navigation 可与两者任一并存。相同输出集合内按配置顺序排列。旧配置中的命名分组在读取时拆成独立栏目，通过管理页保存时写成布尔格式并备份原文件。若旧文件完全没有分组字段，请为希望保留独立预览分组的出版物栏目显式设置 `group = true`。
 
-每个 group 是 OPDS 2.0 标准结构——**任何兼容客户端均可原生渲染为分栏网格**，无需自定义扩展标记。
+分组的 `metadata.title` 来自栏目标题。出版物分组可通过 `links[]` 中的 `rel="self"` 打开完整列表。导航集合由带 `title` 和 `href` 的链接对象组成。出版物的 `count` 默认是 10，填 0 关闭预览。空预览和失败的预览会省略，首页没有可用内容集合时提供 Latest 导航入口。 [OPDS 2.0 §2.1、§2.5](https://specs.opds.io/opds-2.0.html#25-groups)
 
-### 2.3 navigation[] 元素结构
+### 2.2 Facets
 
-| 字段 | 说明 |
-|---|---|
-| `metadata.title` | 导航入口标题 |
-| `metadata.identifier` | `urn:ehentai:subsection:{title 小写}` |
-| `metadata.description` | 一句话描述 |
-| `links[0]` | `rel="subsection"`，`href` = 完整采集文档 |
+Facet 栏目的 `type` 和 `query` 必须与顶层出版物栏目一致。每个 facet 包含 `metadata.title` 和指向筛选或排序结果的 `links[]`，出版物预览可用时才输出。搜索与 `latest` 支持类别筛选，`toplist:*` 支持切换周期，`favorites` 和 `favorites:N` 支持切换收藏目录。分组中的出版物可在其完整列表页提供自己的顶层 facets。 [OPDS 2.0 §2.4](https://specs.opds.io/opds-2.0.html#24-facets)
 
-> **不再有 layout 自定义扩展**：showcase 机制已被 groups 取代。`navigation[]` 中所有条目均为纯导航链接，客户端按标准 `subsection` 语义处理即可。
-
-### 2.4 所有已知区块清单
+### 2.3 内置来源
 
 | title | type / query | href | 出现条件 |
 |---|---|---|---|
@@ -107,8 +53,6 @@
 | Toplist: Past Year | `preset` / `toplist:year` | `/opds/v2.0/toplist?period=year` | 恒有 |
 | Toplist: All Time | `preset` / `toplist:alltime` | `/opds/v2.0/toplist?period=alltime` | 恒有 |
 | 自定义搜索 | `search` / 任意表达式 | `/opds/v2.0/gallery?query=…` | 恒有 |
-
-**服务端调控**：`config/home.toml`（`[[group]]` / `[[navigation]]`），环境变量 `HOME_CONFIG` 可指定路径。书写顺序 = 输出顺序；`publications` 字段控制预览条数。
 
 ---
 
@@ -386,6 +330,6 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 5. 搜索：用顶层 `search` link 的 JSON 模板替换 `{searchTerms}`。
 6. 分页：`rel="next"`（gallery 传 `next`，toplist 传 `page`）。
 7. 详情：`/opds/v2.0/gallery/{gid}/{token}` 的 `subject` 为完整标签（经 status 过滤，高亮样式由 My Tags 映射表内联）——展开详情时**按 name 合并**：以详情 subject 为全集替换，回填列表条目带来的 `x:style`，勿整体丢弃样式。EH 专属标量字段读 `metadata` 下 `x:*` 键（`x:rating` 等），不再有嵌套 `extensions` 桶。
-8. 失效兜底：单个 group 上游故障时该 group 不出现在 `groups[]` 中（其他 groups 和 navigation 照常）；首页布局由 `home.toml` 配置驱动，客户端无需感知。
+8. 失效兜底：单个出版物栏目上游故障时省略其预览；首页布局由 `home.toml` 配置驱动，客户端无需感知。
 9. **分享**：取 publication / entry 的 `rel="alternate"` link（`type="text/html"`）作为分享 URL——即上游 E-Hentai 页面（e-hentai.org 或 exhentai.org，服务端已按 `EH_SITE` 拼好），客户端无需感知 `EH_SITE`。勿用 acquisition/stream（那些是服务端资源，离开服务端不可达）。
 10. **模板链接**：href 含 `{...}`（stream 的 `{pageNumber}`、search 的 `{searchTerms}`，标 `templated: true`）一律**替换占位符后使用，永不按字面请求**；「可二次请求」的唯一依据 = acquisition type ∈ {`application/opds+json`、`application/atom+xml`、`application/xml`}（剥离 `;profile=` 参数）——archive/模板/图片/未知 MIME 一律跳过。

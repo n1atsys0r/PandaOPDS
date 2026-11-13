@@ -1,6 +1,7 @@
 package home
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,37 +9,51 @@ import (
 
 func TestSaveMakesBackupAndPreservesNilCount(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "home.toml")
-	old := []byte("[[group]]\nid = \"browse\"\ntitle = \"Browse\"\n\n[[section]]\nkind = \"navigation\"\ntitle = \"Latest\"\ntype = \"preset\"\nquery = \"latest\"\n")
+	old := []byte(`[[group]]
+id = "browse"
+title = "Browse"
+
+[[section]]
+group = "browse"
+kind = "navigation"
+type = "preset"
+query = "latest"
+`)
 	if err := os.WriteFile(p, old, 0600); err != nil {
 		t.Fatal(err)
 	}
-	c := Config{Groups: []Group{{ID: "browse", Title: "Browse"}}, Sections: []Section{{Group: "browse", Kind: "navigation", Title: "Latest", Type: "preset", Query: "latest"}}}
+	c, err := DecodeEditor(old)
+	if err != nil || len(c.Sections) != 1 || !c.Sections[0].Group {
+		t.Fatalf("legacy group was not converted: %+v, %v", c, err)
+	}
 	if err := SaveSnapshot(p, c, true, old); err != nil {
 		t.Fatal(err)
 	}
 	backup, err := os.ReadFile(p + ".bak")
 	if err != nil || string(backup) != string(old) {
-		t.Fatalf("backup mismatch: %v %q", err, backup)
+		t.Fatalf("backup mismatch: %v", err)
 	}
 	encoded, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if bytes.Contains(encoded, []byte("[[group]]")) || !bytes.Contains(encoded, []byte("group = true")) {
+		t.Fatalf("save did not use boolean grouping: %s", encoded)
+	}
 	got, err := DecodeEditor(encoded)
-	if err != nil || len(got.Sections) != 1 || got.Sections[0].Count != nil {
-		t.Fatalf("omitted count changed: %+v, %v", got, err)
+	if err != nil || len(got.Sections) != 1 || !got.Sections[0].Group || got.Sections[0].Count != nil {
+		t.Fatalf("omitted count changed: %+v %v", got, err)
 	}
 }
-
-func TestValidateRejectsMissingGroupAndNegativeCount(t *testing.T) {
+func TestValidateRejectsMultipleRootPublicationsAndNegativeCount(t *testing.T) {
 	n := -1
-	c := Config{Groups: []Group{{ID: "g"}}, Sections: []Section{{Group: "missing", Kind: "publication", Type: "preset", Query: "latest", Count: &n}}}
-	if Validate(c) == nil {
-		t.Fatal("expected invalid group rejection")
-	}
-	c.Sections[0].Group = "g"
+	c := Config{Sections: []Section{{Kind: "publication", Type: "preset", Query: "latest", Count: &n}}}
 	if Validate(c) == nil {
 		t.Fatal("expected negative count rejection")
+	}
+	c.Sections = []Section{{Kind: "publication", Type: "preset", Query: "latest"}, {Kind: "publication", Type: "preset", Query: "popular"}}
+	if Validate(c) == nil {
+		t.Fatal("expected multiple root publication rejection")
 	}
 }
 
@@ -79,5 +94,37 @@ func TestRuntimeLoadIgnoresUnknownFieldsButEditorRejects(t *testing.T) {
 	}
 	if _, err := DecodeEditor(data); err == nil {
 		t.Fatal("editor should report unknown persisted fields")
+	}
+}
+
+func TestExampleHomeConfigParsesAndValidates(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config", "home.toml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := DecodeEditor(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = Validate(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateTopLevelPublicationAndGroupsAreExclusive(t *testing.T) {
+	root := Section{Kind: "publication", Type: "preset", Query: "latest"}
+	topNavigation := Section{Kind: "navigation", Type: "preset", Query: "popular"}
+	groupedNavigation := Section{Kind: "navigation", Group: true, Type: "preset", Query: "popular"}
+	groupedPublication := Section{Kind: "publication", Group: true, Type: "preset", Query: "popular"}
+	for _, grouped := range []Section{groupedNavigation, groupedPublication} {
+		if err := Validate(Config{Sections: []Section{root, topNavigation, grouped}}); err == nil {
+			t.Fatalf("accepted root publication with grouped section %+v", grouped)
+		}
+	}
+	if err := Validate(Config{Sections: []Section{root, topNavigation}}); err != nil {
+		t.Fatalf("top-level navigation should coexist with root publication: %v", err)
+	}
+	if err := Validate(Config{Sections: []Section{groupedNavigation, topNavigation}}); err != nil {
+		t.Fatalf("grouped section should coexist with root navigation: %v", err)
 	}
 }

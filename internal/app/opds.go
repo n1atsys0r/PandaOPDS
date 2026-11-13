@@ -93,6 +93,10 @@ func favoriteAtomFacets(builder feed.Builder, route, selected string, names map[
 }
 
 func favoriteJSONFacets(builder feed.Builder, route, selected string, names map[int]string) []map[string]any {
+	return []map[string]any{{"metadata": map[string]string{"title": "Favorite category"}, "links": favoriteCategoryLinks(builder, route, selected, names)}}
+}
+
+func favoriteCategoryLinks(builder feed.Builder, route, selected string, names map[int]string) []map[string]any {
 	links := []map[string]any{}
 	for id := -1; id < 10; id++ {
 		favcat := ""
@@ -107,7 +111,7 @@ func favoriteJSONFacets(builder feed.Builder, route, selected string, names map[
 		}
 		links = append(links, link)
 	}
-	return []map[string]any{{"metadata": map[string]string{"title": "Favorite category"}, "links": links}}
+	return links
 }
 
 func (s *Server) builder() feed.Builder {
@@ -474,95 +478,122 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 		}
 		sections = append(sections, sec)
 	}
-	groupTitles := map[string]string{}
-	for _, g := range cfg.Groups {
-		groupTitles[g.ID] = g.Title
-	}
-	grouped := map[string][]home.Section{}
-	groupOrder := []string{}
 	rootNav := []map[string]any{}
 	outGroups := []map[string]any{}
-	emitted := map[string]bool{}
-	for _, sec := range sections {
-		if sec.Group != "" {
-			if _, ok := grouped[sec.Group]; !ok {
-				groupOrder = append(groupOrder, sec.Group)
-			}
-			grouped[sec.Group] = append(grouped[sec.Group], sec)
-			continue
-		}
-		if sec.Kind == "publication" {
-			grouped["__single_"+sec.Query] = []home.Section{sec}
-			groupOrder = append(groupOrder, "__single_"+sec.Query)
-		} else {
-			title := sec.Title
-			rootNav = append(rootNav, map[string]any{"title": title, "href": s.builder().Href(home.BuildHref(sec.Type, sec.Query)), "rel": "subsection", "type": feed.MIMEOPDSAcq})
-		}
-	}
 	previews, previewTimedOut := s.fetchHomePreviews(r.Context(), sections)
-	for _, gid := range groupOrder {
-		if emitted[gid] {
-			continue
-		}
-		emitted[gid] = true
-		list := grouped[gid]
-		if len(list) == 0 {
-			continue
-		}
-		first := list[0]
-		title := groupTitles[gid]
-		if strings.HasPrefix(gid, "__single_") {
-			title = first.Title
-		}
-		if title == "" {
-			title = first.Title
-		}
-		g := map[string]any{"metadata": map[string]any{"title": title, "identifier": "urn:ehentai:group:" + gid, "modified": isoNow()}, "links": []map[string]any{{"rel": "self", "href": s.builder().Href(home.BuildHref(first.Type, first.Query)), "type": feed.MIMEOPDSAcq, "title": title}}}
-		pubs := []map[string]any{}
-		nav := []map[string]any{}
-		for _, sec := range list {
-			if sec.Kind == "publication" {
-				count := previewCount(sec)
-				if count <= 0 {
-					continue
-				}
-				result, ok := previews[homePreviewKey{sec.Type, sec.Query}]
-				if !ok || result.err != nil {
-					if s.Logger != nil {
-						err := result.err
-						if !ok {
-							err = context.DeadlineExceeded
-						}
-						s.Logger.Printf("home section %q: %v", sec.Title, err)
-					}
-					continue
-				}
-				info := result.info
-				if count > len(info.Galleries) {
-					count = len(info.Galleries)
-				}
-				for _, item := range info.Galleries[:count] {
-					pubs = append(pubs, s.builder().Publication(item, false))
-				}
+	rootPubs := []map[string]any{}
+	var rootSource homePreviewKey
+	for _, sec := range sections {
+		title := firstNonEmpty(sec.Title, sec.Query)
+		href := s.builder().Href(home.BuildHref(sec.Type, sec.Query))
+		if sec.Kind == "navigation" {
+			link := map[string]any{"title": title, "href": href, "rel": "subsection", "type": feed.MIMEOPDSAcq}
+			if sec.Group {
+				outGroups = append(outGroups, map[string]any{"metadata": map[string]any{"title": title, "modified": isoNow()}, "navigation": []map[string]any{link}})
 			} else {
-				nav = append(nav, map[string]any{"title": firstNonEmpty(sec.Title, sec.Query), "href": s.builder().Href(home.BuildHref(sec.Type, sec.Query)), "rel": "subsection", "type": feed.MIMEOPDSAcq})
+				rootNav = append(rootNav, link)
 			}
+			continue
 		}
-		if len(pubs) > 0 {
-			g["publications"] = pubs
+		if sec.Kind != "publication" {
+			continue
 		}
-		if len(nav) > 0 {
-			g["navigation"] = nav
+		count := previewCount(sec)
+		if count <= 0 {
+			continue
 		}
-		outGroups = append(outGroups, g)
+		result, ok := previews[homePreviewKey{sec.Type, sec.Query}]
+		if !ok || result.err != nil {
+			if s.Logger != nil {
+				err := result.err
+				if !ok {
+					err = context.DeadlineExceeded
+				}
+				s.Logger.Printf("home section %q: %v", title, err)
+			}
+			continue
+		}
+		if count > len(result.info.Galleries) {
+			count = len(result.info.Galleries)
+		}
+		pubs := []map[string]any{}
+		for _, item := range result.info.Galleries[:count] {
+			pubs = append(pubs, s.builder().Publication(item, false))
+		}
+		if len(pubs) == 0 {
+			continue
+		}
+		if sec.Group {
+			g := map[string]any{"metadata": map[string]any{"title": title, "modified": isoNow()}, "publications": pubs, "links": []map[string]any{{"rel": "self", "href": href, "type": feed.MIMEOPDSAcq, "title": title}}}
+			outGroups = append(outGroups, g)
+		} else {
+			rootPubs = pubs
+			rootSource = homePreviewKey{sec.Type, sec.Query}
+		}
 	}
+
+	rootFacetGroups := []map[string]any{}
+	for _, sec := range sections {
+		if sec.Kind != "facets" || len(rootPubs) == 0 || rootSource != (homePreviewKey{sec.Type, sec.Query}) {
+			continue
+		}
+		links := s.homeFacetLinks(sec, previews[rootSource].info)
+		if len(links) >= 2 {
+			rootFacetGroups = append(rootFacetGroups, map[string]any{
+				"metadata": map[string]string{"title": firstNonEmpty(sec.Title, sec.Query)},
+				"links":    links,
+			})
+		}
+	}
+
+	if len(rootNav) == 0 && len(outGroups) == 0 && len(rootPubs) == 0 {
+		rootNav = append(rootNav, map[string]any{"title": "Latest", "href": s.builder().Href(home.BuildHref("preset", "latest")), "rel": "subsection", "type": feed.MIMEOPDSAcq})
+	}
+
 	doc := s.builder().NavigationDocument(rootNav, outGroups)
+	if len(rootPubs) > 0 {
+		doc["publications"] = rootPubs
+	}
+	if len(rootFacetGroups) > 0 {
+		doc["facets"] = rootFacetGroups
+	}
 	cacheControl := "public, max-age=300"
 	if previewTimedOut {
 		cacheControl = "no-store"
 	}
 	writeBytes(w, 200, feed.MIMEOPDSNav, map[string]string{"Cache-Control": cacheControl}, s.builder().JSON(doc))
 }
+func (s *Server) homeFacetLinks(sec home.Section, info eh.GalleryPageInfo) []map[string]any {
+	builder := s.builder()
+	const galleryRoute = "/opds/v2.0/gallery"
+	if sec.Type == "search" || sec.Query == "latest" {
+		base := home.BuildHref(sec.Type, sec.Query)
+		links := []map[string]any{builder.Link("self", builder.Href(base), feed.MIMEOPDSAcq, "All", nil)}
+		for _, category := range s.Settings.Facets {
+			params := url.Values{"category": {category.Name}}
+			if sec.Type == "search" {
+				params.Set("query", sec.Query)
+			}
+			links = append(links, map[string]any{"href": builder.Href(galleryRoute + "?" + params.Encode()), "type": feed.MIMEOPDSAcq, "title": category.Name})
+		}
+		return links
+	}
+
+	kind, selected, _ := home.ResolvePreset(sec.Query)
+	if kind == "favorites" {
+		return favoriteCategoryLinks(builder, galleryRoute, selected, info.FavcatMap)
+	}
+	links := []map[string]any{}
+	for _, period := range []string{"yesterday", "month", "year", "alltime"} {
+		link := map[string]any{"href": builder.Href("/opds/v2.0/toplist?period=" + period), "type": feed.MIMEOPDSAcq, "title": periods[period]}
+		if period == selected {
+			link["rel"] = "self"
+		}
+		links = append(links, link)
+	}
+	return links
+}
+
 func previewCount(sec home.Section) int {
 	if sec.Count == nil {
 		return 10

@@ -294,18 +294,16 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 412, map[string]any{"detail": "home layout changed; reload before editing"})
 			return
 		}
-		old, err := home.DecodeEditor(snapshot)
+		_, err := home.DecodeEditor(snapshot)
 		if err != nil {
 			writeJSON(w, 400, map[string]any{"detail": "home configuration is invalid"})
 			return
 		}
-		if err := home.Validate(old); err != nil {
-			writeJSON(w, 400, map[string]any{"detail": "home configuration is invalid"})
-			return
-		}
+		// A decodable legacy layout may violate current output-shape rules. Permit
+		// replacing it with a valid layout; the original is backed up on save.
 		var c home.Config
-		if e := decodeJSON(w, r, &c); e != nil || c.Groups == nil || c.Sections == nil {
-			writeJSON(w, 400, map[string]any{"detail": "groups and sections must be JSON arrays"})
+		if e := decodeJSON(w, r, &c); e != nil || c.Sections == nil {
+			writeJSON(w, 400, map[string]any{"detail": "sections must be a JSON array"})
 			return
 		}
 		if e := home.Validate(c); e != nil {
@@ -335,16 +333,12 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[string]any {
 	c := home.Default()
-	var e error
+	var parseErr, validationErr error
 	if exists {
-		c, e = home.DecodeEditor(snapshot)
-		if e == nil {
-			e = home.Validate(c)
+		c, parseErr = home.DecodeEditor(snapshot)
+		if parseErr == nil {
+			validationErr = home.Validate(c)
 		}
-	}
-	groups := []map[string]any{}
-	for _, g := range c.Groups {
-		groups = append(groups, map[string]any{"id": g.ID, "title": g.Title})
 	}
 	sections := []map[string]any{}
 	for _, v := range c.Sections {
@@ -354,9 +348,12 @@ func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[str
 		}
 		sections = append(sections, map[string]any{"group": v.Group, "kind": v.Kind, "title": v.Title, "type": v.Type, "query": v.Query, "count": count})
 	}
-	out := map[string]any{"path": s.Settings.HomeConfigPath, "using_file": exists, "groups": groups, "sections": sections}
-	if e != nil {
-		out["error"] = "home configuration is invalid"
+	out := map[string]any{"path": s.Settings.HomeConfigPath, "using_file": exists}
+	if parseErr == nil { out["sections"] = sections }
+	if parseErr != nil {
+		out["error"] = parseErr.Error()
+	} else if validationErr != nil {
+		out["validation_error"] = validationErr.Error()
 	}
 	return out
 }

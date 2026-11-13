@@ -38,7 +38,13 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		site["public_base_url"] = "（相对路径）"
 	}
 	th := map[string]any{"html_requests": counts["html"], "api_requests": counts["api"], "image_requests": counts["image"], "thumb_requests": counts["thumb"], "max_concurrency": s.Settings.MaxConcurrency, "image_max_concurrency": s.Settings.ImageMaxConcurrency, "thumb_max_concurrency": s.Settings.ThumbMaxConcurrency, "html_interval_seconds": s.Settings.HTMLIntervalSeconds}
-	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": len(homeCfg.Groups), "sections": len(homeCfg.Sections)}})
+	groupCount := 0
+	for _, section := range homeCfg.Sections {
+		if section.Group {
+			groupCount++
+		}
+	}
+	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": groupCount, "sections": len(homeCfg.Sections)}})
 }
 func apiURL(site string) string {
 	if site == "exhentai" {
@@ -58,27 +64,19 @@ func (s *Server) currentHome() (home.Config, bool, any) {
 }
 func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 	cfg, using, err := s.currentHome()
-	groups := []map[string]any{}
-	for _, g := range cfg.Groups {
-		groups = append(groups, map[string]any{"id": g.ID, "title": g.Title})
-	}
 	sections := []map[string]any{}
 	for _, sec := range cfg.Sections {
 		count := 0
 		if sec.Count != nil {
 			count = *sec.Count
 		}
-		var group any
-		if sec.Group != "" {
-			group = sec.Group
-		}
 		title := sec.Title
 		if title == "" {
 			title = sec.Query
 		}
-		sections = append(sections, map[string]any{"kind": sec.Kind, "title": title, "type": sec.Type, "query": sec.Query, "count": count, "group": group, "href": home.BuildHref(sec.Type, sec.Query), "auth_required": home.AuthRequired(sec)})
+		sections = append(sections, map[string]any{"kind": sec.Kind, "title": title, "type": sec.Type, "query": sec.Query, "count": count, "group": sec.Group, "href": home.BuildHref(sec.Type, sec.Query), "auth_required": home.AuthRequired(sec)})
 	}
-	writeJSON(w, 200, map[string]any{"path": s.Settings.HomeConfigPath, "using_file": using, "error": err, "groups": groups, "sections": sections})
+	writeJSON(w, 200, map[string]any{"path": s.Settings.HomeConfigPath, "using_file": using, "error": err, "sections": sections})
 }
 func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.Settings

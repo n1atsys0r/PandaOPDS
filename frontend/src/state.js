@@ -1,4 +1,5 @@
 import { reactive, toRefs } from "vue";
+import { canUseFacets, chooseInitialHomeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
 const state = reactive({
   page: "dashboard",
   mobile: false,
@@ -36,8 +37,10 @@ const state = reactive({
   homeTag: "",
   confDirty: {},
   homeDirty: false,
+  homeMode: "publications",
+  homeModeRequired: false,
   form: {},
-  layout: { groups: [], sections: [] },
+  layout: { navigation: [], publication: null, facets: [], groups: [] },
 });
 const coverCache = new Map();
 const coverInflight = new Map();
@@ -242,15 +245,17 @@ async function saveConfig() {
     await loadConfig();
   });
 }
-async function loadHome() {
+async function loadHome(options = {}) {
   try {
     const r = await api("/api/home/edit");
     state.home = r.data;
     state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
-    state.layout = {
-      groups: structuredClone(r.data.groups || []),
-      sections: structuredClone(r.data.sections || []),
-    };
+    if (!options.preserveDrafts) {
+      const sections = r.data.sections || [];
+      state.layout = splitHomeSections(sections);
+      state.homeMode = chooseInitialHomeMode(sections);
+      state.homeModeRequired = !state.homeMode;
+    }
     state.homeDirty = false;
   } catch (e) {
     if (e.status === 401) return;
@@ -263,106 +268,69 @@ async function loadHome() {
   }
 }
 async function saveHome() {
+  if (!state.homeMode) {
+    state.error = "请先选择要保留的首页布局模式。";
+    return;
+  }
+  if (state.homeMode === "publications" && state.layout.facets.length && !canUseFacets(state.layout.publication)) {
+    state.error = "现有筛选来源不受支持。请移除筛选，或将出版物来源改为搜索、latest、toplist 或 favorites。";
+    return;
+  }
+  const sections = serializeHomeLayout(state.layout, state.homeMode);
+  const submitted = JSON.stringify(sections);
   await run(async () => {
-    await api("/api/home/edit", {
+    const saved = await api("/api/home/edit", {
       method: "PUT",
       headers: { "If-Match": state.homeTag },
-      body: JSON.stringify({
-        ...state.layout,
-        sections: state.layout.sections.map((x) => ({
-          ...x,
-          count: x.count === "" || x.count == null ? null : Number(x.count),
-        })),
-      }),
+      body: JSON.stringify({ sections }),
     });
+    state.home = saved.data;
+    state.homeTag = (saved.headers.get("ETag") || "").replace(/^W\//i, "");
     state.notice = "首页布局已保存";
-    await loadHome();
+    state.homeDirty = JSON.stringify(serializeHomeLayout(state.layout, state.homeMode)) !== submitted;
   });
 }
-function addSection() {
-  state.layout.sections.push({
-    group: "",
-    kind: "publication",
-    title: "热门画廊",
-    type: "preset",
-    query: "popular",
-    count: null,
-  });
+function selectHomeMode(mode) {
+  state.homeMode = mode;
+  state.homeModeRequired = false;
   state.homeDirty = true;
 }
-function removeSection(i) {
-  state.layout.sections.splice(i, 1);
+function canAddFacet() {
+  return canUseFacets(state.layout.publication);
+}
+function addNavigation() {
+  state.layout.navigation.push({ kind: "navigation", group: false, title: "最新画廊", type: "preset", query: "latest" });
   state.homeDirty = true;
 }
-function movePreviewItem(key, delta) {
-  const keys = state.layout.sections.map((section, index) => {
-    if (section.group) return "group:" + section.group;
-    if (section.kind === "navigation") return "root-navigation";
-    return "root-publication:" + index;
-  });
-  const items = [];
-  const seen = new Set();
-  state.layout.sections.forEach((section, index) => {
-    const itemKey = keys[index];
-    if (seen.has(itemKey)) return;
-    seen.add(itemKey);
-    const sections = itemKey.startsWith("group:")
-      ? state.layout.sections.filter(
-          (item) => "group:" + item.group === itemKey,
-        )
-      : itemKey === "root-navigation"
-        ? state.layout.sections.filter(
-            (item) => !item.group && item.kind === "navigation",
-          )
-        : [section];
-    items.push({ key: itemKey, sections });
-  });
-  const from = items.findIndex((item) => item.key === key);
-  const to = from + delta;
-  if (from < 0 || to < 0 || to >= items.length) return;
-  const [item] = items.splice(from, 1);
-  items.splice(to, 0, item);
-  state.layout.sections = items.flatMap((entry) => entry.sections);
+function removeItem(collection, i) {
+  state.layout[collection].splice(i, 1);
   state.homeDirty = true;
 }
-function moveSection(i, delta) {
+function moveItem(collection, i, delta) {
   const j = i + delta;
-  if (j < 0 || j >= state.layout.sections.length) return;
-  const a = state.layout.sections.splice(i, 1)[0];
-  state.layout.sections.splice(j, 0, a);
+  if (j < 0 || j >= state.layout[collection].length) return;
+  const a = state.layout[collection].splice(i, 1)[0];
+  state.layout[collection].splice(j, 0, a);
   state.homeDirty = true;
 }
-function addGroup() {
-  let n = 1,
-    id = "group";
-  while (state.layout.groups.some((g) => g.id === id)) {
-    n++;
-    id = "group_" + n;
-  }
-  state.layout.groups.push({ id, title: "新分组" });
+function addPublication() {
+  if (state.layout.publication) return;
+  state.layout.publication = { kind: "publication", group: false, title: "最新画廊", type: "preset", query: "latest", count: 10 };
   state.homeDirty = true;
 }
-function renameGroup(index, nextID) {
-  const group = state.layout.groups[index];
-  const id = nextID.trim();
-  if (
-    !/^[A-Za-z0-9_-]+$/.test(id) ||
-    state.layout.groups.some((item, i) => i !== index && item.id === id)
-  ) {
-    state.error =
-      "分组标识不能为空，且必须唯一，只能包含字母、数字、下划线和连字符。";
-    return false;
-  }
-  const oldID = group.id;
-  group.id = id;
-  for (const section of state.layout.sections)
-    if (section.group === oldID) section.group = id;
+function removePublication() {
+  state.layout.publication = null;
   state.homeDirty = true;
-  return true;
 }
-function removeGroup(id) {
-  state.layout.groups = state.layout.groups.filter((g) => g.id !== id);
-  for (const sec of state.layout.sections) if (sec.group === id) sec.group = "";
+function addFacet() {
+  if (!canAddFacet()) return;
+  state.layout.facets.push({ title: "分类" });
+  state.homeDirty = true;
+}
+function addGroupSection(kind) {
+  state.layout.groups.push(kind === "navigation"
+    ? { kind, group: true, title: "最新画廊", type: "preset", query: "latest" }
+    : { kind: "publication", group: true, title: "热门画廊", type: "preset", query: "popular", count: 10 });
   state.homeDirty = true;
 }
 async function loadArchives() {
@@ -767,13 +735,15 @@ export function useApp() {
     saveConfig,
     saveHome,
     setField,
-    addSection,
-    removeSection,
-    moveSection,
-    addGroup,
-    removeGroup,
-    renameGroup,
-    movePreviewItem,
+    selectHomeMode,
+    canAddFacet,
+    addNavigation,
+    addPublication,
+    removePublication,
+    addFacet,
+    addGroupSection,
+    removeItem,
+    moveItem,
     loadArchives,
     loadArchiveScanStatus,
     startArchiveScan,

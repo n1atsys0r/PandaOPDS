@@ -25,6 +25,7 @@ htmlcov/
 /cache/
 tests/fixtures/
 config/home.toml
+/config/archive/
 archives/
 favorites_sync.json
 mytags.json

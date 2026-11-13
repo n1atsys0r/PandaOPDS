@@ -299,7 +299,10 @@ func (b Builder) Link(rel, href, typ, title string, props map[string]any) map[st
 	return m
 }
 func (b Builder) NavigationDocument(nav []map[string]any, groups []map[string]any) map[string]any {
-	doc := map[string]any{"metadata": map[string]any{"title": "PandaOPDS", "identifier": "urn:ehentai:root", "modified": iso("")}, "links": []map[string]any{b.Link("self", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("start", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("search", b.Href("/opds/v2.0/gallery?query={searchTerms}"), MIMEOPDSAcq, "Search", nil)}, "navigation": nav}
+	doc := map[string]any{"metadata": map[string]any{"title": "PandaOPDS", "identifier": "urn:ehentai:root", "modified": iso("")}, "links": []map[string]any{b.Link("self", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("start", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("search", b.Href("/opds/v2.0/gallery?query={searchTerms}"), MIMEOPDSAcq, "Search", nil)}}
+	if len(nav) > 0 {
+		doc["navigation"] = nav
+	}
 	if len(groups) > 0 {
 		doc["groups"] = groups
 	}

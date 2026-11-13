@@ -59,7 +59,6 @@ import {
   DatabaseIcon as Database,
   ActivityIcon as Activity,
   SearchIcon as Search,
-  GripVerticalIcon as GripVertical,
   CircleCheckIcon as CircleCheck,
   CircleAlertIcon as CircleAlert,
   HardDriveIcon as HardDrive,
@@ -71,6 +70,7 @@ import {
   ChevronDownIcon as ChevronDown,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
+import { canUseFacets, replacesAlternateMode } from "./home-layout.js";
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -250,65 +250,25 @@ const qualityLabel = (entry) => {
   return "归档";
 };
 const countLabel = (section) => {
-  if (section.kind === "navigation") return "导航不使用 count";
   if (section.count == null) return "默认 10";
   if (Number(section.count) === 0) return "关闭预览";
   return section.count + " 项";
 };
-const previewItems = computed(() => {
-  const sections = s.layout.value.sections || [];
-  const byKey = new Map();
-  const items = [];
-  for (const [index, section] of sections.entries()) {
-    let key, item;
-    if (section.group) {
-      key = "group:" + section.group;
-      item = byKey.get(key);
-      if (!item) {
-        item = {
-          key,
-          kind: "group",
-          id: section.group,
-          title:
-            s.layout.value.groups.find((group) => group.id === section.group)
-              ?.title || section.group,
-          sections: sections.filter(
-            (candidate) => candidate.group === section.group,
-          ),
-        };
-        byKey.set(key, item);
-        items.push(item);
-      }
-    } else if (section.kind === "navigation") {
-      key = "root-navigation";
-      item = byKey.get(key);
-      if (!item) {
-        item = {
-          key,
-          kind: "root-navigation",
-          id: "",
-          title: "根目录导航",
-          sections: sections.filter(
-            (candidate) => !candidate.group && candidate.kind === "navigation",
-          ),
-        };
-        byKey.set(key, item);
-        items.push(item);
-      }
-    } else {
-      key = "root-publication:" + index;
-      items.push({
-        key,
-        kind: "publication",
-        id: "",
-        title: section.title || "独立出版物栏目",
-        sections: [section],
-      });
-    }
-  }
-  return items;
+const homeReplaceWarning = computed(() => {
+  const persisted = s.home.value?.sections || [];
+  if (replacesAlternateMode(persisted, s.homeMode.value) && s.homeMode.value === "groups")
+    return "保存分组布局会移除服务器上当前的顶层出版物和筛选。此草稿仍暂存在本页。";
+  if (replacesAlternateMode(persisted, s.homeMode.value) && s.homeMode.value === "publications")
+    return "保存出版物布局会移除服务器上当前的分组栏目。此草稿仍暂存在本页。";
+  return "";
 });
-
+const homeFacetWarning = computed(() =>
+  s.homeMode.value === "publications" &&
+  s.layout.value.facets.length > 0 &&
+  !canUseFacets(s.layout.value.publication)
+    ? "当前出版物来源不支持筛选。请移除所有筛选，或改用搜索、latest、toplist 或 favorites 来源。"
+    : "",
+);
 const EH_CATEGORIES = [
   { key: "Doujinshi", label: "Doujinshi", color: "#fc4e4e" },
   { key: "Manga", label: "Manga", color: "#fcb417" },
@@ -1183,277 +1143,119 @@ function cardActionLabel(a) {
             >
           </div></template
         >
-        <template v-if="s.page.value === 'home'"
-          ><div class="heading">
+        <template v-if="s.page.value === 'home'">
+          <div class="heading">
             <div>
               <small>OPDS 入口</small>
               <h1>首页编排</h1>
-              <p>分组与栏目顺序决定 OPDS 首页的展示顺序。</p>
+              <p>先配置始终显示的导航，再选择出版物布局或分组布局。</p>
             </div>
-            <Button
-              class="primary-action"
-              :disabled="!s.homeDirty.value || s.busy.value"
-              @click="s.saveHome"
-            >
+            <Button class="primary-action" :disabled="!s.homeDirty.value || s.busy.value || s.homeModeRequired.value || Boolean(homeFacetWarning)" @click="s.saveHome">
               <Save />保存布局
             </Button>
           </div>
           <Card v-if="s.home.value?.legacy" class="panel">
-            <CardHeader class="panel-header">
-              <CardTitle role="heading" aria-level="2">当前首页布局（只读）</CardTitle>
-              <CardDescription>
-              {{ s.home.value.legacy.path }} ·
-              {{ s.home.value.legacy.using_file ? "文件配置" : "内置默认" }}
-              </CardDescription>
-            </CardHeader>
-            <CardContent class="panel-body">
-            <div v-if="s.home.value.legacy.error" class="archive-error">
-              {{ s.home.value.legacy.error }}
-            </div>
-            <div class="legacy-groups">
-              <Badge
-                v-for="g in s.home.value.legacy.groups || []"
-                :key="g.id"
-                variant="outline"
-                >{{ g.id }} · {{ g.title }}</Badge
-              >
-            </div>
-            <div
-              v-for="(sec, i) in s.home.value.legacy.sections || []"
-              :key="i"
-              class="preview"
-            >
-              <b>{{ i + 1 }}</b>
-              <div>
-                <strong>{{ sec.title }}</strong
-                ><small
-                  >{{ sec.kind }} · {{ sec.type }} · {{ sec.query }} ·
-                  {{ sec.count ?? "不限" }} · {{ sec.group || "根" }}</small
-                >
-              </div>
-            </div>
-            </CardContent>
+            <CardHeader class="panel-header"><CardTitle>首页布局（只读）</CardTitle><CardDescription>编辑接口不可用 · {{ s.home.value.legacy.path }}</CardDescription></CardHeader>
+            <CardContent class="panel-body"><div v-for="(item,i) in s.home.value.legacy.sections || []" :key="i" class="preview"><b>{{ i+1 }}</b><div><strong>{{ item.title || item.query }}</strong><small>{{ item.kind }} · {{ item.query }}</small></div></div></CardContent>
           </Card>
-          <Card
-            v-if="s.home.value?.error && !s.home.value?.legacy"
-            class="panel"
-          >
-            <CardHeader class="panel-header">
-              <CardTitle role="heading" aria-level="2">首页布局（只读）</CardTitle>
-              <CardDescription>{{ s.home.value.path }} · 文件内容无法编辑</CardDescription>
-            </CardHeader>
-            <CardContent class="panel-body">
-            <div class="archive-error">{{ s.home.value.error }}</div>
-            <div
-              v-for="(sec, i) in s.home.value.sections || []"
-              :key="i"
-              class="preview"
-            >
-              <b>{{ i + 1 }}</b>
-              <div>
-                <strong>{{ sec.title }}</strong
-                ><small
-                  >{{ sec.kind }} · {{ sec.type }} · {{ sec.query }} ·
-                  {{ sec.count == null ? "不限" : sec.count }} ·
-                  {{ sec.group || "根" }}</small
-                >
-              </div>
-            </div>
-            </CardContent>
+          <Card v-else-if="s.home.value?.error" class="panel">
+            <CardHeader class="panel-header"><CardTitle>首页布局无法读取</CardTitle></CardHeader>
+            <CardContent class="panel-body"><div class="archive-error">{{ s.home.value.error }}</div></CardContent>
           </Card>
-          <div
-            v-if="s.home.value?.sections && !s.home.value?.error"
-            class="home-columns"
-          >
+          <template v-else-if="s.home.value?.sections">
+            <Card v-if="s.home.value?.validation_error" class="panel home-repair">
+              <CardHeader class="panel-header">
+                <CardTitle>需要修复现有布局</CardTitle>
+                <CardDescription>{{ s.home.value.validation_error }} · 原文件会在保存时备份。</CardDescription>
+              </CardHeader>
+              <CardContent class="panel-body">
+                <div class="repair-drafts">
+                  <div><strong>出版物草稿</strong><span>{{ s.layout.value.publication ? s.layout.value.publication.title || s.layout.value.publication.query : '无顶层出版物' }} · {{ s.layout.value.facets.length }} 个筛选</span><small v-for="(facet,i) in s.layout.value.facets" :key="i">筛选：{{ facet.title || '未命名' }}</small></div>
+                  <div><strong>分组草稿 · {{ s.layout.value.groups.length }} 个栏目</strong><small v-for="(group,i) in s.layout.value.groups" :key="i">{{ group.title || group.query }} · {{ group.kind }}</small></div>
+                </div>
+                <p>请选择要保留的布局。下方“首页内容”中的分段按钮用于选择；两种草稿会留在本页，直到切换页面或重新载入。</p>
+              </CardContent>
+            </Card>
             <Card class="panel">
               <CardHeader class="panel-header">
                 <div class="panel-title">
-                <div>
-                  <CardTitle role="heading" aria-level="2">栏目设置</CardTitle>
-                  <CardDescription>按列表顺序显示；留空分组则直接展示</CardDescription>
-                </div>
-                <div>
-                  <Button variant="outline" @click="s.addGroup">添加分组</Button>
-                  <Button variant="outline" @click="s.addSection">
-                    <Plus />添加栏目
-                  </Button>
-                </div>
+                  <div><CardTitle>首页导航</CardTitle><CardDescription>这些链接始终显示在首页顶层，可与任一种内容布局并存。</CardDescription></div>
+                  <Button variant="outline" @click="s.addNavigation"><Plus />添加导航</Button>
                 </div>
               </CardHeader>
               <CardContent class="panel-body home-editor">
-              <div
-                v-for="(g, gi) in s.layout.value.groups"
-                :key="g.id"
-                class="group-row"
-              >
-                <Input
-                  :model-value="g.id"
-                  @change="s.renameGroup(gi, $event.target.value)"
-                  aria-label="分组标识"
-                /><Input
-                  v-model="g.title"
-                  @update:model-value="s.homeDirty.value = true"
-                  aria-label="分组名称"
-                /><Button
-                  variant="ghost"
-                  size="icon-sm"
-                  @click="s.removeGroup(g.id)"
-                  aria-label="删除分组"
-                >
-                  <X />
-                </Button>
-              </div>
-              <div
-                v-for="(sec, i) in s.layout.value.sections"
-                :key="i"
-                class="section-edit"
-              >
-                <GripVertical /><span>{{
-                  String(i + 1).padStart(2, "0")
-                }}</span>
-                <div class="edit-fields">
-                  <Input
-                    v-model="sec.title"
-                    @update:model-value="s.homeDirty.value = true"
-                    placeholder="栏目标题"
-                  /><select
-                    v-model="sec.kind"
-                    @change="s.homeDirty.value = true"
-                  >
-                    <option value="publication">出版物列表</option>
-                    <option value="navigation">导航目录</option></select
-                  ><select
-                    v-model="sec.group"
-                    @change="s.homeDirty.value = true"
-                  >
-                    <option value="">未分组</option>
-                    <option v-for="g in s.layout.value.groups" :value="g.id">
-                      {{ g.title || g.id }}
-                    </option></select
-                  ><select
-                    v-model="sec.type"
-                    @change="s.homeDirty.value = true"
-                  >
-                    <option value="preset">预设</option>
-                    <option value="search">搜索</option></select
-                  ><Input
-                    v-if="sec.type === 'preset'"
-                    v-model="sec.query"
-                    list="preset-options"
-                    @update:model-value="s.homeDirty.value = true"
-                    placeholder="预设或 favorites:数字"
-                  /><datalist id="preset-options">
-                    <option value="popular" />
-                    <option value="latest" />
-                    <option value="watched" />
-                    <option value="favorites" />
-                    <option value="archives" />
-                    <option value="toplist:yesterday" />
-                    <option value="toplist:month" />
-                    <option value="toplist:year" />
-                    <option value="toplist:alltime" /></datalist
-                  ><Input
-                    v-if="sec.type === 'search'"
-                    v-model="sec.query"
-                    @update:model-value="s.homeDirty.value = true"
-                    placeholder="搜索词"
-                  /><label class="count-field"
-                    >count
-                    <Input
-                      type="number"
-                      min="0"
-                      :disabled="sec.kind === 'navigation'"
-                      v-model.number="sec.count"
-                      @update:model-value="s.homeDirty.value = true"
-                      placeholder="默认 10；填 0 关闭预览"
-                  /></label>
-                </div>
-                <div class="reorder">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    :disabled="i === 0"
-                    @click="s.moveSection(i, -1)"
-                    aria-label="上移"
-                  >
-                    ↑</button
-                  ><Button
-                    variant="ghost"
-                    size="icon-sm"
-                    :disabled="i === s.layout.value.sections.length - 1"
-                    @click="s.moveSection(i, 1)"
-                    aria-label="下移"
-                  >
-                    ↓</button
-                  ><Button
-                    variant="ghost"
-                    size="icon-sm"
-                    @click="s.removeSection(i)"
-                    aria-label="移除栏目"
-                  >
-                    <X />
-                  </Button>
-                </div>
-              </div>
-              <div v-if="!s.layout.value.sections.length" class="empty">
-                暂无栏目，请添加一个栏目。
-              </div>
+                <details v-for="(nav, i) in s.layout.value.navigation" :key="'nav-'+i" class="home-editor-item">
+                  <summary><span>{{ nav.title || nav.query || '未命名导航' }}</span><small>{{ nav.type === 'search' ? '搜索' : '预设' }} · {{ nav.query }}</small></summary>
+                  <div class="home-editor-fields">
+                    <Input v-model="nav.title" aria-label="导航标题" placeholder="导航标题" @update:model-value="s.homeDirty.value = true" />
+                    <select v-model="nav.type" aria-label="导航来源类型" @change="s.homeDirty.value = true"><option value="preset">预设</option><option value="search">搜索</option></select>
+                    <Input v-if="nav.type === 'preset'" v-model="nav.query" list="home-presets" aria-label="导航预设名称" placeholder="预设名称" @update:model-value="s.homeDirty.value = true" />
+                    <Input v-else v-model="nav.query" aria-label="导航搜索表达式" placeholder="搜索表达式" @update:model-value="s.homeDirty.value = true" />
+
+                    <div class="home-row-actions"><Button variant="ghost" size="icon-sm" :disabled="i===0" aria-label="导航上移" @click="s.moveItem('navigation',i,-1)">↑</Button><Button variant="ghost" size="icon-sm" :disabled="i===s.layout.value.navigation.length-1" aria-label="导航下移" @click="s.moveItem('navigation',i,1)">↓</Button><Button variant="ghost" size="icon-sm" aria-label="删除导航" @click="s.removeItem('navigation',i)"><X /></Button></div>
+                  </div>
+                </details>
+                <div v-if="!s.layout.value.navigation.length" class="empty">尚未添加首页导航。</div>
               </CardContent>
             </Card>
-            <Card class="panel preview-panel">
+            <datalist id="home-presets"><option value="popular"/><option value="latest"/><option value="watched"/><option value="favorites"/><option value="favorites:0"/><option value="archives"/><option value="toplist:yesterday"/><option value="toplist:month"/><option value="toplist:year"/><option value="toplist:alltime"/></datalist>
+            <Card class="panel home-layout-panel">
               <CardHeader class="panel-header">
-                <CardTitle role="heading" aria-level="2">结构预览</CardTitle>
-                <CardDescription>显示顺序</CardDescription>
+                <div class="panel-title">
+                  <div><CardTitle>首页内容</CardTitle><CardDescription>顶层出版物与分组不能同时存在；顶层导航不受此限制。</CardDescription></div>
+                  <div class="home-mode-switch" role="group" aria-label="首页内容布局模式">
+                    <Button :variant="s.homeMode.value === 'publications' ? 'default' : 'outline'" :aria-pressed="s.homeMode.value === 'publications'" @click="s.selectHomeMode('publications')">出版物</Button>
+                    <Button :variant="s.homeMode.value === 'groups' ? 'default' : 'outline'" :aria-pressed="s.homeMode.value === 'groups'" @click="s.selectHomeMode('groups')">分组</Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent class="panel-body">
-              <div
-                v-for="(item, index) in previewItems"
-                :key="item.key"
-                class="preview-group"
-              >
-                <div class="preview-group-head">
-                  <h3>{{ item.title }}</h3>
-                  <div class="reorder">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      :disabled="index === 0"
-                      @click="s.movePreviewItem(item.key, -1)"
-                      :aria-label="'上移 ' + item.title"
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      :disabled="index === previewItems.length - 1"
-                      @click="s.movePreviewItem(item.key, 1)"
-                      :aria-label="'下移 ' + item.title"
-                    >
-                      ↓
-                    </Button>
+                <div v-if="homeReplaceWarning" class="home-warning" role="status">{{ homeReplaceWarning }}</div>
+                <template v-if="s.homeMode.value === 'publications'">
+                  <div v-if="s.layout.value.publication" class="home-editor-item home-publication-card">
+                    <details open>
+                    <summary><span>{{ s.layout.value.publication.title || s.layout.value.publication.query || '首页出版物' }}</span><small>{{ s.layout.value.publication.type === 'search' ? '搜索' : '预设' }} · {{ s.layout.value.publication.query }} · {{ countLabel(s.layout.value.publication) }}</small></summary>
+                      <div class="home-editor-fields">
+                        <Input v-model="s.layout.value.publication.title" aria-label="出版物标题" placeholder="出版物标题" @update:model-value="s.homeDirty.value = true" />
+                        <select v-model="s.layout.value.publication.type" aria-label="出版物来源类型" @change="s.homeDirty.value = true"><option value="preset">预设</option><option value="search">搜索</option></select>
+                        <Input v-if="s.layout.value.publication.type === 'preset'" v-model="s.layout.value.publication.query" list="home-presets" aria-label="出版物预设名称" placeholder="预设名称" @update:model-value="s.homeDirty.value = true" />
+                        <Input v-else v-model="s.layout.value.publication.query" aria-label="出版物搜索表达式" placeholder="搜索表达式" @update:model-value="s.homeDirty.value = true" />
+                        <label class="count-field">预览条数<Input type="number" min="0" v-model.number="s.layout.value.publication.count" placeholder="默认 10；0 关闭预览" @update:model-value="s.homeDirty.value = true" /></label>
+
+                        <div class="home-row-actions"><Button variant="outline" @click="s.removePublication">删除出版物</Button></div>
+                      </div>
+                    </details>
                   </div>
-                </div>
-                <div v-for="(sec, i) in item.sections" :key="i" class="preview">
-                  <b>{{ i + 1 }}</b>
-                  <div>
-                    <strong>{{ sec.title || "未命名栏目" }}</strong
-                    ><small
-                      >{{ sec.kind }} ·
-                      {{
-                        sec.type === "search"
-                          ? "搜索 · " + (sec.query || "未设置查询")
-                          : "预设 · " + sec.query
-                      }}
-                      · {{ countLabel(sec) }}</small
-                    >
-                  </div>
-                </div>
-              </div>
+                  <div v-else class="home-add-card"><span>当前为导航-only 首页。可选添加一个顶层出版物列表。</span><Button variant="outline" @click="s.addPublication"><Plus />添加出版物</Button></div>
+                  <div class="home-subsection-heading"><div><strong>筛选</strong><small v-if="s.layout.value.publication">筛选来源自动跟随上方出版物。</small><small v-else>添加出版物后可添加筛选。</small></div><Button variant="outline" :disabled="!s.canAddFacet()" @click="s.addFacet"><Plus />添加筛选</Button></div>
+                  <div v-if="homeFacetWarning" class="home-warning" role="alert">{{ homeFacetWarning }} 你仍可删除现有筛选。</div>
+                  <details v-for="(facet, i) in s.layout.value.facets" :key="'facet-'+i" class="home-editor-item home-facet-item">
+                    <summary><span>{{ facet.title || '未命名筛选' }}</span><small>跟随：{{ s.layout.value.publication?.query || '未选择出版物' }}</small></summary>
+                    <div class="home-editor-fields facet-fields"><Input v-model="facet.title" aria-label="筛选集合标题" placeholder="筛选集合标题" @update:model-value="s.homeDirty.value = true" /><div class="home-row-actions"><Button variant="ghost" size="icon-sm" :disabled="i===0" aria-label="筛选上移" @click="s.moveItem('facets',i,-1)">↑</Button><Button variant="ghost" size="icon-sm" :disabled="i===s.layout.value.facets.length-1" aria-label="筛选下移" @click="s.moveItem('facets',i,1)">↓</Button><Button variant="ghost" size="icon-sm" aria-label="删除筛选" @click="s.removeItem('facets',i)"><X /></Button></div></div>
+                  </details>
+                </template>
+                <template v-else-if="s.homeMode.value === 'groups'">
+                  <div class="home-subsection-heading"><div><strong>独立分组栏目</strong><small>每张卡片输出为一个独立分组，可选择出版物或导航。</small></div><div class="home-row-actions"><Button variant="outline" @click="s.addGroupSection('publication')"><Plus />出版物分组</Button><Button variant="outline" @click="s.addGroupSection('navigation')"><Plus />导航分组</Button></div></div>
+                  <details v-for="(item, i) in s.layout.value.groups" :key="'group-'+i" class="home-editor-item">
+                    <summary><span>{{ item.title || item.query || '未命名分组' }}</span><small>{{ item.kind === 'publication' ? '出版物分组' : '导航分组' }} · {{ item.type === 'search' ? '搜索' : '预设' }} · {{ item.query }}<template v-if="item.kind === 'publication'"> · {{ countLabel(item) }}</template></small></summary>
+                    <div class="home-editor-fields">
+                      <Input v-model="item.title" aria-label="分组标题" placeholder="分组标题" @update:model-value="s.homeDirty.value = true" />
+                      <select v-model="item.kind" aria-label="分组内容类型" @change="s.homeDirty.value = true"><option value="publication">出版物</option><option value="navigation">导航</option></select>
+                      <select v-model="item.type" aria-label="来源类型" @change="s.homeDirty.value = true"><option value="preset">预设</option><option value="search">搜索</option></select>
+                      <Input v-if="item.type === 'preset'" v-model="item.query" list="home-presets" aria-label="分组预设名称" placeholder="预设名称" @update:model-value="s.homeDirty.value = true" />
+                      <Input v-else v-model="item.query" aria-label="分组搜索表达式" placeholder="搜索表达式" @update:model-value="s.homeDirty.value = true" />
+                      <label v-if="item.kind === 'publication'" class="count-field">预览条数<Input type="number" min="0" v-model.number="item.count" placeholder="默认 10；0 关闭预览" @update:model-value="s.homeDirty.value = true" /></label>
+
+                      <div class="home-row-actions"><Button variant="ghost" size="icon-sm" :disabled="i===0" aria-label="分组上移" @click="s.moveItem('groups',i,-1)">↑</Button><Button variant="ghost" size="icon-sm" :disabled="i===s.layout.value.groups.length-1" aria-label="分组下移" @click="s.moveItem('groups',i,1)">↓</Button><Button variant="ghost" size="icon-sm" aria-label="删除分组" @click="s.removeItem('groups',i)"><X /></Button></div>
+                    </div>
+                  </details>
+                  <div v-if="!s.layout.value.groups.length" class="empty">尚未添加分组栏目。</div>
+                </template>
+                <div v-else class="empty">请选择出版物布局或分组布局以继续编辑。</div>
               </CardContent>
             </Card>
-          </div></template
-        >
+          </template>
+        </template>
         <template v-if="s.page.value === 'archive'">
           <div class="heading">
             <div>

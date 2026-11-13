@@ -228,7 +228,7 @@ count=0
 	if next.Header().Get("ETag") == firstTag {
 		t.Fatal("comment-only external edit did not change ETag")
 	}
-	stale := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"groups":[],"sections":[]}`))
+	stale := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"sections":[]}`))
 	stale.Header.Set("Content-Type", "application/json")
 	stale.Header.Set("If-Match", firstTag)
 	conflict := httptest.NewRecorder()
@@ -358,7 +358,7 @@ func TestHomeEditorAcceptsWeakETagFromReverseProxy(t *testing.T) {
 	}
 	tag := get.Header().Get("ETag")
 
-	putReq := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"groups":[],"sections":[]}`))
+	putReq := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"sections":[]}`))
 	putReq.Header.Set("Content-Type", "application/json")
 	putReq.Header.Set("If-Match", "W/"+tag)
 	putRec := httptest.NewRecorder()
@@ -368,5 +368,44 @@ func TestHomeEditorAcceptsWeakETagFromReverseProxy(t *testing.T) {
 	}
 	if putRec.Header().Get("Cache-Control") != "no-cache, no-store" {
 		t.Fatalf("PUT Cache-Control header missing: %q", putRec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestHomeEditorCanRepairDecodableInvalidMixedLayout(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "home.toml")
+	old := []byte(`[[section]]
+kind="publication"
+group=true
+type="preset"
+query="popular"
+title="Grouped"
+
+[[section]]
+kind="publication"
+type="preset"
+query="latest"
+title="Root"
+`)
+	if err := os.WriteFile(p, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Settings: config.Settings{HomeConfigPath: p}, editKey: []byte("test-only-etag-key")}
+	get := httptest.NewRecorder()
+	s.homeEdit(get, httptest.NewRequest(http.MethodGet, "/api/home/edit", nil))
+	if get.Code != 200 || !strings.Contains(get.Body.String(), "top-level publications and groups cannot coexist") || !strings.Contains(get.Body.String(), `"sections"`) {
+		t.Fatalf("invalid layout not shown for repair: %d %s", get.Code, get.Body.String())
+	}
+	tag := get.Header().Get("ETag")
+	req := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"sections":[{"kind":"publication","group":false,"title":"Root","type":"preset","query":"latest"},{"kind":"navigation","group":false,"type":"preset","query":"popular"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", tag)
+	rr := httptest.NewRecorder()
+	s.homeEdit(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("repair PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	backup, err := os.ReadFile(p + ".bak")
+	if err != nil || string(backup) != string(old) {
+		t.Fatalf("repair did not preserve original backup: %v", err)
 	}
 }
