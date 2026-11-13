@@ -42,6 +42,7 @@ import {
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
 import ArchiveReader from "@/components/ArchiveReader.vue";
 import CoverImage from "@/components/CoverImage.vue";
+import HomeEditor from "@/components/HomeEditor.vue";
 import LoginForm from "@/components/LoginForm.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
 import {
@@ -70,7 +71,6 @@ import {
   ChevronDownIcon as ChevronDown,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
-import { canUseFacets, replacesAlternateMode } from "./home-layout.js";
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -249,26 +249,6 @@ const qualityLabel = (entry) => {
   if (entry.status === "unarchived") return "在线";
   return "归档";
 };
-const countLabel = (section) => {
-  if (section.count == null) return "默认 10";
-  if (Number(section.count) === 0) return "关闭预览";
-  return section.count + " 项";
-};
-const homeReplaceWarning = computed(() => {
-  const persisted = s.home.value?.sections || [];
-  if (replacesAlternateMode(persisted, s.homeMode.value) && s.homeMode.value === "groups")
-    return "保存分组布局会移除服务器上当前的顶层出版物和筛选。此草稿仍暂存在本页。";
-  if (replacesAlternateMode(persisted, s.homeMode.value) && s.homeMode.value === "publications")
-    return "保存出版物布局会移除服务器上当前的分组栏目。此草稿仍暂存在本页。";
-  return "";
-});
-const homeFacetWarning = computed(() =>
-  s.homeMode.value === "publications" &&
-  s.layout.value.facets.length > 0 &&
-  !canUseFacets(s.layout.value.publication)
-    ? "当前出版物来源不支持筛选。请移除所有筛选，或改用搜索、latest、toplist 或 favorites 来源。"
-    : "",
-);
 const EH_CATEGORIES = [
   { key: "Doujinshi", label: "Doujinshi", color: "#fc4e4e" },
   { key: "Manga", label: "Manga", color: "#fcb417" },
@@ -311,8 +291,8 @@ function archivePageCount(a) {
 function canReadOnline(a) {
   return Boolean(
     a &&
-      ["ready", "unarchived", "failed"].includes(a.status) &&
-      archivePageCount(a) > 0,
+    ["ready", "unarchived", "failed"].includes(a.status) &&
+    archivePageCount(a) > 0,
   );
 }
 
@@ -610,10 +590,7 @@ function cardActionLabel(a) {
 }
 </script>
 <template>
-  <div
-    v-if="!s.authChecked.value"
-    class="min-h-svh w-full bg-background"
-  />
+  <div v-if="!s.authChecked.value" class="min-h-svh w-full bg-background" />
   <div
     v-else-if="s.authRequired.value"
     class="flex min-h-svh w-full items-center justify-center p-6 md:p-10 bg-background"
@@ -625,7 +602,9 @@ function cardActionLabel(a) {
   <SidebarProvider v-else class="app-layout" style="--sidebar-width: 17.5rem">
     <Sidebar collapsible="offcanvas" variant="inset">
       <SidebarHeader class="brand-header px-5 py-4">
-        <span class="font-bold text-base tracking-tight text-foreground select-none">
+        <span
+          class="font-bold text-base tracking-tight text-foreground select-none"
+        >
           PandaOPDS
         </span>
       </SidebarHeader>
@@ -647,17 +626,23 @@ function cardActionLabel(a) {
     <SidebarInset class="webui-inset">
       <header class="site-header">
         <SidebarTrigger aria-label="切换导航菜单" class="-ml-1" />
-        <Separator orientation="vertical" class="header-separator h-4 my-auto self-center shrink-0" />
+        <Separator
+          orientation="vertical"
+          class="header-separator h-4 my-auto self-center shrink-0"
+        />
         <div class="breadcrumb">
-          <span class="breadcrumb-title font-semibold text-sm text-foreground tracking-tight">{{
-            s.page.value === "dashboard"
-              ? "概览"
-              : s.page.value === "config"
-                ? "设置"
-                : s.page.value === "home"
-                  ? "首页编排"
-                  : "归档"
-          }}</span>
+          <span
+            class="breadcrumb-title font-semibold text-sm text-foreground tracking-tight"
+            >{{
+              s.page.value === "dashboard"
+                ? "概览"
+                : s.page.value === "config"
+                  ? "设置"
+                  : s.page.value === "home"
+                    ? "首页编排"
+                    : "归档"
+            }}</span
+          >
         </div>
         <div class="header-actions">
           <Button
@@ -675,7 +660,9 @@ function cardActionLabel(a) {
       <div class="page-content">
         <Alert v-if="s.notice.value" class="app-alert success-alert">
           <CircleCheck class="size-4 text-foreground" />
-          <AlertDescription class="text-sm">{{ s.notice.value }}</AlertDescription>
+          <AlertDescription class="text-sm">{{
+            s.notice.value
+          }}</AlertDescription>
           <Button
             variant="ghost"
             size="icon-xs"
@@ -686,7 +673,9 @@ function cardActionLabel(a) {
         </Alert>
         <Alert v-if="s.error.value" variant="destructive" class="app-alert">
           <CircleAlert class="size-4" />
-          <AlertDescription class="text-sm">{{ s.error.value }}</AlertDescription>
+          <AlertDescription class="text-sm">{{
+            s.error.value
+          }}</AlertDescription>
           <Button
             variant="ghost"
             size="icon-xs"
@@ -699,12 +688,22 @@ function cardActionLabel(a) {
           <div class="heading">
             <div>
               <div class="flex items-center gap-2 mb-2">
-                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border border-border/80 bg-background text-foreground shadow-xs">
+                <span
+                  class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border border-border/80 bg-background text-foreground shadow-xs"
+                >
                   <span
                     class="size-1.5 rounded-full"
-                    :class="s.status.value?.app?.config_ok ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'"
+                    :class="
+                      s.status.value?.app?.config_ok
+                        ? 'bg-emerald-500 animate-pulse'
+                        : 'bg-amber-500'
+                    "
                   ></span>
-                  {{ s.status.value?.app?.config_ok ? "服务运行正常" : "配置需要检查" }}
+                  {{
+                    s.status.value?.app?.config_ok
+                      ? "服务运行正常"
+                      : "配置需要检查"
+                  }}
                 </span>
                 <span
                   v-if="s.status.value?.circuit?.state === 'open'"
@@ -712,98 +711,181 @@ function cardActionLabel(a) {
                 >
                   熔断器 OPEN
                 </span>
-                <span v-else class="text-xs text-muted-foreground hidden sm:inline">
+                <span
+                  v-else
+                  class="text-xs text-muted-foreground hidden sm:inline"
+                >
                   熔断器正常 · 15s 自动同步
                 </span>
               </div>
-              <h1 class="text-2xl font-bold tracking-tight text-foreground">服务概览</h1>
-              <p class="text-sm text-muted-foreground mt-1">查看上游站点状态、出站请求与多级缓存负载。</p>
+              <h1 class="text-2xl font-bold tracking-tight text-foreground">
+                服务概览
+              </h1>
+              <p class="text-sm text-muted-foreground mt-1">
+                查看上游站点状态、出站请求与多级缓存负载。
+              </p>
             </div>
           </div>
 
           <div class="metrics">
             <Card class="shadow-xs hover:shadow-sm transition-shadow">
-              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
-                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">上游站点</CardTitle>
-                <CardAction><Globe class="size-4 text-muted-foreground" /></CardAction>
+              <CardHeader
+                class="flex flex-row items-center justify-between pb-2 space-y-0"
+              >
+                <CardTitle
+                  class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >上游站点</CardTitle
+                >
+                <CardAction
+                  ><Globe class="size-4 text-muted-foreground"
+                /></CardAction>
               </CardHeader>
               <CardContent>
-                <div class="text-2xl font-bold tracking-tight text-foreground capitalize">
+                <div
+                  class="text-2xl font-bold tracking-tight text-foreground capitalize"
+                >
                   {{ s.status.value?.site?.site || "—" }}
                 </div>
-                <div class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground">
-                  <span class="inline-block size-1.5 rounded-full bg-emerald-500"></span>
-                  <span class="truncate font-mono">{{ s.status.value?.site?.host || "e-hentai.org" }}</span>
+                <div
+                  class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground"
+                >
+                  <span
+                    class="inline-block size-1.5 rounded-full bg-emerald-500"
+                  ></span>
+                  <span class="truncate font-mono">{{
+                    s.status.value?.site?.host || "e-hentai.org"
+                  }}</span>
                 </div>
               </CardContent>
             </Card>
 
             <Card class="shadow-xs hover:shadow-sm transition-shadow">
-              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
-                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">出站请求总量</CardTitle>
-                <CardAction><Activity class="size-4 text-muted-foreground" /></CardAction>
+              <CardHeader
+                class="flex flex-row items-center justify-between pb-2 space-y-0"
+              >
+                <CardTitle
+                  class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >出站请求总量</CardTitle
+                >
+                <CardAction
+                  ><Activity class="size-4 text-muted-foreground"
+                /></CardAction>
               </CardHeader>
               <CardContent>
-                <div class="text-2xl font-bold tracking-tight font-mono text-foreground">
+                <div
+                  class="text-2xl font-bold tracking-tight font-mono text-foreground"
+                >
                   {{
                     Number(s.status.value?.throttle?.html_requests || 0) +
                     Number(s.status.value?.throttle?.api_requests || 0) +
                     Number(s.status.value?.throttle?.image_requests || 0)
                   }}
                 </div>
-                <div class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground font-mono">
-                  <span>HTML {{ s.status.value?.throttle?.html_requests || 0 }}</span>
+                <div
+                  class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground font-mono"
+                >
+                  <span
+                    >HTML
+                    {{ s.status.value?.throttle?.html_requests || 0 }}</span
+                  >
                   <span>·</span>
-                  <span>API {{ s.status.value?.throttle?.api_requests || 0 }}</span>
+                  <span
+                    >API {{ s.status.value?.throttle?.api_requests || 0 }}</span
+                  >
                   <span>·</span>
-                  <span>图 {{ s.status.value?.throttle?.image_requests || 0 }}</span>
+                  <span
+                    >图
+                    {{ s.status.value?.throttle?.image_requests || 0 }}</span
+                  >
                 </div>
               </CardContent>
             </Card>
 
             <Card class="shadow-xs hover:shadow-sm transition-shadow">
-              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
-                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">内存缓存</CardTitle>
-                <CardAction><Database class="size-4 text-muted-foreground" /></CardAction>
+              <CardHeader
+                class="flex flex-row items-center justify-between pb-2 space-y-0"
+              >
+                <CardTitle
+                  class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >内存缓存</CardTitle
+                >
+                <CardAction
+                  ><Database class="size-4 text-muted-foreground"
+                /></CardAction>
               </CardHeader>
               <CardContent>
                 <div class="flex items-baseline justify-between">
-                  <div class="text-2xl font-bold tracking-tight font-mono text-foreground">
+                  <div
+                    class="text-2xl font-bold tracking-tight font-mono text-foreground"
+                  >
                     {{ s.status.value?.memory_cache?.size ?? 0 }}
-                    <span class="text-xs font-normal text-muted-foreground">/ {{ s.status.value?.memory_cache?.max_entries ?? 2000 }}</span>
+                    <span class="text-xs font-normal text-muted-foreground"
+                      >/
+                      {{
+                        s.status.value?.memory_cache?.max_entries ?? 2000
+                      }}</span
+                    >
                   </div>
-                  <span class="text-xs font-medium text-muted-foreground font-mono">
+                  <span
+                    class="text-xs font-medium text-muted-foreground font-mono"
+                  >
                     {{
                       s.status.value?.memory_cache?.max_entries
-                        ? Math.round((Number(s.status.value?.memory_cache?.size || 0) / Number(s.status.value?.memory_cache?.max_entries)) * 100)
+                        ? Math.round(
+                            (Number(s.status.value?.memory_cache?.size || 0) /
+                              Number(
+                                s.status.value?.memory_cache?.max_entries,
+                              )) *
+                              100,
+                          )
                         : 0
                     }}%
                   </span>
                 </div>
-                <div class="w-full bg-muted rounded-full h-1.5 mt-2.5 overflow-hidden">
+                <div
+                  class="w-full bg-muted rounded-full h-1.5 mt-2.5 overflow-hidden"
+                >
                   <div
                     class="bg-foreground h-full rounded-full transition-all duration-300"
                     :style="{
-                      width: `${Math.min(100, s.status.value?.memory_cache?.max_entries ? Math.round((Number(s.status.value?.memory_cache?.size || 0) / Number(s.status.value?.memory_cache?.max_entries)) * 100) : 0)}%`
+                      width: `${Math.min(100, s.status.value?.memory_cache?.max_entries ? Math.round((Number(s.status.value?.memory_cache?.size || 0) / Number(s.status.value?.memory_cache?.max_entries)) * 100) : 0)}%`,
                     }"
                   ></div>
                 </div>
-                <div class="flex items-center justify-between mt-2 text-xs text-muted-foreground font-mono">
-                  <span>命中 {{ s.status.value?.memory_cache?.hits ?? 0 }}</span>
-                  <span>未命中 {{ s.status.value?.memory_cache?.misses ?? 0 }}</span>
+                <div
+                  class="flex items-center justify-between mt-2 text-xs text-muted-foreground font-mono"
+                >
+                  <span
+                    >命中 {{ s.status.value?.memory_cache?.hits ?? 0 }}</span
+                  >
+                  <span
+                    >未命中
+                    {{ s.status.value?.memory_cache?.misses ?? 0 }}</span
+                  >
                 </div>
               </CardContent>
             </Card>
 
             <Card class="shadow-xs hover:shadow-sm transition-shadow">
-              <CardHeader class="flex flex-row items-center justify-between pb-2 space-y-0">
-                <CardTitle class="text-xs font-medium uppercase tracking-wider text-muted-foreground">磁盘图片缓存</CardTitle>
-                <CardAction><HardDrive class="size-4 text-muted-foreground" /></CardAction>
+              <CardHeader
+                class="flex flex-row items-center justify-between pb-2 space-y-0"
+              >
+                <CardTitle
+                  class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >磁盘图片缓存</CardTitle
+                >
+                <CardAction
+                  ><HardDrive class="size-4 text-muted-foreground"
+                /></CardAction>
               </CardHeader>
               <CardContent>
                 <div class="flex items-baseline justify-between">
-                  <div class="text-2xl font-bold tracking-tight text-foreground">
-                    {{ s.status.value?.disk_cache?.enabled ? "已启用" : "已关闭" }}
+                  <div
+                    class="text-2xl font-bold tracking-tight text-foreground"
+                  >
+                    {{
+                      s.status.value?.disk_cache?.enabled ? "已启用" : "已关闭"
+                    }}
                   </div>
                   <Button
                     v-if="s.status.value?.disk_cache?.enabled"
@@ -816,9 +898,15 @@ function cardActionLabel(a) {
                     <Trash2 class="size-3 mr-1" />清理
                   </Button>
                 </div>
-                <div class="flex items-center justify-between mt-1.5 text-xs text-muted-foreground font-mono">
-                  <span>{{ s.status.value?.disk_cache?.entries ?? 0 }} 项条目</span>
-                  <span>{{ formatBytes(s.status.value?.disk_cache?.bytes ?? 0) }}</span>
+                <div
+                  class="flex items-center justify-between mt-1.5 text-xs text-muted-foreground font-mono"
+                >
+                  <span
+                    >{{ s.status.value?.disk_cache?.entries ?? 0 }} 项条目</span
+                  >
+                  <span>{{
+                    formatBytes(s.status.value?.disk_cache?.bytes ?? 0)
+                  }}</span>
                 </div>
               </CardContent>
             </Card>
@@ -827,44 +915,81 @@ function cardActionLabel(a) {
           <div class="columns">
             <Card class="shadow-xs">
               <CardHeader class="border-b border-border/50 pb-3">
-                <CardTitle class="text-base font-semibold text-foreground">运行详情</CardTitle>
-                <CardDescription class="text-xs text-muted-foreground">当前进程与上游连接协议配置</CardDescription>
+                <CardTitle class="text-base font-semibold text-foreground"
+                  >运行详情</CardTitle
+                >
+                <CardDescription class="text-xs text-muted-foreground"
+                  >当前进程与上游连接协议配置</CardDescription
+                >
               </CardHeader>
               <CardContent class="pt-2">
                 <div class="divide-y divide-border/50 text-sm">
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">版本</span>
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >版本</span
+                    >
                     <Badge variant="secondary" class="font-mono text-xs">
                       v{{ s.status.value?.app?.version || "—" }}
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">外部 URL</span>
-                    <span class="font-mono text-xs text-foreground truncate max-w-[240px]">
-                      {{ s.status.value?.site?.public_base_url || "未设置（相对路径）" }}
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >外部 URL</span
+                    >
+                    <span
+                      class="font-mono text-xs text-foreground truncate max-w-[240px]"
+                    >
+                      {{
+                        s.status.value?.site?.public_base_url ||
+                        "未设置（相对路径）"
+                      }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">IPB 登录状态</span>
-                    <Badge :variant="s.status.value?.site?.has_ipb ? 'outline' : 'secondary'" class="text-xs">
-                      {{ s.status.value?.site?.has_ipb ? "已配置凭据" : "未配置（游客模式）" }}
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >IPB 登录状态</span
+                    >
+                    <Badge
+                      :variant="
+                        s.status.value?.site?.has_ipb ? 'outline' : 'secondary'
+                      "
+                      class="text-xs"
+                    >
+                      {{
+                        s.status.value?.site?.has_ipb
+                          ? "已配置凭据"
+                          : "未配置（游客模式）"
+                      }}
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">并发请求上限</span>
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >并发请求上限</span
+                    >
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ s.status.value?.throttle?.max_concurrency ?? "—" }} 线程
+                      {{ s.status.value?.throttle?.max_concurrency ?? "—" }}
+                      线程
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">HTML 请求间隔</span>
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >HTML 请求间隔</span
+                    >
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ s.status.value?.throttle?.html_interval_seconds ?? "—" }} 秒
+                      {{
+                        s.status.value?.throttle?.html_interval_seconds ?? "—"
+                      }}
+                      秒
                     </span>
                   </div>
-                  <div v-if="s.status.value?.circuit?.state === 'open'" class="flex items-center justify-between py-2.5 text-destructive">
+                  <div
+                    v-if="s.status.value?.circuit?.state === 'open'"
+                    class="flex items-center justify-between py-2.5 text-destructive"
+                  >
                     <span class="text-xs font-medium">熔断原因</span>
-                    <span class="text-xs font-mono">{{ s.status.value?.circuit?.reason }}</span>
+                    <span class="text-xs font-mono">{{
+                      s.status.value?.circuit?.reason
+                    }}</span>
                   </div>
                 </div>
               </CardContent>
@@ -874,10 +999,19 @@ function cardActionLabel(a) {
               <CardHeader class="border-b border-border/50 pb-3">
                 <div class="flex items-center justify-between">
                   <div>
-                    <CardTitle class="text-base font-semibold text-foreground">首页布局</CardTitle>
-                    <CardDescription class="text-xs text-muted-foreground">OPDS 首页编排与展示来源</CardDescription>
+                    <CardTitle class="text-base font-semibold text-foreground"
+                      >首页布局</CardTitle
+                    >
+                    <CardDescription class="text-xs text-muted-foreground"
+                      >OPDS 首页编排与展示来源</CardDescription
+                    >
                   </div>
-                  <Button variant="ghost" size="xs" class="h-7 text-xs gap-1" @click="s.route('home')">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    class="h-7 text-xs gap-1"
+                    @click="s.route('home')"
+                  >
                     进入编排 <ArrowUpRight :size="12" />
                   </Button>
                 </div>
@@ -885,34 +1019,60 @@ function cardActionLabel(a) {
               <CardContent class="pt-2">
                 <div class="divide-y divide-border/50 text-sm">
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">内容来源</span>
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >内容来源</span
+                    >
                     <Badge variant="outline" class="font-mono text-xs">
-                      {{ s.status.value?.home?.using_file ? "home.toml" : "内置默认" }}
+                      {{
+                        s.status.value?.home?.using_file
+                          ? "home.toml"
+                          : "内置默认"
+                      }}
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">配置文件路径</span>
-                    <span class="font-mono text-xs text-muted-foreground truncate max-w-[260px]" :title="s.status.value?.home?.path">
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >配置文件路径</span
+                    >
+                    <span
+                      class="font-mono text-xs text-muted-foreground truncate max-w-[260px]"
+                      :title="s.status.value?.home?.path"
+                    >
                       {{ s.status.value?.home?.path || "—" }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">已配置分组 / 栏目</span>
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >已配置分组 / 栏目</span
+                    >
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ s.status.value?.home?.groups ?? 0 }} 组 / {{ s.status.value?.home?.sections ?? 0 }} 栏目
+                      {{ s.status.value?.home?.groups ?? 0 }} 组 /
+                      {{ s.status.value?.home?.sections ?? 0 }} 栏目
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">OPDS 协议版本</span>
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >OPDS 协议版本</span
+                    >
                     <div class="flex items-center gap-1.5">
-                      <Badge variant="secondary" class="text-[10px] font-mono">v1.2</Badge>
-                      <Badge variant="secondary" class="text-[10px] font-mono">v2.0</Badge>
-                      <Badge variant="secondary" class="text-[10px] font-mono">OPDS-PSE</Badge>
+                      <Badge variant="secondary" class="text-[10px] font-mono"
+                        >v1.2</Badge
+                      >
+                      <Badge variant="secondary" class="text-[10px] font-mono"
+                        >v2.0</Badge
+                      >
+                      <Badge variant="secondary" class="text-[10px] font-mono"
+                        >OPDS-PSE</Badge
+                      >
                     </div>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium">服务自愈心跳</span>
-                    <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span class="text-muted-foreground text-xs font-medium"
+                      >服务自愈心跳</span
+                    >
+                    <span
+                      class="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                    >
                       <span class="size-1.5 rounded-full bg-emerald-500"></span>
                       活跃中
                     </span>
@@ -929,49 +1089,54 @@ function cardActionLabel(a) {
               <h1>设置</h1>
               <p>环境变量锁定项需在部署环境中修改。</p>
             </div>
-            <Badge v-if="s.config.value?.pending" variant="outline" class="badge-warn"
+            <Badge
+              v-if="s.config.value?.pending"
+              variant="outline"
+              class="badge-warn"
               >部分更改重启后生效</Badge
             >
           </div>
           <Card v-if="s.config.value?.legacy" class="panel">
             <CardHeader class="panel-header">
-              <CardTitle role="heading" aria-level="2">当前设置（只读）</CardTitle>
+              <CardTitle role="heading" aria-level="2"
+                >当前设置（只读）</CardTitle
+              >
             </CardHeader>
             <CardContent class="panel-body">
-            <p v-if="s.config.value.legacy.error" class="archive-error">
-              {{ s.config.value.legacy.error }}
-            </p>
-            <div
-              v-for="group in s.config.value.legacy.groups || []"
-              :key="group.id"
-              class="legacy-group"
-            >
-              <h3>{{ group.title }}</h3>
+              <p v-if="s.config.value.legacy.error" class="archive-error">
+                {{ s.config.value.legacy.error }}
+              </p>
               <div
-                v-for="field in group.fields || []"
-                :key="field.key"
-                class="legacy-row"
+                v-for="group in s.config.value.legacy.groups || []"
+                :key="group.id"
+                class="legacy-group"
               >
-                <b>{{ field.label }}</b
-                ><span>{{
-                  field.masked
-                    ? field.set
-                      ? "••••••••（已设置）"
-                      : "（未设置）"
-                    : (field.value ?? "（未设置）")
-                }}</span
-                ><small v-if="field.note">{{ field.note }}</small>
+                <h3>{{ group.title }}</h3>
+                <div
+                  v-for="field in group.fields || []"
+                  :key="field.key"
+                  class="legacy-row"
+                >
+                  <b>{{ field.label }}</b
+                  ><span>{{
+                    field.masked
+                      ? field.set
+                        ? "••••••••（已设置）"
+                        : "（未设置）"
+                      : (field.value ?? "（未设置）")
+                  }}</span
+                  ><small v-if="field.note">{{ field.note }}</small>
+                </div>
               </div>
-            </div>
-            <div v-if="s.config.value.legacy.derived" class="data-list">
-              <div
-                v-for="(value, key) in s.config.value.legacy.derived"
-                :key="key"
-              >
-                <span>{{ key }}</span
-                ><b>{{ value }}</b>
+              <div v-if="s.config.value.legacy.derived" class="data-list">
+                <div
+                  v-for="(value, key) in s.config.value.legacy.derived"
+                  :key="key"
+                >
+                  <span>{{ key }}</span
+                  ><b>{{ value }}</b>
+                </div>
               </div>
-            </div>
             </CardContent>
           </Card>
           <Card
@@ -981,151 +1146,191 @@ function cardActionLabel(a) {
           >
             <CardHeader class="panel-header">
               <div class="panel-title">
-                <CardTitle role="heading" aria-level="2">{{ group.title }}</CardTitle>
-                <CardDescription>保存的更改都需要重启服务后生效</CardDescription>
+                <CardTitle role="heading" aria-level="2">{{
+                  group.title
+                }}</CardTitle>
+                <CardDescription
+                  >保存的更改都需要重启服务后生效</CardDescription
+                >
               </div>
             </CardHeader>
             <CardContent class="form-panel-content">
-            <div v-for="[key, f] in group.fields" :key="key" class="field">
-              <div>
-                <label :for="key"
-                  >{{ labels[key] || key }}
-                  <Badge v-if="f.pending" variant="outline" class="badge-warn">待重启</Badge></label
-                ><small>{{
-                  f.locked
-                    ? lockedReason(key)
-                    : "来源：" +
-                      (f.source === "env"
-                        ? "环境变量"
-                        : f.source === "file"
-                          ? "配置文件"
-                          : "默认值")
-                }}</small>
-                <small v-if="key === 'archive_update_interval_days'">0 关闭周期检查；仅写入 settings.toml。</small>
-                <small v-if="key === 'archive_auto_update'">启用后自动购买新版归档，可能消耗 GP；仅写入 settings.toml。</small>
-                <small v-if="key === 'favorites_sync_interval_seconds'">默认 3600 秒；设为 0 只关闭周期扫描，收藏操作触发的扫描和手动扫描仍可用。</small>
-                <small v-if="key === 'favorites_sync_categories'">逗号分隔收藏夹 ID（0–9）；留空表示全部，-ID 表示排除该收藏夹。只限制自动归档范围，不影响同步扫描。</small>
-                <small v-if="key === 'favorites_sync_archive'">启用后会自动购买新发现收藏的归档，可能消耗 GP；首次扫描只建立基线，不会归档已有收藏。保存后重启生效。</small>
-              </div>
-              <div class="control">
-                <label v-if="boolean(key)" class="switch"
-                  ><input
-                    :id="key"
-                    type="checkbox"
-                    :checked="Boolean(s.form.value[key])"
+              <div v-for="[key, f] in group.fields" :key="key" class="field">
+                <div>
+                  <label :for="key"
+                    >{{ labels[key] || key }}
+                    <Badge v-if="f.pending" variant="outline" class="badge-warn"
+                      >待重启</Badge
+                    ></label
+                  ><small>{{
+                    f.locked
+                      ? lockedReason(key)
+                      : "来源：" +
+                        (f.source === "env"
+                          ? "环境变量"
+                          : f.source === "file"
+                            ? "配置文件"
+                            : "默认值")
+                  }}</small>
+                  <small v-if="key === 'archive_update_interval_days'"
+                    >0 关闭周期检查；仅写入 settings.toml。</small
+                  >
+                  <small v-if="key === 'archive_auto_update'"
+                    >启用后自动购买新版归档，可能消耗 GP；仅写入
+                    settings.toml。</small
+                  >
+                  <small v-if="key === 'favorites_sync_interval_seconds'"
+                    >默认 3600 秒；设为 0
+                    只关闭周期扫描，收藏操作触发的扫描和手动扫描仍可用。</small
+                  >
+                  <small v-if="key === 'favorites_sync_categories'"
+                    >逗号分隔收藏夹 ID（0–9）；留空表示全部，-ID
+                    表示排除该收藏夹。只限制自动归档范围，不影响同步扫描。</small
+                  >
+                  <small v-if="key === 'favorites_sync_archive'"
+                    >启用后会自动购买新发现收藏的归档，可能消耗
+                    GP；首次扫描只建立基线，不会归档已有收藏。保存后重启生效。</small
+                  >
+                </div>
+                <div class="control">
+                  <label v-if="boolean(key)" class="switch"
+                    ><input
+                      :id="key"
+                      type="checkbox"
+                      :checked="Boolean(s.form.value[key])"
+                      :disabled="f.locked"
+                      @change="
+                        edit(key, $event.target.checked)
+                      " /><i></i></label
+                  ><Select
+                    v-if="key === 'eh_site'"
+                    :model-value="String(s.form.value[key] ?? '')"
                     :disabled="f.locked"
-                    @change="edit(key, $event.target.checked)" /><i></i></label
-                ><Select
-                  v-if="key === 'eh_site'"
-                  :model-value="String(s.form.value[key] ?? '')"
-                  :disabled="f.locked"
-                  @update:model-value="edit(key, $event)"
-                >
-                  <SelectTrigger :id="key" class="control-select">
-                    <SelectValue placeholder="选择站点" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="e-hentai">E-Hentai</SelectItem>
-                    <SelectItem value="exhentai">ExHentai</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  v-if="key === 'pse_page_base'"
-                  :model-value="String(s.form.value[key] ?? '')"
-                  :disabled="f.locked"
-                  @update:model-value="edit(key, Number($event))"
-                >
-                  <SelectTrigger :id="key" class="control-select">
-                    <SelectValue placeholder="选择页码起始值" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1-based（默认）</SelectItem>
-                    <SelectItem value="0">0-based</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  v-if="key === 'tag_status_filter'"
-                  :model-value="String(s.form.value[key] ?? '')"
-                  :disabled="f.locked"
-                  @update:model-value="edit(key, $event)"
-                >
-                  <SelectTrigger :id="key" class="control-select">
-                    <SelectValue placeholder="选择标签筛选" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="balanced">平衡</SelectItem>
-                    <SelectItem value="strict">严格</SelectItem>
-                    <SelectItem value="off">关闭</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  v-if="
-                    !boolean(key) &&
-                    !['eh_site', 'pse_page_base', 'tag_status_filter'].includes(
-                      key,
-                    )
-                  "
-                  :id="key"
-                  :type="
+                    @update:model-value="edit(key, $event)"
+                  >
+                    <SelectTrigger :id="key" class="control-select">
+                      <SelectValue placeholder="选择站点" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="e-hentai">E-Hentai</SelectItem>
+                      <SelectItem value="exhentai">ExHentai</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    v-if="key === 'pse_page_base'"
+                    :model-value="String(s.form.value[key] ?? '')"
+                    :disabled="f.locked"
+                    @update:model-value="edit(key, Number($event))"
+                  >
+                    <SelectTrigger :id="key" class="control-select">
+                      <SelectValue placeholder="选择页码起始值" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1-based（默认）</SelectItem>
+                      <SelectItem value="0">0-based</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    v-if="key === 'tag_status_filter'"
+                    :model-value="String(s.form.value[key] ?? '')"
+                    :disabled="f.locked"
+                    @update:model-value="edit(key, $event)"
+                  >
+                    <SelectTrigger :id="key" class="control-select">
+                      <SelectValue placeholder="选择标签筛选" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="balanced">平衡</SelectItem>
+                      <SelectItem value="strict">严格</SelectItem>
+                      <SelectItem value="off">关闭</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    v-if="
+                      !boolean(key) &&
+                      ![
+                        'eh_site',
+                        'pse_page_base',
+                        'tag_status_filter',
+                      ].includes(key)
+                    "
+                    :id="key"
+                    :type="
+                      secret(key)
+                        ? 'password'
+                        : key === 'cache_max_gb' ||
+                            key === 'archive_update_interval_days' ||
+                            key === 'favorites_sync_interval_seconds'
+                          ? 'number'
+                          : 'text'
+                    "
+                    :min="
+                      [
+                        'archive_update_interval_days',
+                        'favorites_sync_interval_seconds',
+                      ].includes(key)
+                        ? 0
+                        : undefined
+                    "
+                    :step="
+                      key === 'archive_update_interval_days'
+                        ? 1
+                        : key === 'favorites_sync_interval_seconds'
+                          ? 'any'
+                          : undefined
+                    "
+                    :model-value="s.form.value[key] ?? ''"
+                    :placeholder="
+                      secret(key)
+                        ? f.saved_set
+                          ? '已设置；留空不更改'
+                          : '未设置'
+                        : ''
+                    "
+                    :disabled="f.locked"
+                    class="control-input"
+                    autocomplete="new-password"
+                    @update:model-value="edit(key, $event)"
+                  /><Badge v-if="f.locked" variant="outline" class="locked"
+                    >🔒 锁定</Badge
+                  ><Button
+                    v-if="key === 'ipb_member_id'"
+                    :disabled="f.locked"
+                    variant="link"
+                    size="sm"
+                    @click="
+                      edit('ipb_member_id', '');
+                      edit('ipb_pass_hash', '');
+                    "
+                  >
+                    清除成对凭据</Button
+                  ><Button
+                    v-if="key === 'igneous'"
+                    :disabled="f.locked"
+                    variant="link"
+                    size="sm"
+                    @click="edit('igneous', '')"
+                  >
+                    清除
+                  </Button>
+                </div>
+                <small class="active-value"
+                  >当前生效：{{
                     secret(key)
-                      ? 'password'
-                      : key === 'cache_max_gb' || key === 'archive_update_interval_days' || key === 'favorites_sync_interval_seconds'
-                        ? 'number'
-                        : 'text'
-                  "
-                  :min="['archive_update_interval_days', 'favorites_sync_interval_seconds'].includes(key) ? 0 : undefined"
-                  :step="key === 'archive_update_interval_days' ? 1 : key === 'favorites_sync_interval_seconds' ? 'any' : undefined"
-                  :model-value="s.form.value[key] ?? ''"
-                  :placeholder="
+                      ? f.set
+                        ? "已设置"
+                        : "未设置"
+                      : (f.active ?? "（未设置）")
+                  }}
+                  · 已保存：{{
                     secret(key)
                       ? f.saved_set
-                        ? '已设置；留空不更改'
-                        : '未设置'
-                      : ''
-                  "
-                  :disabled="f.locked"
-                  class="control-input"
-                  autocomplete="new-password"
-                  @update:model-value="edit(key, $event)"
-                /><Badge v-if="f.locked" variant="outline" class="locked">🔒 锁定</Badge
-                ><Button
-                  v-if="key === 'ipb_member_id'"
-                  :disabled="f.locked"
-                  variant="link"
-                  size="sm"
-                  @click="
-                    edit('ipb_member_id', '');
-                    edit('ipb_pass_hash', '');
-                  "
+                        ? "已设置"
+                        : "未设置"
+                      : (f.saved ?? "（未设置）")
+                  }}</small
                 >
-                  清除成对凭据</Button
-                ><Button
-                  v-if="key === 'igneous'"
-                  :disabled="f.locked"
-                  variant="link"
-                  size="sm"
-                  @click="edit('igneous', '')"
-                >
-                  清除
-                </Button>
               </div>
-              <small class="active-value"
-                >当前生效：{{
-                  secret(key)
-                    ? f.set
-                      ? "已设置"
-                      : "未设置"
-                    : (f.active ?? "（未设置）")
-                }}
-                · 已保存：{{
-                  secret(key)
-                    ? f.saved_set
-                      ? "已设置"
-                      : "未设置"
-                    : (f.saved ?? "（未设置）")
-                }}</small
-              >
-            </div>
             </CardContent>
           </Card>
           <div v-if="s.config.value?.fields" class="savebar">
@@ -1144,118 +1349,9 @@ function cardActionLabel(a) {
           </div></template
         >
         <template v-if="s.page.value === 'home'">
-          <div class="heading">
-            <div>
-              <small>OPDS 入口</small>
-              <h1>首页编排</h1>
-              <p>先配置始终显示的导航，再选择出版物布局或分组布局。</p>
-            </div>
-            <Button class="primary-action" :disabled="!s.homeDirty.value || s.busy.value || s.homeModeRequired.value || Boolean(homeFacetWarning)" @click="s.saveHome">
-              <Save />保存布局
-            </Button>
-          </div>
-          <Card v-if="s.home.value?.legacy" class="panel">
-            <CardHeader class="panel-header"><CardTitle>首页布局（只读）</CardTitle><CardDescription>编辑接口不可用 · {{ s.home.value.legacy.path }}</CardDescription></CardHeader>
-            <CardContent class="panel-body"><div v-for="(item,i) in s.home.value.legacy.sections || []" :key="i" class="preview"><b>{{ i+1 }}</b><div><strong>{{ item.title || item.query }}</strong><small>{{ item.kind }} · {{ item.query }}</small></div></div></CardContent>
-          </Card>
-          <Card v-else-if="s.home.value?.error" class="panel">
-            <CardHeader class="panel-header"><CardTitle>首页布局无法读取</CardTitle></CardHeader>
-            <CardContent class="panel-body"><div class="archive-error">{{ s.home.value.error }}</div></CardContent>
-          </Card>
-          <template v-else-if="s.home.value?.sections">
-            <Card v-if="s.home.value?.validation_error" class="panel home-repair">
-              <CardHeader class="panel-header">
-                <CardTitle>需要修复现有布局</CardTitle>
-                <CardDescription>{{ s.home.value.validation_error }} · 原文件会在保存时备份。</CardDescription>
-              </CardHeader>
-              <CardContent class="panel-body">
-                <div class="repair-drafts">
-                  <div><strong>出版物草稿</strong><span>{{ s.layout.value.publication ? s.layout.value.publication.title || s.layout.value.publication.query : '无顶层出版物' }} · {{ s.layout.value.facets.length }} 个筛选</span><small v-for="(facet,i) in s.layout.value.facets" :key="i">筛选：{{ facet.title || '未命名' }}</small></div>
-                  <div><strong>分组草稿 · {{ s.layout.value.groups.length }} 个栏目</strong><small v-for="(group,i) in s.layout.value.groups" :key="i">{{ group.title || group.query }} · {{ group.kind }}</small></div>
-                </div>
-                <p>请选择要保留的布局。下方“首页内容”中的分段按钮用于选择；两种草稿会留在本页，直到切换页面或重新载入。</p>
-              </CardContent>
-            </Card>
-            <Card class="panel">
-              <CardHeader class="panel-header">
-                <div class="panel-title">
-                  <div><CardTitle>首页导航</CardTitle><CardDescription>这些链接始终显示在首页顶层，可与任一种内容布局并存。</CardDescription></div>
-                  <Button variant="outline" @click="s.addNavigation"><Plus />添加导航</Button>
-                </div>
-              </CardHeader>
-              <CardContent class="panel-body home-editor">
-                <details v-for="(nav, i) in s.layout.value.navigation" :key="'nav-'+i" class="home-editor-item">
-                  <summary><span>{{ nav.title || nav.query || '未命名导航' }}</span><small>{{ nav.type === 'search' ? '搜索' : '预设' }} · {{ nav.query }}</small></summary>
-                  <div class="home-editor-fields">
-                    <Input v-model="nav.title" aria-label="导航标题" placeholder="导航标题" @update:model-value="s.homeDirty.value = true" />
-                    <select v-model="nav.type" aria-label="导航来源类型" @change="s.homeDirty.value = true"><option value="preset">预设</option><option value="search">搜索</option></select>
-                    <Input v-if="nav.type === 'preset'" v-model="nav.query" list="home-presets" aria-label="导航预设名称" placeholder="预设名称" @update:model-value="s.homeDirty.value = true" />
-                    <Input v-else v-model="nav.query" aria-label="导航搜索表达式" placeholder="搜索表达式" @update:model-value="s.homeDirty.value = true" />
-
-                    <div class="home-row-actions"><Button variant="ghost" size="icon-sm" :disabled="i===0" aria-label="导航上移" @click="s.moveItem('navigation',i,-1)">↑</Button><Button variant="ghost" size="icon-sm" :disabled="i===s.layout.value.navigation.length-1" aria-label="导航下移" @click="s.moveItem('navigation',i,1)">↓</Button><Button variant="ghost" size="icon-sm" aria-label="删除导航" @click="s.removeItem('navigation',i)"><X /></Button></div>
-                  </div>
-                </details>
-                <div v-if="!s.layout.value.navigation.length" class="empty">尚未添加首页导航。</div>
-              </CardContent>
-            </Card>
-            <datalist id="home-presets"><option value="popular"/><option value="latest"/><option value="watched"/><option value="favorites"/><option value="favorites:0"/><option value="archives"/><option value="toplist:yesterday"/><option value="toplist:month"/><option value="toplist:year"/><option value="toplist:alltime"/></datalist>
-            <Card class="panel home-layout-panel">
-              <CardHeader class="panel-header">
-                <div class="panel-title">
-                  <div><CardTitle>首页内容</CardTitle><CardDescription>顶层出版物与分组不能同时存在；顶层导航不受此限制。</CardDescription></div>
-                  <div class="home-mode-switch" role="group" aria-label="首页内容布局模式">
-                    <Button :variant="s.homeMode.value === 'publications' ? 'default' : 'outline'" :aria-pressed="s.homeMode.value === 'publications'" @click="s.selectHomeMode('publications')">出版物</Button>
-                    <Button :variant="s.homeMode.value === 'groups' ? 'default' : 'outline'" :aria-pressed="s.homeMode.value === 'groups'" @click="s.selectHomeMode('groups')">分组</Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent class="panel-body">
-                <div v-if="homeReplaceWarning" class="home-warning" role="status">{{ homeReplaceWarning }}</div>
-                <template v-if="s.homeMode.value === 'publications'">
-                  <div v-if="s.layout.value.publication" class="home-editor-item home-publication-card">
-                    <details open>
-                    <summary><span>{{ s.layout.value.publication.title || s.layout.value.publication.query || '首页出版物' }}</span><small>{{ s.layout.value.publication.type === 'search' ? '搜索' : '预设' }} · {{ s.layout.value.publication.query }} · {{ countLabel(s.layout.value.publication) }}</small></summary>
-                      <div class="home-editor-fields">
-                        <Input v-model="s.layout.value.publication.title" aria-label="出版物标题" placeholder="出版物标题" @update:model-value="s.homeDirty.value = true" />
-                        <select v-model="s.layout.value.publication.type" aria-label="出版物来源类型" @change="s.homeDirty.value = true"><option value="preset">预设</option><option value="search">搜索</option></select>
-                        <Input v-if="s.layout.value.publication.type === 'preset'" v-model="s.layout.value.publication.query" list="home-presets" aria-label="出版物预设名称" placeholder="预设名称" @update:model-value="s.homeDirty.value = true" />
-                        <Input v-else v-model="s.layout.value.publication.query" aria-label="出版物搜索表达式" placeholder="搜索表达式" @update:model-value="s.homeDirty.value = true" />
-                        <label class="count-field">预览条数<Input type="number" min="0" v-model.number="s.layout.value.publication.count" placeholder="默认 10；0 关闭预览" @update:model-value="s.homeDirty.value = true" /></label>
-
-                        <div class="home-row-actions"><Button variant="outline" @click="s.removePublication">删除出版物</Button></div>
-                      </div>
-                    </details>
-                  </div>
-                  <div v-else class="home-add-card"><span>当前为导航-only 首页。可选添加一个顶层出版物列表。</span><Button variant="outline" @click="s.addPublication"><Plus />添加出版物</Button></div>
-                  <div class="home-subsection-heading"><div><strong>筛选</strong><small v-if="s.layout.value.publication">筛选来源自动跟随上方出版物。</small><small v-else>添加出版物后可添加筛选。</small></div><Button variant="outline" :disabled="!s.canAddFacet()" @click="s.addFacet"><Plus />添加筛选</Button></div>
-                  <div v-if="homeFacetWarning" class="home-warning" role="alert">{{ homeFacetWarning }} 你仍可删除现有筛选。</div>
-                  <details v-for="(facet, i) in s.layout.value.facets" :key="'facet-'+i" class="home-editor-item home-facet-item">
-                    <summary><span>{{ facet.title || '未命名筛选' }}</span><small>跟随：{{ s.layout.value.publication?.query || '未选择出版物' }}</small></summary>
-                    <div class="home-editor-fields facet-fields"><Input v-model="facet.title" aria-label="筛选集合标题" placeholder="筛选集合标题" @update:model-value="s.homeDirty.value = true" /><div class="home-row-actions"><Button variant="ghost" size="icon-sm" :disabled="i===0" aria-label="筛选上移" @click="s.moveItem('facets',i,-1)">↑</Button><Button variant="ghost" size="icon-sm" :disabled="i===s.layout.value.facets.length-1" aria-label="筛选下移" @click="s.moveItem('facets',i,1)">↓</Button><Button variant="ghost" size="icon-sm" aria-label="删除筛选" @click="s.removeItem('facets',i)"><X /></Button></div></div>
-                  </details>
-                </template>
-                <template v-else-if="s.homeMode.value === 'groups'">
-                  <div class="home-subsection-heading"><div><strong>独立分组栏目</strong><small>每张卡片输出为一个独立分组，可选择出版物或导航。</small></div><div class="home-row-actions"><Button variant="outline" @click="s.addGroupSection('publication')"><Plus />出版物分组</Button><Button variant="outline" @click="s.addGroupSection('navigation')"><Plus />导航分组</Button></div></div>
-                  <details v-for="(item, i) in s.layout.value.groups" :key="'group-'+i" class="home-editor-item">
-                    <summary><span>{{ item.title || item.query || '未命名分组' }}</span><small>{{ item.kind === 'publication' ? '出版物分组' : '导航分组' }} · {{ item.type === 'search' ? '搜索' : '预设' }} · {{ item.query }}<template v-if="item.kind === 'publication'"> · {{ countLabel(item) }}</template></small></summary>
-                    <div class="home-editor-fields">
-                      <Input v-model="item.title" aria-label="分组标题" placeholder="分组标题" @update:model-value="s.homeDirty.value = true" />
-                      <select v-model="item.kind" aria-label="分组内容类型" @change="s.homeDirty.value = true"><option value="publication">出版物</option><option value="navigation">导航</option></select>
-                      <select v-model="item.type" aria-label="来源类型" @change="s.homeDirty.value = true"><option value="preset">预设</option><option value="search">搜索</option></select>
-                      <Input v-if="item.type === 'preset'" v-model="item.query" list="home-presets" aria-label="分组预设名称" placeholder="预设名称" @update:model-value="s.homeDirty.value = true" />
-                      <Input v-else v-model="item.query" aria-label="分组搜索表达式" placeholder="搜索表达式" @update:model-value="s.homeDirty.value = true" />
-                      <label v-if="item.kind === 'publication'" class="count-field">预览条数<Input type="number" min="0" v-model.number="item.count" placeholder="默认 10；0 关闭预览" @update:model-value="s.homeDirty.value = true" /></label>
-
-                      <div class="home-row-actions"><Button variant="ghost" size="icon-sm" :disabled="i===0" aria-label="分组上移" @click="s.moveItem('groups',i,-1)">↑</Button><Button variant="ghost" size="icon-sm" :disabled="i===s.layout.value.groups.length-1" aria-label="分组下移" @click="s.moveItem('groups',i,1)">↓</Button><Button variant="ghost" size="icon-sm" aria-label="删除分组" @click="s.removeItem('groups',i)"><X /></Button></div>
-                    </div>
-                  </details>
-                  <div v-if="!s.layout.value.groups.length" class="empty">尚未添加分组栏目。</div>
-                </template>
-                <div v-else class="empty">请选择出版物布局或分组布局以继续编辑。</div>
-              </CardContent>
-            </Card>
-          </template>
+          <HomeEditor />
         </template>
+
         <template v-if="s.page.value === 'archive'">
           <div class="heading">
             <div>
@@ -1298,8 +1394,12 @@ function cardActionLabel(a) {
                     class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
                     @click="requestFullSync"
                   >
-                    <span class="font-medium text-foreground">全量校准收藏…</span>
-                    <span class="text-[11px] text-muted-foreground mt-0.5">遍历全部收藏页并清理上游已取消项</span>
+                    <span class="font-medium text-foreground"
+                      >全量校准收藏…</span
+                    >
+                    <span class="text-[11px] text-muted-foreground mt-0.5"
+                      >遍历全部收藏页并清理上游已取消项</span
+                    >
                   </button>
                 </div>
               </div>
@@ -1309,7 +1409,11 @@ function cardActionLabel(a) {
                 @click="s.startArchiveScan"
                 title="扫描 ARCHIVE_DIR 中已有的历史归档文件并导入索引"
               >
-                {{ s.archiveScan.value.status === 'running' ? '正在导入…' : '导入本地归档' }}
+                {{
+                  s.archiveScan.value.status === "running"
+                    ? "正在导入…"
+                    : "导入本地归档"
+                }}
               </Button>
               <Button class="primary-action" @click="openCreateArchiveDialog">
                 <Plus />新建归档
@@ -1322,11 +1426,25 @@ function cardActionLabel(a) {
             :class="'archive-scan-' + s.archiveScan.value.status"
             role="status"
           >
-            <span v-if="s.archiveScan.value.status === 'running'">正在查找归档状态与图库资料…</span>
-            <span v-else-if="s.archiveScan.value.status === 'success'">导入完成：导入 {{ s.archiveScan.value.imported }} 个文件，跳过 {{ s.archiveScan.value.skipped }} 个文件，冲突 {{ s.archiveScan.value.conflicts }} 个文件。</span>
-            <span v-else-if="s.archiveScan.value.status === 'skipped'">导入完成：未导入新文件，跳过 {{ s.archiveScan.value.skipped }} 个文件。</span>
-            <span v-else-if="s.archiveScan.value.status === 'conflict'">导入完成：未导入文件，发现 {{ s.archiveScan.value.conflicts }} 个冲突文件。</span>
-            <span v-else>导入失败：{{ s.archiveScan.value.error || '未知错误' }}</span>
+            <span v-if="s.archiveScan.value.status === 'running'"
+              >正在查找归档状态与图库资料…</span
+            >
+            <span v-else-if="s.archiveScan.value.status === 'success'"
+              >导入完成：导入 {{ s.archiveScan.value.imported }} 个文件，跳过
+              {{ s.archiveScan.value.skipped }} 个文件，冲突
+              {{ s.archiveScan.value.conflicts }} 个文件。</span
+            >
+            <span v-else-if="s.archiveScan.value.status === 'skipped'"
+              >导入完成：未导入新文件，跳过
+              {{ s.archiveScan.value.skipped }} 个文件。</span
+            >
+            <span v-else-if="s.archiveScan.value.status === 'conflict'"
+              >导入完成：未导入文件，发现
+              {{ s.archiveScan.value.conflicts }} 个冲突文件。</span
+            >
+            <span v-else
+              >导入失败：{{ s.archiveScan.value.error || "未知错误" }}</span
+            >
             <Button
               v-if="s.archiveScan.value.status !== 'running'"
               variant="ghost"
@@ -1356,10 +1474,7 @@ function cardActionLabel(a) {
                 @click="selectedStatus = 'ready'"
               >
                 <span>已归档</span>
-                <span
-                  v-if="statusCounts.ready > 0"
-                  class="segment-badge"
-                >
+                <span v-if="statusCounts.ready > 0" class="segment-badge">
                   {{ statusCounts.ready }}
                 </span>
               </button>
@@ -1371,10 +1486,7 @@ function cardActionLabel(a) {
                 @click="selectedStatus = 'unarchived'"
               >
                 <span>未归档</span>
-                <span
-                  v-if="statusCounts.unarchived > 0"
-                  class="segment-badge"
-                >
+                <span v-if="statusCounts.unarchived > 0" class="segment-badge">
                   {{ statusCounts.unarchived }}
                 </span>
               </button>
@@ -1463,9 +1575,14 @@ function cardActionLabel(a) {
                     :value="cat.key"
                   >
                     <span class="inline-flex items-center gap-1.5">
-                      <span class="cat-dot" :style="{ backgroundColor: cat.color }"></span>
+                      <span
+                        class="cat-dot"
+                        :style="{ backgroundColor: cat.color }"
+                      ></span>
                       <span>{{ cat.label }}</span>
-                      <span class="text-xs text-muted-foreground font-mono">({{ categoryCounts[cat.key] || 0 }})</span>
+                      <span class="text-xs text-muted-foreground font-mono"
+                        >({{ categoryCounts[cat.key] || 0 }})</span
+                      >
                     </span>
                   </SelectItem>
                 </SelectContent>
@@ -1486,13 +1603,17 @@ function cardActionLabel(a) {
                   <SelectItem value="unfavorited">
                     <span class="inline-flex items-center gap-1.5">
                       <span>未收藏</span>
-                      <span class="text-xs text-muted-foreground font-mono">({{ unfavoritedCount }})</span>
+                      <span class="text-xs text-muted-foreground font-mono"
+                        >({{ unfavoritedCount }})</span
+                      >
                     </span>
                   </SelectItem>
                   <SelectItem value="favorited">
                     <span class="inline-flex items-center gap-1.5">
                       <span>已收藏</span>
-                      <span class="text-xs text-muted-foreground font-mono">({{ favoritedCount }})</span>
+                      <span class="text-xs text-muted-foreground font-mono"
+                        >({{ favoritedCount }})</span
+                      >
                     </span>
                   </SelectItem>
                   <SelectSeparator class="my-1" />
@@ -1503,7 +1624,9 @@ function cardActionLabel(a) {
                   >
                     <span class="inline-flex items-center gap-1.5">
                       <span>{{ cat.id }}: {{ cat.name }}</span>
-                      <span class="text-xs text-muted-foreground font-mono">({{ cat.count }})</span>
+                      <span class="text-xs text-muted-foreground font-mono"
+                        >({{ cat.count }})</span
+                      >
                     </span>
                   </SelectItem>
                 </SelectContent>
@@ -1587,7 +1710,12 @@ function cardActionLabel(a) {
               </div>
               <div class="gallery-meta items-center">
                 <span class="shrink-0 whitespace-nowrap"
-                  >{{ a.metadata?.filecount || a.page_count || "—" }} 页<template v-if="archiveSizeText(a)">（{{ archiveSizeText(a) }}）</template></span
+                  >{{
+                    a.metadata?.filecount || a.page_count || "—"
+                  }}
+                  页<template v-if="archiveSizeText(a)"
+                    >（{{ archiveSizeText(a) }}）</template
+                  ></span
                 >
                 <Select
                   :model-value="a.favcat != null ? String(a.favcat) : ''"
@@ -1650,19 +1778,21 @@ function cardActionLabel(a) {
               </div>
               <div class="gallery-actions">
                 <Button as-child variant="link" size="sm">
-                <a
-                  :href="
-                    'https://e-hentai.org/g/' +
-                    (a.active_gid || a.gid) +
-                    '/' +
-                    (a.active_token || a.token) +
-                    '/'
-                  "
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >打开 ↗</a>
+                  <a
+                    :href="
+                      'https://e-hentai.org/g/' +
+                      (a.active_gid || a.gid) +
+                      '/' +
+                      (a.active_token || a.token) +
+                      '/'
+                    "
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >打开 ↗</a
+                  >
                 </Button>
-                <Button variant="link" size="sm" @click="s.refreshMetadata(a)">更新元数据</Button
+                <Button variant="link" size="sm" @click="s.refreshMetadata(a)"
+                  >更新元数据</Button
                 ><Button
                   variant="link"
                   size="sm"
@@ -1670,29 +1800,35 @@ function cardActionLabel(a) {
                   :disabled="
                     s.busy.value ||
                     !s.status.value?.site?.has_ipb ||
-                    ['submitting', 'pending', 'downloading', 'zipping'].includes(
-                      a.version_update?.status,
-                    )
+                    [
+                      'submitting',
+                      'pending',
+                      'downloading',
+                      'zipping',
+                    ].includes(a.version_update?.status)
                   "
                   @click="handleQuoteUpdate(a)"
-                >更新版本</Button
+                  >更新版本</Button
                 ><Button
                   v-if="a.status === 'unarchived' && a.is_favorited"
                   variant="link"
                   size="sm"
                   :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
                   @click="handleQuoteArchive(a)"
-                >{{ cardActionLabel(a) }}</Button
+                  >{{ cardActionLabel(a) }}</Button
                 ><Button
                   v-else
                   variant="destructive"
                   size="sm"
                   @click="s.requestDelete(a)"
-                >{{ cardActionLabel(a) }}</Button>
+                  >{{ cardActionLabel(a) }}</Button
+                >
               </div>
               <div
                 v-if="
-                  (a.status === 'ready' || a.status === 'unarchived' || a.status === 'failed') &&
+                  (a.status === 'ready' ||
+                    a.status === 'unarchived' ||
+                    a.status === 'failed') &&
                   (a.status !== 'unarchived' || archivePageCount(a) > 0)
                 "
                 class="gallery-primary-action"
@@ -1737,7 +1873,10 @@ function cardActionLabel(a) {
                   </Button>
                 </div>
               </div>
-              <small v-if="a.error || a.version_update?.error" class="archive-error">
+              <small
+                v-if="a.error || a.version_update?.error"
+                class="archive-error"
+              >
                 {{ a.error || a.version_update.error }}
               </small>
             </Card>
@@ -1746,12 +1885,9 @@ function cardActionLabel(a) {
             v-if="filteredArchives.length > visibleArchives.length"
             class="flex justify-center pt-4"
           >
-            <Button
-              variant="outline"
-              size="sm"
-              @click="visibleLimit += 60"
-            >
-              加载更多（已显示 {{ visibleArchives.length }} / {{ filteredArchives.length }}）
+            <Button variant="outline" size="sm" @click="visibleLimit += 60">
+              加载更多（已显示 {{ visibleArchives.length }} /
+              {{ filteredArchives.length }}）
             </Button>
           </div></template
         >
@@ -1759,14 +1895,18 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="s.confirmArchive.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{{ s.quoteAction.value === "update" ? "确认更新归档版本" : "确认开始归档" }}</AlertDialogTitle>
+            <AlertDialogTitle>{{
+              s.quoteAction.value === "update"
+                ? "确认更新归档版本"
+                : "确认开始归档"
+            }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{
                 s.quoteAction.value === "update"
                   ? "将使用现有归档的画质档请求新版本。若该档位未解锁，可能消耗 GP，请核对报价后确认。"
                   : s.quoteAction.value === "refresh"
-                  ? "重试会重新向上游请求归档。未解锁档位可能消耗 GP，请核对画质档和报价。"
-                  : "归档任务会请求上游。未解锁档位会消耗你的账户 GP，请核对档位和价格。"
+                    ? "重试会重新向上游请求归档。未解锁档位可能消耗 GP，请核对画质档和报价。"
+                    : "归档任务会请求上游。未解锁档位会消耗你的账户 GP，请核对档位和价格。"
               }}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1788,8 +1928,16 @@ function cardActionLabel(a) {
             </span>
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button :disabled="s.busy.value" @click="s.startArchive">{{ s.quoteAction.value === "update" ? "确认更新版本" : "确认开始归档" }}</Button></AlertDialogAction>
+            <AlertDialogCancel as-child
+              ><Button variant="outline">取消</Button></AlertDialogCancel
+            >
+            <AlertDialogAction as-child
+              ><Button :disabled="s.busy.value" @click="s.startArchive">{{
+                s.quoteAction.value === "update"
+                  ? "确认更新版本"
+                  : "确认开始归档"
+              }}</Button></AlertDialogAction
+            >
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1802,8 +1950,14 @@ function cardActionLabel(a) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button variant="destructive" @click="s.clearCache">清理缓存</Button></AlertDialogAction>
+            <AlertDialogCancel as-child
+              ><Button variant="outline">取消</Button></AlertDialogCancel
+            >
+            <AlertDialogAction as-child
+              ><Button variant="destructive" @click="s.clearCache"
+                >清理缓存</Button
+              ></AlertDialogAction
+            >
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1824,10 +1978,14 @@ function cardActionLabel(a) {
             <span>{{ deleteDialogMeta.note }}</span>
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button variant="destructive" @click="s.deleteArchive">{{
-              deleteDialogMeta.confirm
-            }}</Button></AlertDialogAction>
+            <AlertDialogCancel as-child
+              ><Button variant="outline">取消</Button></AlertDialogCancel
+            >
+            <AlertDialogAction as-child
+              ><Button variant="destructive" @click="s.deleteArchive">{{
+                deleteDialogMeta.confirm
+              }}</Button></AlertDialogAction
+            >
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1847,12 +2005,21 @@ function cardActionLabel(a) {
             v-if="s.favoriteRemoveTarget.value?.status !== 'unarchived'"
             class="delete-local-check"
           >
-            <input type="checkbox" v-model="s.deleteAfterFavoriteRemove.value" />
+            <input
+              type="checkbox"
+              v-model="s.deleteAfterFavoriteRemove.value"
+            />
             同时删除本地归档（只有上游移除收藏成功后才会执行）
           </label>
           <AlertDialogFooter>
-            <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button variant="destructive" @click="s.confirmFavoriteRemoval">移除收藏</Button></AlertDialogAction>
+            <AlertDialogCancel as-child
+              ><Button variant="outline">取消</Button></AlertDialogCancel
+            >
+            <AlertDialogAction as-child
+              ><Button variant="destructive" @click="s.confirmFavoriteRemoval"
+                >移除收藏</Button
+              ></AlertDialogAction
+            >
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1861,12 +2028,19 @@ function cardActionLabel(a) {
           <AlertDialogHeader>
             <AlertDialogTitle>执行全量校准收藏？</AlertDialogTitle>
             <AlertDialogDescription>
-              将从头遍历你的 E-Hentai 收藏页（受最大扫描页数限制），补齐遗漏建档并自动清理上游已取消收藏的「未归档」条目。此操作不会触发付费归档，但会发起较多次列表页请求。
+              将从头遍历你的 E-Hentai
+              收藏页（受最大扫描页数限制），补齐遗漏建档并自动清理上游已取消收藏的「未归档」条目。此操作不会触发付费归档，但会发起较多次列表页请求。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel as-child><Button variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction as-child><Button :disabled="s.busy.value" @click="confirmAndRunFullSync">确认全量校准</Button></AlertDialogAction>
+            <AlertDialogCancel as-child
+              ><Button variant="outline">取消</Button></AlertDialogCancel
+            >
+            <AlertDialogAction as-child
+              ><Button :disabled="s.busy.value" @click="confirmAndRunFullSync"
+                >确认全量校准</Button
+              ></AlertDialogAction
+            >
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1883,7 +2057,8 @@ function cardActionLabel(a) {
               <Alert variant="destructive">
                 <CircleAlert class="size-4" />
                 <AlertDescription class="text-xs">
-                  未检测到完整的 IPB 登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。
+                  未检测到完整的 IPB
+                  登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。
                 </AlertDescription>
               </Alert>
             </div>
@@ -1897,21 +2072,33 @@ function cardActionLabel(a) {
               <Button
                 variant="outline"
                 size="sm"
-                :disabled="!s.status.value?.site?.has_ipb || s.busy.value || !s.archiveInput.value.trim()"
+                :disabled="
+                  !s.status.value?.site?.has_ipb ||
+                  s.busy.value ||
+                  !s.archiveInput.value.trim()
+                "
                 @click="s.getQuote('start')"
               >
                 <Search class="size-3.5" />查询
               </Button>
             </div>
-            <div v-if="s.quote.value" class="rounded-md border border-border bg-muted/40 p-3 space-y-2">
+            <div
+              v-if="s.quote.value"
+              class="rounded-md border border-border bg-muted/40 p-3 space-y-2"
+            >
               <div class="font-medium text-foreground text-xs line-clamp-2">
                 {{ s.quote.value.title || "报价已获取" }}
               </div>
-              <div v-if="s.quote.value.gp_balance" class="text-muted-foreground text-[11px]">
+              <div
+                v-if="s.quote.value.gp_balance"
+                class="text-muted-foreground text-[11px]"
+              >
                 账户余额：{{ s.quote.value.gp_balance.toLocaleString() }} GP
               </div>
               <div class="flex items-center gap-2 pt-1">
-                <label class="text-xs text-muted-foreground shrink-0">画质档</label>
+                <label class="text-xs text-muted-foreground shrink-0"
+                  >画质档</label
+                >
                 <Select v-model="s.selectedQuality.value">
                   <SelectTrigger class="h-8 text-xs flex-1">
                     <SelectValue placeholder="选择画质档" />
@@ -1941,12 +2128,19 @@ function cardActionLabel(a) {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child>
-              <Button variant="outline" size="sm" @click="closeCreateArchiveDialog">取消</Button>
+              <Button
+                variant="outline"
+                size="sm"
+                @click="closeCreateArchiveDialog"
+                >取消</Button
+              >
             </AlertDialogCancel>
             <AlertDialogAction as-child>
               <Button
                 size="sm"
-                :disabled="!s.quote.value || !s.selectedQuality.value || s.busy.value"
+                :disabled="
+                  !s.quote.value || !s.selectedQuality.value || s.busy.value
+                "
                 @click="confirmAndStartArchive"
               >
                 确认
