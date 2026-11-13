@@ -215,6 +215,15 @@ func (b Builder) Publication(item eh.GalleryListItem, detail bool) map[string]an
 	if item.Uploader != "" {
 		extra["x:uploader"] = item.Uploader
 	}
+	if item.GID > 0 {
+		extra["x:gid"] = item.GID
+	}
+	if item.Token != "" {
+		extra["x:token"] = item.Token
+	}
+	if item.Category != "" {
+		extra["x:category"] = item.Category
+	}
 	count := 0
 	if item.PageCount != nil {
 		count = *item.PageCount

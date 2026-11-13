@@ -2,7 +2,7 @@
 import {
   Package2Icon as Package2,
   LayoutDashboardIcon as LayoutDashboard,
-  PanelsTopLeftIcon as PanelsTopLeft,
+  CompassIcon as Compass,
   SettingsIcon as Settings,
 } from "@lucide/vue";
 import {
@@ -42,6 +42,14 @@ function navigate(page) {
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
+              :is-active="props.page === 'explore'"
+              @click="navigate('explore')"
+            >
+              <Compass /><span>主页</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
               :is-active="props.page === 'archive'"
               @click="navigate('archive')"
             >
@@ -61,14 +69,6 @@ function navigate(page) {
               @click="navigate('config')"
             >
               <Settings /><span>设置</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              :is-active="props.page === 'home'"
-              @click="navigate('home')"
-            >
-              <PanelsTopLeft /><span>首页编排</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

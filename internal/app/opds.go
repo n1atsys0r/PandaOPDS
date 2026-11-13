@@ -560,6 +560,8 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 	cacheControl := "public, max-age=300"
 	if previewTimedOut {
 		cacheControl = "no-store"
+	} else if r.Header.Get("Cache-Control") == "no-cache" || r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+		cacheControl = "no-cache, no-store"
 	}
 	writeBytes(w, 200, feed.MIMEOPDSNav, map[string]string{"Cache-Control": cacheControl}, s.builder().JSON(doc))
 }

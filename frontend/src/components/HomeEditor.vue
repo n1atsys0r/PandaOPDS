@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, watch, nextTick, onMounted } from "vue";
 import {
   Save,
   Plus,
@@ -78,6 +78,10 @@ watch(
   },
   { immediate: true },
 );
+
+onMounted(() => {
+  s.loadHome();
+});
 
 function countLabel(section) {
   if (!section || section.count === 0) return "无预览";
@@ -538,12 +542,12 @@ function handleTypeChange(item) {
           <section class="home-section space-y-4">
             <!-- Section Header & Segmented Mode Switcher -->
             <div
-              class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1"
+              class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-1"
             >
               <div>
                 <div class="flex items-center gap-2">
-                  <Layers class="size-4 text-primary" />
-                  <h2 class="text-base font-semibold tracking-tight">
+                  <Layers class="size-4 text-primary shrink-0" />
+                  <h2 class="text-base font-semibold tracking-tight whitespace-nowrap">
                     内容布局
                   </h2>
                 </div>
@@ -586,9 +590,9 @@ function handleTypeChange(item) {
             <!-- MODE A: 分组栏目模式 -->
             <div v-if="s.homeMode.value === 'groups'" class="space-y-3 pt-1">
               <!-- Toolbar for Groups -->
-              <div class="flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-foreground"
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-xs font-medium text-foreground whitespace-nowrap"
                     >分组栏目列表</span
                   >
                   <Badge
@@ -598,7 +602,7 @@ function handleTypeChange(item) {
                     {{ s.layout.value.groups.length }}
                   </Badge>
                   <span
-                    class="text-[11px] text-muted-foreground hidden sm:inline"
+                    class="text-[11px] text-muted-foreground hidden lg:inline"
                   >
                     · 每个分组在客户端独立呈现为一个横向画廊流或子分类
                   </span>

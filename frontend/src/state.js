@@ -2,6 +2,7 @@ import { reactive, toRefs } from "vue";
 import { canUseFacets, chooseInitialHomeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
 const state = reactive({
   page: "dashboard",
+  exploreSubRoute: null,
   mobile: false,
   theme: localStorage.theme || "system",
   busy: false,
@@ -639,18 +640,76 @@ async function loadCategories() {
     state.favcats = [];
   }
 }
-function route(v) {
+function enterExploreSubRoute(navItem, pushHistory = true) {
+  if (!navItem) return;
+  state.page = "explore";
+  state.exploreSubRoute = {
+    title: navItem.title || "画廊列表",
+    href: navItem.href,
+  };
+  if (pushHistory && typeof window !== "undefined") {
+    window.history.pushState(
+      { page: "explore", subRoute: state.exploreSubRoute },
+      "",
+      `#explore/${encodeURIComponent(navItem.title || "list")}`,
+    );
+  }
+}
+
+function exitExploreSubRoute(popHistory = true) {
+  if (
+    popHistory &&
+    typeof window !== "undefined" &&
+    window.history.state?.subRoute
+  ) {
+    window.history.back();
+  } else {
+    state.exploreSubRoute = null;
+    if (typeof window !== "undefined") {
+      window.history.pushState({ page: "explore", subRoute: null }, "", "#explore");
+    }
+  }
+}
+
+function onPopState(e) {
+  const s = e.state;
+  if (!s) {
+    const rawHash =
+      typeof window !== "undefined"
+        ? window.location.hash.replace(/^#\/?/, "")
+        : "";
+    const rootPage = rawHash.split("/")[0] || "dashboard";
+    if (["dashboard", "explore", "archive", "config"].includes(rootPage)) {
+      state.page = rootPage;
+    }
+    state.exploreSubRoute = null;
+    return;
+  }
+  if (s.page && s.page !== state.page) {
+    route(s.page, false);
+  }
+  state.exploreSubRoute = s.subRoute || null;
+}
+
+function route(v, pushHistory = true) {
+  if (v === "home") v = "explore";
   state.page = v;
   state.mobile = false;
   state.error = "";
+  if (v !== "explore" || pushHistory) {
+    state.exploreSubRoute = null;
+  }
   if (v === "dashboard") loadStatus();
+  if (v === "explore") loadHome();
   if (v === "config") loadConfig();
-  if (v === "home") loadHome();
   if (v === "archive") {
     loadArchives();
     loadArchiveScanStatus();
     loadCategories();
     loadStatus();
+  }
+  if (pushHistory && typeof window !== "undefined") {
+    window.history.pushState({ page: v, subRoute: null }, "", `#${v}`);
   }
 }
 async function login(username, password) {
@@ -669,7 +728,7 @@ async function login(username, password) {
     state.status = r.data;
     state.loginError = "";
     if (state.page === "config") loadConfig();
-    if (state.page === "home") loadHome();
+    if (state.page === "explore" || state.page === "home") loadHome();
     if (state.page === "archive") {
       loadArchives();
       loadCategories();
@@ -703,6 +762,25 @@ function init() {
   applyTheme();
   media.addEventListener?.("change", applyTheme);
   loadStatus();
+  if (typeof window !== "undefined") {
+    const rawHash = window.location.hash.replace(/^#\/?/, "");
+    const parts = rawHash.split("/");
+    const rootPage = parts[0];
+    if (["dashboard", "explore", "archive", "config"].includes(rootPage)) {
+      route(rootPage, false);
+      if (rootPage === "explore" && window.history.state?.subRoute) {
+        state.exploreSubRoute = window.history.state.subRoute;
+      }
+    }
+    if (!window.history.state) {
+      window.history.replaceState(
+        { page: state.page, subRoute: state.exploreSubRoute },
+        "",
+        window.location.hash || `#${state.page}`,
+      );
+    }
+    window.addEventListener("popstate", onPopState);
+  }
   timer = setInterval(() => {
     if (state.authChecked && !state.authRequired && state.page === "dashboard") loadStatus();
   }, 15000);
@@ -721,11 +799,16 @@ function destroy() {
   clearInterval(archiveScanTimer);
   clearTimeout(archiveScanDismissTimer);
   media?.removeEventListener?.("change", applyTheme);
+  if (typeof window !== "undefined") {
+    window.removeEventListener("popstate", onPopState);
+  }
 }
 export function useApp() {
   return {
     ...toRefs(state),
     route,
+    enterExploreSubRoute,
+    exitExploreSubRoute,
     setTheme,
     login,
     logout,
@@ -765,6 +848,7 @@ export function useApp() {
     syncFavorites,
     init,
     destroy,
+    api,
     peekCoverUrl,
     resolveCoverUrl,
     fetchAuthedBlobUrl,

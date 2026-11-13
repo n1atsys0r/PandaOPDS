@@ -39,11 +39,19 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
 import ArchiveReader from "@/components/ArchiveReader.vue";
 import CoverImage from "@/components/CoverImage.vue";
-import HomeEditor from "@/components/HomeEditor.vue";
 import LoginForm from "@/components/LoginForm.vue";
+import OpdsHome from "@/components/OpdsHome.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
 import {
   SunIcon as Sun,
@@ -289,16 +297,26 @@ function archivePageCount(a) {
 }
 
 function canReadOnline(a) {
-  return Boolean(
-    a &&
-    ["ready", "unarchived", "failed"].includes(a.status) &&
-    archivePageCount(a) > 0,
-  );
+  if (!a || archivePageCount(a) <= 0) return false;
+  if (!a.status) return true;
+  return ["ready", "unarchived", "failed"].includes(a.status);
 }
 
 function openReader(a) {
   if (!canReadOnline(a)) return;
   readerArchive.value = a;
+}
+
+async function handleExploreArchive(pub) {
+  await handleQuoteArchive({
+    gid: pub.gid,
+    token: pub.token,
+    title: pub.title,
+  });
+}
+
+async function handleExploreFavorite(pub) {
+  await s.favorite(pub, "add", 0);
 }
 
 function requestFullSync() {
@@ -628,22 +646,44 @@ function cardActionLabel(a) {
         <SidebarTrigger aria-label="切换导航菜单" class="-ml-1" />
         <Separator
           orientation="vertical"
-          class="header-separator h-4 my-auto self-center shrink-0"
+          class="mr-2 h-4 my-auto self-center shrink-0"
         />
-        <div class="breadcrumb">
-          <span
-            class="breadcrumb-title font-semibold text-sm text-foreground tracking-tight"
-            >{{
-              s.page.value === "dashboard"
-                ? "概览"
-                : s.page.value === "config"
-                  ? "设置"
-                  : s.page.value === "home"
-                    ? "首页编排"
-                    : "归档"
-            }}</span
-          >
-        </div>
+        <Breadcrumb>
+          <BreadcrumbList>
+            <template v-if="s.page.value === 'explore' && s.exploreSubRoute.value">
+              <BreadcrumbItem>
+                <BreadcrumbLink
+                  as="button"
+                  type="button"
+                  @click="s.route('explore')"
+                >
+                  主页
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>
+                  {{ s.exploreSubRoute.value.title }}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </template>
+            <template v-else>
+              <BreadcrumbItem>
+                <BreadcrumbPage>
+                  {{
+                    s.page.value === "dashboard"
+                      ? "概览"
+                      : s.page.value === "explore"
+                        ? "主页"
+                        : s.page.value === "config"
+                          ? "设置"
+                          : "归档"
+                  }}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </template>
+          </BreadcrumbList>
+        </Breadcrumb>
         <div class="header-actions">
           <Button
             variant="ghost"
@@ -1082,6 +1122,14 @@ function cardActionLabel(a) {
             </Card>
           </div>
         </template>
+        <template v-if="s.page.value === 'explore'">
+          <OpdsHome
+            :pse-page-base="psePageBase"
+            @read-gallery="openReader"
+            @archive-gallery="handleExploreArchive"
+            @favorite-gallery="handleExploreFavorite"
+          />
+        </template>
         <template v-if="s.page.value === 'config'"
           ><div class="heading">
             <div>
@@ -1348,9 +1396,6 @@ function cardActionLabel(a) {
             >
           </div></template
         >
-        <template v-if="s.page.value === 'home'">
-          <HomeEditor />
-        </template>
 
         <template v-if="s.page.value === 'archive'">
           <div class="heading">
