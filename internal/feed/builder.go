@@ -23,6 +23,7 @@ const (
 	MIMEOPDSNav     = "application/opds+json;profile=navigation"
 	MIMEOPDSAcq     = "application/opds+json;profile=acquisition"
 	MIMEPublication = "application/opds+json"
+	MIMEDivina      = "application/divina+json"
 	MIMEImage       = "image/jpeg"
 	RelStream       = "http://vaemendis.net/opds-pse/stream"
 	RelThumb        = "http://opds-spec.org/image/thumbnail"
@@ -32,6 +33,7 @@ const (
 	RelProgression  = "http://opds-spec.org/progression"
 	MIMEProgression = "application/opds-progression+json"
 	RWPMContext     = "https://readium.org/webpub-manifest/context.jsonld"
+	DivinaProfile   = "https://readium.org/webpub-manifest/profiles/divina"
 	VocabularyIRI   = "https://github.com/n1atsys0r/PandaOPDS/vocab#"
 )
 
@@ -265,25 +267,10 @@ func (b Builder) publicationVersion(gid int, token string, activeGID int, active
 	for k, v := range extra {
 		md[k] = v
 	}
-	links := []map[string]any{}
-	stream := b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken))
-	props := map[string]any(nil)
-	if count > 0 {
-		props = map[string]any{"numberOfItems": count}
-	}
-	direct := detail || !b.Settings.OPDSAcqDetail
-	if direct {
-		if count > 0 {
-			links = append(links, b.Link(RelAcquisition, stream, MIMEImage, title, props), b.Link(RelStream, stream, MIMEImage, "", props))
-		}
-	} else {
-		links = append(links, b.Link(RelAcquisition, b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s", gid, token)), MIMEOPDSAcq, title, props))
-		if count > 0 {
-			links = append(links, b.Link(RelStream, stream, MIMEImage, "", props))
-		}
-	}
-	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil), b.progressionLink(activeGID, activeToken))
-	pub := map[string]any{"context": []any{RWPMContext, map[string]string{"x": VocabularyIRI}}, "metadata": md, "links": links, "images": []map[string]string{{"href": b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), "type": "image/jpeg"}}}
+	links := b.PublicationLinksVersion(gid, token, activeGID, activeToken, title)
+	pub := map[string]any{"metadata": md, "links": links, "images": []map[string]string{{"href": b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), "type": "image/jpeg"}}}
+	// Preserve the legacy publication context convention on catalog and legacy routes.
+	pub["context"] = []any{RWPMContext, map[string]string{"x": VocabularyIRI}}
 	if detail && count > 0 {
 		reading := []map[string]any{}
 		for p := b.Settings.PSEPageBase; p < b.Settings.PSEPageBase+count; p++ {
@@ -458,17 +445,14 @@ func (b Builder) DetailLinks(gid int, token, title string, count int) []map[stri
 	return b.DetailLinksVersion(gid, token, gid, token, title, count)
 }
 func (b Builder) DetailLinksVersion(gid int, token string, activeGID int, activeToken, title string, count int) []map[string]any {
-	props := map[string]any(nil)
-	if count > 0 {
-		props = map[string]any{"numberOfItems": count}
+	return b.PublicationLinksVersion(gid, token, activeGID, activeToken, title)
+}
+func (b Builder) PublicationLinksVersion(gid int, token string, activeGID int, activeToken, title string) []map[string]any {
+	return []map[string]any{
+		b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/manifest", gid, token)), MIMEDivina, title, nil),
+		b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil),
+		b.progressionLink(activeGID, activeToken),
 	}
-	stream := b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken))
-	links := []map[string]any{}
-	if count > 0 {
-		links = append(links, b.Link(RelAcquisition, stream, MIMEImage, title, props), b.Link(RelStream, stream, MIMEImage, "", props))
-	}
-	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil), b.progressionLink(activeGID, activeToken))
-	return links
 }
 func (b Builder) ReadingOrder(gid int, token string, count int) []map[string]any {
 	return b.ReadingOrderVersion(gid, token, gid, token, count)

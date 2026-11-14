@@ -48,10 +48,6 @@ import {
   InfoIcon as Info,
 } from "@lucide/vue";
 
-const props = defineProps({
-  psePageBase: { type: Number, default: 1 },
-});
-
 const emit = defineEmits([
   "read-gallery",
   "archive-gallery",
@@ -174,6 +170,8 @@ const routeFeed = ref(null);
 const routeLoading = ref(false);
 const routeError = ref("");
 const routePageStack = ref([]);
+let catalogFeedHref = window.location.href;
+let routeFeedHref = window.location.href;
 
 // Gallery detail drawer
 const detailOpen = ref(false);
@@ -340,7 +338,7 @@ function extractLanguage(meta) {
   return "";
 }
 
-function normalizePublication(pub) {
+function normalizePublication(pub, feedHref = window.location.href) {
   if (!pub) return null;
   const meta = pub.metadata || {};
   let gid = meta["x:gid"] || 0;
@@ -364,16 +362,18 @@ function normalizePublication(pub) {
     coverUrl = `/image/${gid}/${token}/thumb`;
   }
 
-  // Stream link
-  let streamHref = "";
+  // Detail link
+  let detailHref = "";
   let upstreamUrl = "";
   for (const l of pub.links || []) {
-    if (
-      l.rel === "http://opds-spec.org/acquisition/stream" ||
-      l.rel === "stream" ||
-      (l.href && l.href.includes("/stream/"))
-    ) {
-      streamHref = l.href;
+    if (l.rel === "self" && l.href) {
+      const type = String(l.type || "").toLowerCase();
+      if (
+        type.startsWith("application/divina+json") ||
+        type.startsWith("application/opds+json")
+      ) {
+        detailHref = localApiUrl(l.href, feedHref);
+      }
     }
     if (l.rel === "alternate" && l.type === "text/html") {
       upstreamUrl = l.href;
@@ -423,7 +423,8 @@ function normalizePublication(pub) {
     publishTime: meta.published || "",
     language,
     coverUrl,
-    streamHref,
+    detailHref,
+    feedHref,
     upstreamUrl,
     subjects: Array.isArray(meta.subject) ? meta.subject : [],
     archiveBadge,
@@ -431,6 +432,80 @@ function normalizePublication(pub) {
     raw: pub,
   };
 }
+
+function localApiUrl(href, base = window.location.href) {
+  if (!href) return "";
+  try {
+    if (href.startsWith("//")) return "";
+    const url = new URL(href, base);
+    // s.api adds the session Authorization header, so never pass it a foreign origin.
+    if (url.origin !== window.location.origin) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+const detailRequests = new Map();
+function ensurePublicationDetails(pub) {
+  if (!pub?.gid || !pub?.token) return Promise.resolve(null);
+  if (!pub.detailHref) return Promise.resolve(pub);
+  if (pub.detailLoaded) return Promise.resolve(pub);
+  const href = pub.detailHref;
+  let task = detailRequests.get(href);
+  if (!task) {
+    task = s.api(href, {
+      headers: { Accept: "application/divina+json, application/opds+json" },
+    })
+      .then(({ data }) => data)
+      .finally(() => detailRequests.delete(href));
+    detailRequests.set(href, task);
+  }
+  return task.then((data) => {
+    if (pub.detailLoaded) return pub;
+    const metadata = data?.metadata || {};
+    const subjects = [...(pub.subjects || [])];
+    for (const subject of Array.isArray(metadata.subject) ? metadata.subject : []) {
+      if (!subject?.name) continue;
+      const index = subjects.findIndex((item) => item?.name === subject.name);
+      if (index < 0) subjects.push(subject);
+      else subjects[index] = { ...subjects[index], ...subject };
+    }
+    const sourceLinks = [...(data.links || [])];
+    for (const link of pub.raw?.links || []) {
+      if (!sourceLinks.some((item) => item.rel === link.rel && item.href === link.href)) {
+        sourceLinks.push(link);
+      }
+    }
+    const normalized = normalizePublication(
+      {
+        metadata: { ...pub.raw?.metadata, ...metadata },
+        links: sourceLinks,
+        images: pub.raw?.images || [],
+      },
+      href,
+    );
+    const rawPages = Array.isArray(data.readingOrder) ? data.readingOrder : [];
+    const pages = rawPages.map((page) => ({
+      href: localApiUrl(page?.href, href),
+      thumbnailHref: localApiUrl(page?.properties?.["x:thumbnail"]?.href, href),
+    }));
+    const validPages = pages.length > 0 && pages.every((page) => page.href);
+    Object.assign(pub, normalized, {
+      subjects,
+      detailLoaded: true,
+      readingOrder: validPages ? pages : [],
+      pageCount: validPages ? pages.length : (normalized.pageCount || pub.pageCount),
+    });
+    return pub;
+  }).catch(() => {
+      return pub;
+    });
+}
+
+watch([selectedPub, detailOpen], ([pub, open]) => {
+  if (pub && open) ensurePublicationDetails(pub);
+});
 
 // Normalized Navigation Pills
 const navigationItems = computed(() => {
@@ -465,7 +540,7 @@ const publicationGroups = computed(() => {
   // 1. Grouped sections
   if (Array.isArray(catalog.value.groups)) {
     catalog.value.groups.forEach((g, index) => {
-      const pubs = (g.publications || []).map(normalizePublication).filter(Boolean);
+      const pubs = (g.publications || []).map((pub) => normalizePublication(pub, catalogFeedHref)).filter(Boolean);
       if (pubs.length === 0) return;
 
       const selfLink = (g.links || []).find(
@@ -488,7 +563,7 @@ const publicationGroups = computed(() => {
   // 2. Root publications if no groups
   if (groups.length === 0 && Array.isArray(catalog.value.publications)) {
     const pubs = catalog.value.publications
-      .map(normalizePublication)
+      .map((pub) => normalizePublication(pub, catalogFeedHref))
       .filter(Boolean);
     if (pubs.length > 0) {
       groups.push({
@@ -520,13 +595,15 @@ async function loadCatalog() {
   loading.value = true;
   error.value = "";
   try {
-    const res = await s.api(`/opds/v2.0?_t=${Date.now()}`, {
+    const requestHref = `/opds/v2.0?_t=${Date.now()}`;
+    const res = await s.api(requestHref, {
       cache: "no-store",
       headers: {
         Accept: "application/opds+json, application/json",
         "Cache-Control": "no-cache",
       },
     });
+    catalogFeedHref = new URL(requestHref, window.location.href).href;
     catalog.value = res.data;
   } catch (err) {
     error.value = err.message || "加载 OPDS 目录失败";
@@ -556,6 +633,7 @@ async function loadRouteFeed(url) {
     const res = await s.api(url, {
       headers: { Accept: "application/opds+json, application/json" },
     });
+    routeFeedHref = localApiUrl(url) || url;
     routeFeed.value = res.data;
   } catch (err) {
     routeError.value = err.message || "加载列表失败";
@@ -571,7 +649,7 @@ function exitDrillDown() {
 
 const drillDownPublications = computed(() => {
   if (!routeFeed.value || !Array.isArray(routeFeed.value.publications)) return [];
-  return routeFeed.value.publications.map(normalizePublication).filter(Boolean);
+  return routeFeed.value.publications.map((pub) => normalizePublication(pub, routeFeedHref)).filter(Boolean);
 });
 
 const nextLink = computed(() => {
@@ -837,13 +915,17 @@ function openGallery(pub, list = null) {
   scrollModalToTop();
 }
 
-function handleRead(pub) {
+async function handleRead(pub) {
+  const selectedAtClick = pub;
+  const detailedPub = await ensurePublicationDetails(pub);
+  if (!detailedPub?.pageCount || !detailOpen.value || selectedPub.value !== selectedAtClick) return;
   detailOpen.value = false;
   emit("read-gallery", {
-    gid: pub.gid,
-    token: pub.token,
-    title: pub.title,
-    page_count: pub.pageCount || 0,
+    gid: detailedPub.gid,
+    token: detailedPub.token,
+    title: detailedPub.title,
+    page_count: detailedPub.pageCount || 0,
+    reading_order: detailedPub.readingOrder || [],
   });
 }
 

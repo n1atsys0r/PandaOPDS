@@ -125,6 +125,9 @@ function savePageIndex(idx) {
 function streamUrlFor(idx) {
   const a = props.archive;
   if (!a) return "";
+  if (Array.isArray(a.reading_order) && a.reading_order[idx]?.href) {
+    return a.reading_order[idx].href;
+  }
   const gid = a.active_gid || a.gid;
   const token = a.active_token || a.token;
   const pageNum = props.psePageBase + idx;
@@ -134,6 +137,9 @@ function streamUrlFor(idx) {
 function thumbUrlFor(idx) {
   const a = props.archive;
   if (!a) return "";
+  if (Array.isArray(a.reading_order) && a.reading_order[idx]?.thumbnailHref) {
+    return a.reading_order[idx].thumbnailHref;
+  }
   const gid = a.active_gid || a.gid;
   const token = a.active_token || a.token;
   const pageNum = props.psePageBase + idx;

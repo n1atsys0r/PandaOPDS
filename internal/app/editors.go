@@ -18,7 +18,7 @@ import (
 	"pandaopds/internal/home"
 )
 
-var configWireToEnv = map[string]string{"eh_site": "EH_SITE", "ipb_member_id": "IPB_MEMBER_ID", "ipb_pass_hash": "IPB_PASS_HASH", "igneous": "IGNEOUS", "public_base_url": "PUBLIC_BASE_URL", "pse_page_base": "PSE_PAGE_BASE", "opds_acq_detail": "OPDS_ACQ_DETAIL", "tag_status_filter": "TAG_STATUS_FILTER", "tag_translation_enabled": "TAG_TRANSLATION_ENABLED", "comments_enabled": "COMMENTS_ENABLED", "image_cache_enabled": "IMAGE_CACHE_ENABLED", "cache_max_gb": "CACHE_MAX_GB", "favorites_sync_interval_seconds": "FAVORITES_SYNC_INTERVAL_SECONDS", "favorites_sync_archive": "FAVORITES_SYNC_ARCHIVE", "favorites_sync_categories": "FAVORITES_SYNC_CATEGORIES", "archive_update_interval_days": "ARCHIVE_UPDATE_INTERVAL_DAYS", "archive_auto_update": "ARCHIVE_AUTO_UPDATE"}
+var configWireToEnv = map[string]string{"eh_site": "EH_SITE", "ipb_member_id": "IPB_MEMBER_ID", "ipb_pass_hash": "IPB_PASS_HASH", "igneous": "IGNEOUS", "public_base_url": "PUBLIC_BASE_URL", "pse_page_base": "PSE_PAGE_BASE", "tag_status_filter": "TAG_STATUS_FILTER", "tag_translation_enabled": "TAG_TRANSLATION_ENABLED", "comments_enabled": "COMMENTS_ENABLED", "image_cache_enabled": "IMAGE_CACHE_ENABLED", "cache_max_gb": "CACHE_MAX_GB", "favorites_sync_interval_seconds": "FAVORITES_SYNC_INTERVAL_SECONDS", "favorites_sync_archive": "FAVORITES_SYNC_ARCHIVE", "favorites_sync_categories": "FAVORITES_SYNC_CATEGORIES", "archive_update_interval_days": "ARCHIVE_UPDATE_INTERVAL_DAYS", "archive_auto_update": "ARCHIVE_AUTO_UPDATE"}
 
 func readSnapshot(path string) (bool, []byte, error) {
 	b, e := os.ReadFile(path)
@@ -74,11 +74,6 @@ func settingEnvLocked(k string) bool {
 		_, a := os.LookupEnv("IPB_MEMBER_ID")
 		_, b := os.LookupEnv("IPB_PASS_HASH")
 		return a || b
-	}
-	if k == "OPDS_ACQ_DETAIL" {
-		if _, ok := os.LookupEnv("OPDS_ACQ_MODE"); ok {
-			return true
-		}
 	}
 	_, ok := os.LookupEnv(k)
 	return ok

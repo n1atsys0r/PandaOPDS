@@ -152,6 +152,7 @@ func (s *Server) register() {
 	m.HandleFunc("GET /opds/v2.0/toplist", s.toplist20)
 	m.HandleFunc("GET /opds/v2.0/archives", s.archives20)
 	m.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}", s.detail20)
+	m.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}/manifest", s.manifest20)
 	m.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}/publication", s.publication20)
 	m.HandleFunc("GET /stream/{gid}/{token}/page/{page}", s.streamPage)
 	m.HandleFunc("GET /image/{gid}/{token}/thumb", s.thumb)

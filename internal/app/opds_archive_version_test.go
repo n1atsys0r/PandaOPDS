@@ -107,7 +107,54 @@ func checkArchivedOPDSAfterRestart(t *testing.T, root string, hasOldZIP bool) {
 	if got := pub["metadata"].(map[string]any)["title"]; got != "Active title" {
 		t.Fatalf("OPDS 2.0 archive title = %v", got)
 	}
-	activeStreamLink(t, pub["links"], "/stream/200/bbbb/page/{pageNumber}")
+	if got := pub["links"].([]any)[0].(map[string]any)["href"]; got != "/opds/v2.0/gallery/100/aaaa/manifest" {
+		t.Fatalf("archive manifest link = %v", got)
+	}
+	manifest := get("/opds/v2.0/gallery/100/aaaa/manifest")
+	if got := manifest.Header().Get("Content-Type"); got != "application/divina+json" {
+		t.Fatalf("manifest content type = %q", got)
+	}
+	var manifestDoc map[string]any
+	if err := json.Unmarshal(manifest.Body.Bytes(), &manifestDoc); err != nil {
+		t.Fatal(err)
+	}
+	if manifestDoc["@context"] != "https://readium.org/webpub-manifest/context.jsonld" {
+		t.Fatalf("manifest context = %#v", manifestDoc["@context"])
+	}
+	if got := manifestDoc["metadata"].(map[string]any)["conformsTo"].([]any)[0]; got != "https://readium.org/webpub-manifest/profiles/divina" {
+		t.Fatalf("Divina conformance = %v", got)
+	}
+	legacyPublication := get("/opds/v2.0/gallery/100/aaaa/publication")
+	if got := legacyPublication.Header().Get("Content-Type"); got != "application/opds+json" {
+		t.Fatalf("legacy publication content type = %q", got)
+	}
+	var legacyPublicationDoc map[string]any
+	if err := json.Unmarshal(legacyPublication.Body.Bytes(), &legacyPublicationDoc); err != nil {
+		t.Fatal(err)
+	}
+	if legacyPublicationDoc["@context"] != nil || legacyPublicationDoc["context"] == nil || legacyPublicationDoc["metadata"].(map[string]any)["conformsTo"] != nil {
+		t.Fatalf("legacy publication changed Divina context contract: %#v", legacyPublicationDoc)
+	}
+	manifestLinks := manifestDoc["links"].([]any)
+	if len(manifestLinks) != 3 {
+		t.Fatalf("manifest must have exactly self, alternate, progression links: %#v", manifestLinks)
+	}
+	wantLinks := []struct{ rel, href, typ string }{
+		{"self", "/opds/v2.0/gallery/100/aaaa/manifest", "application/divina+json"},
+		{"alternate", "https://e-hentai.org/g/200/bbbb/", "text/html"},
+		{"http://opds-spec.org/progression", "/opds/progression/200/bbbb", "application/opds-progression+json"},
+	}
+	for i, want := range wantLinks {
+		link := manifestLinks[i].(map[string]any)
+		if link["rel"] != want.rel || link["href"] != want.href || link["type"] != want.typ {
+			t.Fatalf("manifest link %d = %#v, want rel=%q href=%q type=%q", i, link, want.rel, want.href, want.typ)
+		}
+	}
+	manifestOrder := manifestDoc["readingOrder"].([]any)
+	firstManifestPage := manifestOrder[0].(map[string]any)["href"].(string)
+	if got := get(firstManifestPage).Body.String(); got != "active-page" {
+		t.Fatalf("manifest readingOrder resource %q returned %q", firstManifestPage, got)
+	}
 
 	chapters := get("/opds/v1.2/gallery/100/aaaa/chapters").Body.String()
 	for _, want := range []string{"urn:ehentai:gallery:100:aaaa", "/stream/200/bbbb/page/{pageNumber}", "pse:count=\"1\""} {
@@ -130,11 +177,10 @@ func checkArchivedOPDSAfterRestart(t *testing.T, root string, hasOldZIP bool) {
 	if got := detail["metadata"].(map[string]any)["title"]; got != "Active title" {
 		t.Fatalf("detail title = %v", got)
 	}
-	activeStreamLink(t, detail["links"], "/stream/200/bbbb/page/{pageNumber}")
 	selfFound := false
 	for _, rawLink := range detail["links"].([]any) {
 		link := rawLink.(map[string]any)
-		if link["rel"] == "self" && link["href"] == "/opds/v2.0/gallery/100/aaaa/publication" {
+		if link["rel"] == "self" && link["href"] == "/opds/v2.0/gallery/100/aaaa/manifest" && link["type"] == "application/divina+json" {
 			selfFound = true
 		}
 	}

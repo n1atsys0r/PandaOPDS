@@ -15,7 +15,7 @@ Compose 默认拉取发布镜像。升级运行 `docker compose pull && docker c
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 挂载到 `/config`。要覆盖 `OPDS_ACQ_DETAIL`，请在 `.env` 或 Compose 覆盖文件中显式设置。
+Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 挂载到 `/config`。
 
 ## 环境变量
 
@@ -44,7 +44,6 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `LIST_CACHE_TTL_SECONDS` | `600` | 列表结果缓存 TTL。 |
 | `IMAGE_SOURCE_RETRIES` | `2` | 图片源失效后的重新解析次数。 |
 | `PSE_PAGE_BASE` | `1` | OPDS-PSE 页码基数，支持 1 或 0。 |
-| `OPDS_ACQ_DETAIL` | `false` | v2.0 acquisition 是否先进入详情文档；旧 `OPDS_ACQ_MODE=detail` 兼容此行为。 |
 | `TAG_STATUS_FILTER` | `balanced` | 标签可信度过滤：`balanced`、`strict`、`off`。 |
 | `COMMENTS_ENABLED` | `true` | 控制 v2.0 详情是否输出评论扩展。 |
 | `IMAGE_PROXY_HOSTS` | `ehgt.org,s.exhentai.org` | `/image/fetch` 允许代理的 host。 |
@@ -63,9 +62,12 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `FAVORITES_SYNC_MAX_PAGES` | `50` | 单轮扫描页数上限。 |
 | `MYTAGS_TTL_SECONDS`, `MYTAGS_STATE` | `21600`, `./mytags.json`* | My Tags 样式缓存有效期及状态文件路径。 |
 | `TAG_TRANSLATION_ENABLED` | `false` | 启用中文标签翻译和搜索反查。 |
+
 | `TAG_TRANSLATION_URL` | GitHub latest | 标签词典下载 URL。 |
 | `TAG_TRANSLATION_INTERVAL_SECONDS` | `86400` | 词典刷新周期；`0` 表示仅启动时拉取。 |
 | `TAG_TRANSLATION_STATE` | `./tag_translation.json`* | 词典磁盘快照路径。 |
+
+`OPDS_ACQ_DETAIL` 和旧别名 `OPDS_ACQ_MODE` 已随 OPDS 2.0 Divina manifest 改版退役，环境变量会被忽略。旧 `settings.toml` 中的 `OPDS_ACQ_DETAIL` 会被忽略；管理页保存配置时会移除该项。
 
 \* 若 `/config` 目录存在，三个状态文件的默认路径为 `/config/` 下同名文件。
 

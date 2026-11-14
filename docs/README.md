@@ -6,6 +6,7 @@
 - [归档](archive.md)：用户发起的归档、持久存储和离线访问。
 - [收藏夹](favorites.md)：收藏写操作、同步和自动归档语义。
 - [客户端元数据](client-metadata.md)：面向阅读器开发者的响应结构与消费指南。
+- [Breaking Changes](breaking-changes.md)：OPDS 2.0 Divina 变更与客户端迁移验收。
 - [Go 迁移验收](go-acceptance.md)：Go 与既有实现的迁移验收步骤。
 - [历史实施计划](plans/PLAN-2026-08-11-archived.md)：已归档的早期计划，仅作历史记录。
 

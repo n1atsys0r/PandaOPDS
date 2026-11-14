@@ -36,15 +36,14 @@ func TestArchiveVersionListKeepsStableIdentityAndUsesActiveResources(t *testing.
 		t.Fatalf("progression publication link=%#v", last)
 	}
 	links := pub["links"].([]map[string]any)
-	if got := links[0]["href"]; got != "/stream/20/new/page/{pageNumber}" {
-		t.Fatalf("direct acquisition link = %v", got)
+	if len(links) != 3 || links[0]["href"] != "/opds/v2.0/gallery/10/old/manifest" || links[0]["type"] != MIMEDivina {
+		t.Fatalf("manifest self link = %#v", links)
 	}
-	props := links[0]["properties"].(map[string]any)
-	if got := props["numberOfItems"]; got != 7 {
-		t.Fatalf("active page count = %v", got)
+	if links[1]["href"] != "https://e-hentai.org/g/20/new/" || links[2]["rel"] != RelProgression {
+		t.Fatalf("publication links = %#v", links)
 	}
-	if got := links[2]["href"]; got != "/opds/v2.0/gallery/10/old/publication" {
-		t.Fatalf("self link = %v", got)
+	if _, exists := pub["readingOrder"]; exists {
+		t.Fatal("list publication unexpectedly contains readingOrder")
 	}
 }
 
@@ -61,7 +60,7 @@ func TestArchiveVersionDetailReadingOrderUsesActiveResources(t *testing.T) {
 		t.Fatalf("readingOrder = %#v", order)
 	}
 	links := b.DetailLinksVersion(10, "old", 20, "new", "Updated", 2)
-	if links[len(links)-3]["href"] != "/opds/v2.0/gallery/10/old/publication" || links[0]["href"] != "/stream/20/new/page/{pageNumber}" || links[len(links)-1]["href"] != "/opds/progression/20/new" {
+	if len(links) != 3 || links[0]["href"] != "/opds/v2.0/gallery/10/old/manifest" || links[0]["type"] != MIMEDivina || links[len(links)-1]["href"] != "/opds/progression/20/new" {
 		t.Fatalf("detail links = %#v", links)
 	}
 	chapters := b.AtomChapterVersion(10, "old", item, "Updated", "")

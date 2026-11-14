@@ -22,7 +22,6 @@ type Settings struct {
 	Retries, MaxConcurrency, ImageMaxConcurrency, ThumbMaxConcurrency                 int
 	PublicBaseURL                                                                     string
 	PSEPageBase                                                                       int
-	OPDSAcqDetail                                                                     bool
 	CacheDir                                                                          string
 	CacheMaxGB                                                                        float64
 	ImageCacheEnabled                                                                 bool
@@ -117,8 +116,7 @@ func loadWithEditableValues(fileValues map[string]any) Settings {
 		TimeoutSeconds: floatEnv("TIMEOUT_SECONDS", 6), Retries: intEnv("RETRIES", 3), HTMLIntervalSeconds: floatEnv("HTML_INTERVAL_SECONDS", .3),
 		MaxConcurrency: intEnv("MAX_CONCURRENCY", 5), ImageMaxConcurrency: intEnv("IMAGE_MAX_CONCURRENCY", 5), ThumbMaxConcurrency: intEnv("THUMB_MAX_CONCURRENCY", 25),
 		PublicBaseURL: strings.TrimRight(base("PUBLIC_BASE_URL", ""), "/"), PSEPageBase: intEnv("PSE_PAGE_BASE", 1),
-		OPDSAcqDetail: boolEnv("OPDS_ACQ_DETAIL", strings.EqualFold(base("OPDS_ACQ_MODE", ""), "detail")),
-		CacheDir:      base("CACHE_DIR", "./cache"), CacheMaxGB: floatEnv("CACHE_MAX_GB", 4), ImageCacheEnabled: boolEnv("IMAGE_CACHE_ENABLED", true),
+		CacheDir: base("CACHE_DIR", "./cache"), CacheMaxGB: floatEnv("CACHE_MAX_GB", 4), ImageCacheEnabled: boolEnv("IMAGE_CACHE_ENABLED", true),
 		MetadataTTLSeconds: intEnv("METADATA_TTL_SECONDS", 600), PageURLTTLSeconds: intEnv("PAGE_URL_TTL_SECONDS", 3600), ListCacheTTLSeconds: intEnv("LIST_CACHE_TTL_SECONDS", 600),
 		ImageSourceRetries: intEnv("IMAGE_SOURCE_RETRIES", 2), BannedCooldownSeconds: floatEnv("BANNED_COOLDOWN_SECONDS", 1800), ExceedCooldownSeconds: floatEnv("EXCEED_COOLDOWN_SECONDS", 300),
 		TagStatusFilter: defaultString(strings.ToLower(base("TAG_STATUS_FILTER", "balanced")), "balanced"), CommentsEnabled: boolEnv("COMMENTS_ENABLED", true),

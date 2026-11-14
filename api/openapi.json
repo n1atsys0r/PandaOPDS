@@ -906,7 +906,18 @@
                       "links": [
                         {
                           "rel": "self",
-                          "href": "/opds/v2.0/gallery/12345/abcdef0123/publication"
+                          "href": "/opds/v2.0/gallery/12345/abcdef0123/manifest",
+                          "type": "application/divina+json"
+                        },
+                        {
+                          "rel": "alternate",
+                          "href": "https://e-hentai.org/g/12345/abcdef0123/",
+                          "type": "text/html"
+                        },
+                        {
+                          "rel": "http://opds-spec.org/progression",
+                          "href": "/opds/progression/12345/abcdef0123",
+                          "type": "application/opds-progression+json"
                         }
                       ]
                     }
@@ -1045,7 +1056,18 @@
                       "links": [
                         {
                           "rel": "self",
-                          "href": "/opds/v2.0/gallery/12345/abcdef0123/publication"
+                          "href": "/opds/v2.0/gallery/12345/abcdef0123/manifest",
+                          "type": "application/divina+json"
+                        },
+                        {
+                          "rel": "alternate",
+                          "href": "https://e-hentai.org/g/12345/abcdef0123/",
+                          "type": "text/html"
+                        },
+                        {
+                          "rel": "http://opds-spec.org/progression",
+                          "href": "/opds/progression/12345/abcdef0123",
+                          "type": "application/opds-progression+json"
                         }
                       ]
                     }
@@ -1209,28 +1231,9 @@
                       },
                       "links": [
                         {
-                          "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
-                          "rel": "http://opds-spec.org/acquisition",
-                          "type": "image/jpeg",
-                          "title": "ローカル",
-                          "properties": {
-                            "numberOfItems": 2
-                          },
-                          "templated": true
-                        },
-                        {
-                          "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
-                          "rel": "http://vaemendis.net/opds-pse/stream",
-                          "type": "image/jpeg",
-                          "properties": {
-                            "numberOfItems": 2
-                          },
-                          "templated": true
-                        },
-                        {
-                          "href": "https://catalog.example/opds/v2.0/gallery/12345/abcdef0123/publication",
+                          "href": "https://catalog.example/opds/v2.0/gallery/12345/abcdef0123/manifest",
                           "rel": "self",
-                          "type": "application/opds+json",
+                          "type": "application/divina+json",
                           "title": "ローカル"
                         },
                         {
@@ -1238,6 +1241,11 @@
                           "rel": "alternate",
                           "type": "text/html",
                           "title": "e-hentai.org"
+                        },
+                        {
+                          "href": "https://catalog.example/opds/progression/12345/abcdef0123",
+                          "rel": "http://opds-spec.org/progression",
+                          "type": "application/opds-progression+json"
                         }
                       ],
                       "images": [
@@ -1381,7 +1389,18 @@
                       "links": [
                         {
                           "rel": "self",
-                          "href": "/opds/v2.0/gallery/12345/abcdef0123/publication"
+                          "href": "/opds/v2.0/gallery/12345/abcdef0123/manifest",
+                          "type": "application/divina+json"
+                        },
+                        {
+                          "rel": "alternate",
+                          "href": "https://e-hentai.org/g/12345/abcdef0123/",
+                          "type": "text/html"
+                        },
+                        {
+                          "rel": "http://opds-spec.org/progression",
+                          "href": "/opds/progression/12345/abcdef0123",
+                          "type": "application/opds-progression+json"
                         }
                       ]
                     }
@@ -1460,13 +1479,33 @@
         }
       }
     },
+    "/opds/v2.0/gallery/{gid}/{token}/manifest": {
+      "get": {
+        "tags": ["opds2"],
+        "summary": "Divina Gallery Manifest",
+        "description": "Returns a Readium Divina manifest with a nonempty per-page readingOrder. Ready archives use stored metadata and pages. If the page count is unknown or zero, returns 503 because a valid Divina manifest cannot be produced.",
+        "operationId": "gallery_manifest_opds_v2_0_gallery__gid___token__manifest_get",
+        "parameters": [
+          {"name":"gid","in":"path","required":true,"schema":{"type":"integer"},"example":12345},
+          {"name":"token","in":"path","required":true,"schema":{"type":"string"},"example":"abcdef0123"}
+        ],
+        "responses": {
+          "200": {"description":"Divina manifest","content":{"application/divina+json":{"schema":{"$ref":"#/components/schemas/DivinaManifest"}}}},
+          "401": {"description":"Basic authentication required when configured"},
+          "404": {"description":"Gallery unavailable"},
+          "422": {"description":"Invalid gallery identifier"},
+          "502": {"description":"Upstream or parsing failure"},
+          "503": {"description":"Gallery page count unavailable or upstream service unavailable","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}
+        }
+      }
+    },
     "/opds/v2.0/gallery/{gid}/{token}/publication": {
       "get": {
         "tags": [
           "opds2"
         ],
-        "summary": "Gallery Publication",
-        "description": "Single-publication document: a top-level RWPM/OPDS publication object.\n\nThis is the target of every publication's `rel=\"self\"` link. Clients\nlike Stump follow `self` to open details and read through the embedded\n`readingOrder` (per-page image URLs); the response shape matches what\ntheir parser expects (a publication object, not an acquisition feed).\nReady archives prefer online detail-page HTML and use the local snapshot\nwhen upstream is unavailable.",
+        "summary": "Legacy Gallery Publication",
+        "description": "Legacy URL retained for clients that saved it. New catalog entries link to `/manifest`. Returns a top-level publication object. Ready archives prefer online detail-page HTML and use the local snapshot when upstream is unavailable.",
         "operationId": "gallery_publication_opds_v2_0_gallery__gid___token__publication_get",
         "parameters": [
           {
@@ -1529,28 +1568,9 @@
                   },
                   "links": [
                     {
-                      "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
-                      "rel": "http://opds-spec.org/acquisition",
-                      "type": "image/jpeg",
-                      "title": "ローカル",
-                      "properties": {
-                        "numberOfItems": 2
-                      },
-                      "templated": true
-                    },
-                    {
-                      "href": "https://catalog.example/stream/12345/abcdef0123/page/{pageNumber}",
-                      "rel": "http://vaemendis.net/opds-pse/stream",
-                      "type": "image/jpeg",
-                      "properties": {
-                        "numberOfItems": 2
-                      },
-                      "templated": true
-                    },
-                    {
-                      "href": "https://catalog.example/opds/v2.0/gallery/12345/abcdef0123/publication",
+                      "href": "https://catalog.example/opds/v2.0/gallery/12345/abcdef0123/manifest",
                       "rel": "self",
-                      "type": "application/opds+json",
+                      "type": "application/divina+json",
                       "title": "ローカル"
                     },
                     {
@@ -1558,6 +1578,11 @@
                       "rel": "alternate",
                       "type": "text/html",
                       "title": "e-hentai.org"
+                    },
+                    {
+                      "href": "https://catalog.example/opds/progression/12345/abcdef0123",
+                      "rel": "http://opds-spec.org/progression",
+                      "type": "application/opds-progression+json"
                     }
                   ],
                   "images": [
@@ -5022,6 +5047,17 @@
           "templated": {
             "type": "boolean"
           }
+        }
+      },
+      "DivinaManifest": {
+        "type": "object",
+        "required": ["@context", "metadata", "links", "readingOrder"],
+        "properties": {
+          "@context": {"type": "string", "format": "uri"},
+          "metadata": {"type": "object", "required": ["conformsTo"], "properties": {"conformsTo": {"type": "array", "items": {"type": "string", "format": "uri"}}}},
+          "links": {"type": "array", "items": {"$ref": "#/components/schemas/Link"}},
+          "images": {"type": "array", "items": {"$ref": "#/components/schemas/Link"}},
+          "readingOrder": {"type": "array", "minItems": 1, "items": {"$ref": "#/components/schemas/Link"}}
         }
       },
       "Publication": {

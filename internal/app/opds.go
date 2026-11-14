@@ -736,6 +736,30 @@ func (s *Server) publication20(w http.ResponseWriter, r *http.Request) {
 	}
 	writeBytes(w, 200, feed.MIMEPublication, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
 }
+
+func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
+	gid, token, e := pathID(r)
+	if e != nil {
+		writeJSON(w, 422, map[string]any{"detail": e.Error()})
+		return
+	}
+	pub, e := s.detailPublication(r, gid, token)
+	if e != nil {
+		writeError(w, e)
+		return
+	}
+	reading, _ := pub["readingOrder"].([]map[string]any)
+	if len(reading) == 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"detail": "gallery page count unavailable; cannot build a Divina manifest"})
+		return
+	}
+	delete(pub, "context")
+	pub["@context"] = feed.RWPMContext
+	metadata := pub["metadata"].(map[string]any)
+	metadata["conformsTo"] = []string{feed.DivinaProfile}
+	writeBytes(w, http.StatusOK, feed.MIMEDivina, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
+}
+
 func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[string]any, error) {
 	d, e := s.Service.GetDetail(r.Context(), gid, token)
 	if e != nil {
@@ -819,10 +843,6 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 			reviews = append(reviews, item)
 		}
 		metadata["x:reviews"] = reviews
-	}
-	pub["links"] = s.builder().DetailLinksVersion(gid, token, activeGID, activeToken, title, count)
-	if count > 0 {
-		pub["readingOrder"] = s.builder().ReadingOrderVersion(gid, token, activeGID, activeToken, count)
 	}
 	return pub, nil
 }

@@ -90,16 +90,20 @@ func TestIPBCredentialsAreAtomicAcrossEnvironmentAndFile(t *testing.T) {
 	}
 }
 
-func TestLegacyAcquisitionEnvironmentOverridesFile(t *testing.T) {
+func TestRetiredAcquisitionSettingIsIgnoredAndDoesNotBreakOtherSettings(t *testing.T) {
 	t.Setenv("OPDS_ACQ_DETAIL", "")
 	_ = os.Unsetenv("OPDS_ACQ_DETAIL")
-	t.Setenv("OPDS_ACQ_MODE", "direct")
+	t.Setenv("EH_SITE", "")
+	_ = os.Unsetenv("EH_SITE")
 	p := filepath.Join(t.TempDir(), "settings.toml")
-	if err := WriteEditableFile(p, map[string]any{"OPDS_ACQ_DETAIL": true}); err != nil {
+	if err := os.WriteFile(p, []byte("OPDS_ACQ_DETAIL = true\nEH_SITE = \"exhentai\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got := LoadWithConfigPath(p).OPDSAcqDetail; got {
-		t.Fatal("legacy direct env did not override file")
+	if got := LoadWithConfigPath(p).EHSite; got != "exhentai" {
+		t.Fatalf("legacy setting prevented remaining settings from loading: EH_SITE=%q", got)
+	}
+	if IsEditableKey("OPDS_ACQ_DETAIL") {
+		t.Fatal("retired setting is still editable")
 	}
 }
 

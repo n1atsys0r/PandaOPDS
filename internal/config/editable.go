@@ -13,7 +13,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-var editableKeys = []string{"EH_SITE", "IPB_MEMBER_ID", "IPB_PASS_HASH", "IGNEOUS", "PUBLIC_BASE_URL", "PSE_PAGE_BASE", "OPDS_ACQ_DETAIL", "TAG_STATUS_FILTER", "TAG_TRANSLATION_ENABLED", "COMMENTS_ENABLED", "IMAGE_CACHE_ENABLED", "CACHE_MAX_GB", "FAVORITES_SYNC_INTERVAL_SECONDS", "FAVORITES_SYNC_ARCHIVE", "FAVORITES_SYNC_CATEGORIES", "ARCHIVE_UPDATE_INTERVAL_DAYS", "ARCHIVE_AUTO_UPDATE"}
+var editableKeys = []string{"EH_SITE", "IPB_MEMBER_ID", "IPB_PASS_HASH", "IGNEOUS", "PUBLIC_BASE_URL", "PSE_PAGE_BASE", "TAG_STATUS_FILTER", "TAG_TRANSLATION_ENABLED", "COMMENTS_ENABLED", "IMAGE_CACHE_ENABLED", "CACHE_MAX_GB", "FAVORITES_SYNC_INTERVAL_SECONDS", "FAVORITES_SYNC_ARCHIVE", "FAVORITES_SYNC_CATEGORIES", "ARCHIVE_UPDATE_INTERVAL_DAYS", "ARCHIVE_AUTO_UPDATE"}
 
 func EditablePath() string {
 	if p := os.Getenv("SETTINGS_CONFIG"); p != "" {
@@ -43,6 +43,8 @@ func DecodeEditableFile(b []byte) (map[string]any, error) {
 	if _, err := toml.Decode(string(b), &raw); err != nil {
 		return nil, fmt.Errorf("invalid TOML")
 	}
+	// Ignore retired settings so existing user configuration continues loading.
+	delete(raw, "OPDS_ACQ_DETAIL")
 	for k := range raw {
 		if !containsEditable(k) {
 			return nil, fmt.Errorf("unknown settings key %q", k)
@@ -74,11 +76,6 @@ func ApplyEditableOverrides(s Settings, raw map[string]any) Settings {
 		}
 		if _, ok := os.LookupEnv(key); ok {
 			continue
-		}
-		if key == "OPDS_ACQ_DETAIL" {
-			if _, ok := os.LookupEnv("OPDS_ACQ_MODE"); ok {
-				continue
-			}
 		}
 		if key == "IPB_MEMBER_ID" || key == "IPB_PASS_HASH" {
 			if _, a := os.LookupEnv("IPB_MEMBER_ID"); a {
@@ -119,8 +116,6 @@ func EditableValue(s Settings, k string) any {
 		return s.PublicBaseURL
 	case "PSE_PAGE_BASE":
 		return s.PSEPageBase
-	case "OPDS_ACQ_DETAIL":
-		return s.OPDSAcqDetail
 	case "TAG_STATUS_FILTER":
 		return s.TagStatusFilter
 	case "TAG_TRANSLATION_ENABLED":
@@ -151,7 +146,7 @@ func ValidateEditableValue(k string, v any) error {
 			return fmt.Errorf("%s must be a string", k)
 		}
 	}
-	if k == "OPDS_ACQ_DETAIL" || k == "TAG_TRANSLATION_ENABLED" || k == "COMMENTS_ENABLED" || k == "IMAGE_CACHE_ENABLED" || k == "FAVORITES_SYNC_ARCHIVE" || k == "ARCHIVE_AUTO_UPDATE" {
+	if k == "TAG_TRANSLATION_ENABLED" || k == "COMMENTS_ENABLED" || k == "IMAGE_CACHE_ENABLED" || k == "FAVORITES_SYNC_ARCHIVE" || k == "ARCHIVE_AUTO_UPDATE" {
 		if _, ok := v.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean", k)
 		}
@@ -252,10 +247,6 @@ func setEditableValue(s *Settings, k string, v any) error {
 	case "PSE_PAGE_BASE":
 		n, e := integer()
 		s.PSEPageBase = n
-		return e
-	case "OPDS_ACQ_DETAIL":
-		b, e := boolean()
-		s.OPDSAcqDetail = b
 		return e
 	case "TAG_STATUS_FILTER":
 		s.TagStatusFilter = strings.ToLower(str)

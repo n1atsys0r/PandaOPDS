@@ -113,7 +113,6 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 		{"id": "opds", "title": "OPDS / PSE", "fields": []map[string]any{
 			field("public_base_url", "对外基础 URL", firstNonEmpty(cfg.PublicBaseURL, "（相对路径）"), false, true, "设置后 feed 输出绝对 URL（Stump 等客户端必需）"),
 			field("pse_page_base", "PSE 页码基数", cfg.PSEPageBase, false, true, "1 = 1-based（默认，与主流 PSE 阅读器一致）；0 = 规范原文"),
-			field("opds_acq_detail", "acquisition 指向详情文档", choose(cfg.OPDSAcqDetail, "是（二次请求流程）", "否（直接指向图片流）"), false, true, nil),
 			field("list_layout", "列表布局", "extended", false, true, "固定 extended（元数据最全），不可配置"),
 		}},
 		{"id": "breaker", "title": "熔断与缓存", "fields": []map[string]any{

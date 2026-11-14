@@ -183,7 +183,6 @@ const groups = computed(() => {
       "eh_site",
       "public_base_url",
       "pse_page_base",
-      "opds_acq_detail",
     ],
     登录凭据: ["ipb_member_id", "ipb_pass_hash", "igneous"],
     功能与缓存: [
@@ -211,7 +210,6 @@ const labels = {
   eh_site: "E-Hentai 站点",
   public_base_url: "外部访问 URL",
   pse_page_base: "PSE 页码起始值",
-  opds_acq_detail: "详情获取方式",
   ipb_member_id: "IPB Member ID",
   ipb_pass_hash: "IPB Pass Hash",
   igneous: "Igneous Cookie",
@@ -244,7 +242,6 @@ const lockedReason = (key) => {
       igneous: "IGNEOUS",
       public_base_url: "PUBLIC_BASE_URL",
       pse_page_base: "PSE_PAGE_BASE",
-      opds_acq_detail: "OPDS_ACQ_DETAIL",
       tag_status_filter: "TAG_STATUS_FILTER",
       tag_translation_enabled: "TAG_TRANSLATION_ENABLED",
       comments_enabled: "COMMENTS_ENABLED",
@@ -1157,7 +1154,6 @@ function cardActionLabel(a) {
         </template>
         <template v-if="s.page.value === 'explore'">
           <OpdsHome
-            :pse-page-base="psePageBase"
             @read-gallery="openReader"
             @archive-gallery="handleExploreArchive"
             @favorite-gallery="handleExploreFavorite"
