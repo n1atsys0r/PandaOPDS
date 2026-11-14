@@ -17,6 +17,7 @@ import {
 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/state.js";
+import { t } from "@/i18n.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -83,7 +84,7 @@ const galleryTitle = computed(() => {
     a.metadata?.title_jpn ||
     a.metadata?.title ||
     a.title ||
-    `画廊 ${a.active_gid || a.gid}`
+    t("reader.gallery_title", { gid: a.active_gid || a.gid })
   );
 });
 
@@ -700,7 +701,7 @@ onBeforeUnmount(() => {
             @click="switchMode('paged')"
           >
             <BookOpen class="size-3.5" />
-            <span>翻页</span>
+            <span>{{ t("reader.mode_paged") }}</span>
           </button>
           <button
             type="button"
@@ -713,14 +714,14 @@ onBeforeUnmount(() => {
             @click="switchMode('webtoon')"
           >
             <ScrollText class="size-3.5" />
-            <span>条漫</span>
+            <span>{{ t("reader.mode_webtoon") }}</span>
           </button>
         </div>
         <button
           type="button"
           class="inline-flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          title="关闭阅读器 (Esc)"
-          aria-label="关闭阅读器"
+          :title="t('reader.close_reader')"
+          :aria-label="t('reader.close_reader')"
           @click="closeReader"
         >
           <X class="size-4" />
@@ -762,7 +763,7 @@ onBeforeUnmount(() => {
                 @click="switchMode('paged')"
               >
                 <BookOpen class="size-3.5" />
-                <span>翻页</span>
+                <span>{{ t("reader.mode_paged") }}</span>
               </button>
               <button
                 type="button"
@@ -775,14 +776,14 @@ onBeforeUnmount(() => {
                 @click="switchMode('webtoon')"
               >
                 <ScrollText class="size-3.5" />
-                <span>条漫</span>
+                <span>{{ t("reader.mode_webtoon") }}</span>
               </button>
             </div>
             <button
               type="button"
               class="inline-flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              title="关闭阅读器 (Esc)"
-              aria-label="关闭阅读器"
+              :title="t('reader.close_reader')"
+              :aria-label="t('reader.close_reader')"
               @click="closeReader"
             >
               <X class="size-4" />
@@ -810,7 +811,7 @@ onBeforeUnmount(() => {
               <img
                 v-if="webtoonStates[idx]?.status === 'loaded'"
                 :src="webtoonStates[idx].src"
-                :alt="`第 ${idx + 1} 页`"
+                :alt="`${t('explore.page_no')} ${idx + 1}`"
                 class="block w-full h-auto select-none"
                 draggable="false"
                 @error="webtoonStates[idx] = { status: 'error', src: '' }"
@@ -819,14 +820,14 @@ onBeforeUnmount(() => {
                 v-else-if="webtoonStates[idx]?.status === 'error'"
                 class="flex flex-col items-center gap-2 py-12 text-xs text-muted-foreground"
               >
-                <span>第 {{ idx + 1 }} 页加载失败</span>
+                <span>{{ t("reader.page_load_failed", { page: idx + 1 }) }}</span>
                 <Button
                   variant="outline"
                   size="sm"
                   @click="loadWebtoonPage(idx, PRIORITY_CURRENT)"
                 >
                   <RotateCcw class="size-3.5" />
-                  重试
+                  {{ t("common.retry") }}
                 </Button>
               </div>
               <div
@@ -834,7 +835,7 @@ onBeforeUnmount(() => {
                 class="flex items-center gap-2 py-12 text-xs text-muted-foreground"
               >
                 <Loader2 class="size-4 animate-spin" />
-                <span>第 {{ idx + 1 }} 页</span>
+                <span>{{ t("explore.page_no") }} {{ idx + 1 }}</span>
               </div>
             </div>
           </div>
@@ -851,7 +852,7 @@ onBeforeUnmount(() => {
             :max="pageCount"
             :value="currentPageIndex + 1"
             class="w-full accent-primary cursor-pointer"
-            aria-label="跳转到指定页"
+            :aria-label="t('reader.jump_to_page')"
             @input="jumpToWebtoonPage(Number($event.target.value) - 1)"
           />
           <span class="shrink-0 tabular-nums">{{ pageCount }}</span>

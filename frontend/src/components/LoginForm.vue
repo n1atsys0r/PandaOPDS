@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { CircleAlertIcon as CircleAlert, RefreshCwIcon as RefreshCw } from "@lucide/vue";
 import { useApp } from "@/state.js";
+import { t } from "@/i18n.js";
 
 const s = useApp();
 const username = ref("");
@@ -20,7 +21,7 @@ const loading = ref(false);
 
 async function handleLogin() {
   if (!username.value.trim() || !password.value) {
-    errorMessage.value = "Please enter your username and password.";
+    errorMessage.value = t("auth.error_empty");
     return;
   }
   loading.value = true;
@@ -28,10 +29,10 @@ async function handleLogin() {
   try {
     const ok = await s.login(username.value.trim(), password.value);
     if (!ok) {
-      errorMessage.value = s.loginError?.value || "Invalid credentials. Please try again.";
+      errorMessage.value = s.loginError?.value || t("auth.error_credentials");
     }
   } catch (err) {
-    errorMessage.value = err.message || "Failed to sign in. Please verify network or server config.";
+    errorMessage.value = err.message || t("auth.error_failed");
   } finally {
     loading.value = false;
   }
@@ -43,7 +44,7 @@ async function handleLogin() {
     <Card class="rounded-xl border border-border bg-card text-card-foreground shadow-sm py-0 gap-0">
       <CardHeader class="p-6 pb-4">
         <CardTitle class="text-2xl font-bold tracking-tight text-foreground">
-          Login to PandaOPDS
+          {{ t("auth.title") }}
         </CardTitle>
       </CardHeader>
       <CardContent class="p-6 pt-0">
@@ -56,7 +57,7 @@ async function handleLogin() {
 
             <div class="grid gap-2">
               <label for="username" class="text-sm font-medium leading-none text-foreground select-none">
-                Username
+                {{ t("auth.username") }}
               </label>
               <Input
                 id="username"
@@ -71,7 +72,7 @@ async function handleLogin() {
 
             <div class="grid gap-2">
               <label for="password" class="text-sm font-medium leading-none text-foreground select-none">
-                Password
+                {{ t("auth.password") }}
               </label>
               <Input
                 id="password"
@@ -90,7 +91,7 @@ async function handleLogin() {
               :disabled="loading"
             >
               <RefreshCw v-if="loading" class="size-3.5 mr-2 animate-spin" />
-              {{ loading ? "Signing in..." : "Login" }}
+              {{ loading ? t("auth.signing_in") : t("auth.submit") }}
             </Button>
           </div>
         </form>

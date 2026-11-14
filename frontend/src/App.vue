@@ -60,6 +60,12 @@ import LoginForm from "@/components/LoginForm.vue";
 import OpdsHome from "@/components/OpdsHome.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
   SunIcon as Sun,
   MoonIcon as Moon,
   MonitorIcon as Monitor,
@@ -83,8 +89,11 @@ import {
   TagIcon as Tag,
   BookmarkIcon as Bookmark,
   ChevronDownIcon as ChevronDown,
+  LanguagesIcon as Languages,
+  CheckIcon as Check,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
+import { t, currentLocale, setLocale } from "./i18n.js";
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -152,53 +161,63 @@ function cycleTheme() {
   }
 }
 
+const localeMeta = computed(() => {
+  return {
+    title: t("locale.menu_title"),
+    ariaLabel: t("locale.menu_aria"),
+  };
+});
+
 const themeMeta = computed(() => {
-  const t = s.theme.value || "system";
-  if (t === "dark") {
+  const theme = s.theme.value || "system";
+  if (theme === "dark") {
     return {
       name: "dark",
-      label: "深色模式",
-      nextLabel: "浅色模式",
+      label: t("theme.dark"),
+      title: t("theme.menu_title"),
+      ariaLabel: t("theme.menu_aria"),
       icon: Moon,
     };
   }
-  if (t === "light") {
+  if (theme === "light") {
     return {
       name: "light",
-      label: "浅色模式",
-      nextLabel: "自动模式",
+      label: t("theme.light"),
+      title: t("theme.menu_title"),
+      ariaLabel: t("theme.menu_aria"),
       icon: Sun,
     };
   }
   return {
     name: "system",
-    label: "自动模式",
-    nextLabel: "深色模式",
+    label: t("theme.system"),
+    title: t("theme.menu_title"),
+    ariaLabel: t("theme.menu_aria"),
     icon: ThemeAutoIcon,
   };
 });
 const groups = computed(() => {
   let f = s.config.value?.fields || {};
   let map = {
-    站点与输出: [
+    [t("config.group_site")]: [
       "eh_site",
       "public_base_url",
       "pse_page_base",
     ],
-    登录凭据: ["ipb_member_id", "ipb_pass_hash", "igneous"],
-    功能与缓存: [
+    [t("config.group_auth")]: ["ipb_member_id", "ipb_pass_hash", "igneous"],
+    [t("config.group_features")]: [
       "tag_status_filter",
       "tag_translation_enabled",
       "comments_enabled",
       "image_cache_enabled",
       "cache_max_gb",
     ],
-    收藏夹: [
+    [t("config.group_favorites")]: [
       "favorites_sync_interval_seconds",
       "favorites_sync_categories",
       "favorites_sync_archive",
     ],
-    归档: ["archive_update_interval_days", "archive_auto_update"],
+    [t("config.group_archive")]: ["archive_update_interval_days", "archive_auto_update"],
   };
   return Object.entries(map)
     .map(([title, keys]) => ({
@@ -207,24 +226,29 @@ const groups = computed(() => {
     }))
     .filter((x) => x.fields.length);
 });
-const labels = {
-  eh_site: "E-Hentai 站点",
-  public_base_url: "外部访问 URL",
-  pse_page_base: "PSE 页码起始值",
-  ipb_member_id: "IPB Member ID",
-  ipb_pass_hash: "IPB Pass Hash",
-  igneous: "Igneous Cookie",
-  tag_status_filter: "标签状态筛选",
-  tag_translation_enabled: "标签翻译",
-  comments_enabled: "评论",
-  image_cache_enabled: "图片缓存",
-  cache_max_gb: "图片缓存上限（GB）",
-  favorites_sync_interval_seconds: "收藏同步间隔（秒）",
-  favorites_sync_categories: "自动归档范围",
-  favorites_sync_archive: "自动归档新增收藏",
-  archive_update_interval_days: "归档版本检查周期（天）",
-  archive_auto_update: "自动更新归档",
-};
+const labels = new Proxy({}, {
+  get(_, k) {
+    const map = {
+      eh_site: t("config.label_eh_site"),
+      public_base_url: t("config.label_public_base_url"),
+      pse_page_base: t("config.label_pse_page_base"),
+      ipb_member_id: "IPB Member ID",
+      ipb_pass_hash: "IPB Pass Hash",
+      igneous: "Igneous Cookie",
+      tag_status_filter: t("config.label_tag_status_filter"),
+      tag_translation_enabled: t("config.label_tag_translation_enabled"),
+      comments_enabled: t("config.label_comments_enabled"),
+      image_cache_enabled: t("config.label_image_cache_enabled"),
+      cache_max_gb: t("config.label_cache_max_gb"),
+      favorites_sync_interval_seconds: t("config.label_favorites_sync_interval_seconds"),
+      favorites_sync_categories: t("config.label_favorites_sync_categories"),
+      favorites_sync_archive: t("config.label_favorites_sync_archive"),
+      archive_update_interval_days: t("config.label_archive_update_interval_days"),
+      archive_auto_update: t("config.label_archive_auto_update"),
+    };
+    return map[k] || k;
+  }
+});
 const secret = (k) => ["ipb_member_id", "ipb_pass_hash", "igneous"].includes(k);
 const boolean = (k) =>
   [
@@ -236,7 +260,7 @@ const boolean = (k) =>
 const edit = (k, v) => s.setField(k, v);
 const lockedReason = (key) => {
   if (key === "ipb_member_id" || key === "ipb_pass_hash")
-    return "IPB_MEMBER_ID / IPB_PASS_HASH 环境变量控制此项。";
+    return t("config.locked_reason_ipb");
   const env =
     {
       eh_site: "EH_SITE",
@@ -251,14 +275,14 @@ const lockedReason = (key) => {
       favorites_sync_interval_seconds: "FAVORITES_SYNC_INTERVAL_SECONDS",
       favorites_sync_categories: "FAVORITES_SYNC_CATEGORIES",
     }[key] || key.toUpperCase();
-  return env + " 环境变量控制此项。";
+  return t("config.locked_reason_env", { env });
 };
 const qualityLabel = (entry) => {
   const tier = String(entry.or || entry.quality || "").toLowerCase();
-  if (tier === "org" || tier.includes("original")) return "原档";
-  if (tier === "res" || tier.includes("resample")) return "降采样";
-  if (entry.status === "unarchived") return "在线";
-  return "归档";
+  if (tier === "org" || tier.includes("original")) return t("archive.tier_original");
+  if (tier === "res" || tier.includes("resample")) return t("archive.tier_resample");
+  if (entry.status === "unarchived") return t("archive.tier_online");
+  return t("archive.tier_archived");
 };
 const EH_CATEGORIES = [
   { key: "Doujinshi", label: "Doujinshi", color: "#fc4e4e" },
@@ -457,7 +481,7 @@ const favcatList = computed(() => {
     const found = cats.find((c) => Number(c.id) === i);
     list.push({
       id: i,
-      name: found?.name || archiveNames[i] || `收藏夹 ${i}`,
+      name: found?.name || archiveNames[i] || t("archive.favcat_default", { id: i }),
       count: counts[i] || 0,
     });
   }
@@ -474,7 +498,7 @@ const favoritedCount = computed(() => {
 
 const categoryLabel = computed(() => {
   if (!selectedCategory.value || selectedCategory.value === "all") {
-    return "全部分类";
+    return t("archive.all_categories");
   }
   const found = EH_CATEGORIES.find(
     (c) => c.key.toLowerCase() === selectedCategory.value.toLowerCase(),
@@ -484,13 +508,13 @@ const categoryLabel = computed(() => {
 
 const favcatLabel = computed(() => {
   if (!selectedFavcat.value || selectedFavcat.value === "all") {
-    return "全部收藏";
+    return t("archive.all_favorites");
   }
-  if (selectedFavcat.value === "unfavorited") return "未收藏";
-  if (selectedFavcat.value === "favorited") return "已收藏";
+  if (selectedFavcat.value === "unfavorited") return t("common.unfavorited");
+  if (selectedFavcat.value === "favorited") return t("common.favorited");
   const id = Number(selectedFavcat.value);
   const found = favcatList.value.find((c) => c.id === id);
-  return found ? `${found.id}: ${found.name}` : `收藏夹 ${id}`;
+  return found ? `${found.id}: ${found.name}` : t("archive.favcat_default", { id });
 });
 
 const filteredArchives = computed(() => {
@@ -563,60 +587,65 @@ const visibleArchives = computed(() =>
 );
 
 const deleteDialogMeta = computed(() => {
-  const t = s.deleteTarget.value;
-  if (!t) {
-    return { title: "删除本地归档？", desc: "", note: "", confirm: "删除归档" };
-  }
-  const fav = Boolean(t.is_favorited);
-  if (t.status === "failed") {
+  const tTarget = s.deleteTarget.value;
+  if (!tTarget) {
     return {
-      title: "清除失败记录？",
-      desc: fav
-        ? "将清理临时下载文件与报错信息，保留收藏建档记录并恢复为「未归档」状态。"
-        : "将清理临时下载文件并移除该失败记录。",
-      note: fav ? "操作不会影响 E-Hentai 收藏" : "操作将彻底移除该失败条目",
-      confirm: "清除失败",
+      title: t("archive.dialog_delete_title"),
+      desc: "",
+      note: "",
+      confirm: t("archive.action_delete"),
     };
   }
-  if (["pending", "downloading", "zipping", "submitting"].includes(t.status)) {
+  const fav = Boolean(tTarget.is_favorited);
+  if (tTarget.status === "failed") {
     return {
-      title: "取消当前归档任务？",
+      title: t("archive.dialog_clear_failed_title"),
       desc: fav
-        ? "将中止下载并清理临时文件，保留收藏建档记录并恢复为「未归档」状态。"
-        : "将中止下载、清理临时文件并移除该条目。",
-      note: fav ? "操作不会影响 E-Hentai 收藏" : "操作将彻底移除该条目",
-      confirm: "取消归档",
+        ? t("archive.delete_desc_failed_fav")
+        : t("archive.delete_desc_failed"),
+      note: fav ? t("archive.delete_note_failed_fav") : t("archive.delete_note_failed"),
+      confirm: t("archive.action_clear_failed"),
     };
   }
-  if (t.status === "unarchived") {
+  if (["pending", "downloading", "zipping", "submitting"].includes(tTarget.status)) {
     return {
-      title: "移除残留记录？",
-      desc: "该条目不在收藏夹且无本地归档文件，移除后将从「浏览」列表清除。",
-      note: "操作仅清理本地元数据索引",
-      confirm: "移除",
+      title: t("archive.dialog_cancel_title"),
+      desc: fav
+        ? t("archive.delete_desc_task_fav")
+        : t("archive.delete_desc_task"),
+      note: fav ? t("archive.delete_note_task_fav") : t("archive.delete_note_task"),
+      confirm: t("archive.action_cancel"),
+    };
+  }
+  if (tTarget.status === "unarchived") {
+    return {
+      title: t("archive.dialog_remove_orphan_title"),
+      desc: t("archive.delete_desc_orphan"),
+      note: t("archive.delete_note_orphan"),
+      confirm: t("common.remove"),
     };
   }
   return {
-    title: "删除本地归档？",
+    title: t("archive.dialog_delete_title"),
     desc: fav
-      ? "仅删除本地归档文件；因仍在收藏夹中，卡片将保留为「未归档」状态并可继续在线阅读（移除收藏后会自动清理）。"
-      : "将删除本地归档文件及本地记录（不在收藏夹中，将从「浏览」列表移除）；E-Hentai 账号记录保留。",
+      ? t("archive.delete_desc_fav")
+      : t("archive.delete_desc_ready"),
     note: fav
-      ? "本地归档 ZIP 将被删除，收藏卡片保留"
-      : "操作只影响本机保存的归档与记录",
-    confirm: "删除归档",
+      ? t("archive.delete_note_fav")
+      : t("archive.delete_note_ready"),
+    confirm: t("archive.action_delete"),
   };
 });
 
 function cardActionLabel(a) {
   if (a.status === "unarchived") {
-    return a.is_favorited ? "下载归档" : "移除";
+    return a.is_favorited ? t("common.download_archive") : t("common.remove");
   }
-  if (a.status === "failed") return "清除失败";
+  if (a.status === "failed") return t("archive.action_clear_failed");
   if (["pending", "downloading", "zipping", "submitting"].includes(a.status)) {
-    return "取消归档";
+    return t("archive.action_cancel");
   }
-  return "删除归档";
+  return t("archive.action_delete");
 }
 </script>
 <template>
@@ -661,7 +690,7 @@ function cardActionLabel(a) {
           class="w-full justify-start text-xs text-muted-foreground hover:text-foreground h-7 px-2 gap-1.5 group-data-[collapsible=icon]:hidden"
           @click="s.logout"
         >
-          <LogOut class="size-3.5" />退出登录
+          <LogOut class="size-3.5" />{{ t("nav.logout") }}
         </Button>
         <Tooltip>
           <TooltipTrigger as-child>
@@ -672,18 +701,18 @@ function cardActionLabel(a) {
               @click="s.logout"
             >
               <LogOut class="size-3.5" />
-              <span class="sr-only">退出登录</span>
+              <span class="sr-only">{{ t("nav.logout") }}</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">
-            退出登录
+            {{ t("nav.logout") }}
           </TooltipContent>
         </Tooltip>
       </SidebarFooter>
     </Sidebar>
     <SidebarInset class="webui-inset">
       <header class="site-header">
-        <SidebarTrigger aria-label="切换导航菜单" class="-ml-1" />
+        <SidebarTrigger :aria-label="t('nav.toggle_menu')" class="-ml-1" />
         <Separator
           orientation="vertical"
           class="header-separator mr-2 h-4 my-auto self-center shrink-0"
@@ -697,7 +726,7 @@ function cardActionLabel(a) {
                   type="button"
                   @click="s.route('explore')"
                 >
-                  探索
+                  {{ t("nav.explore") }}
                 </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
@@ -712,31 +741,113 @@ function cardActionLabel(a) {
                 <BreadcrumbPage>
                   {{
                     s.page.value === "dashboard"
-                      ? "概览"
+                      ? t("nav.dashboard")
                       : s.page.value === "home"
-                        ? "编排"
+                        ? t("home_editor.title")
                         : s.page.value === "explore"
-                          ? "探索"
+                          ? t("nav.explore")
                           : s.page.value === "config"
-                            ? "设置"
-                            : "归档"
+                            ? t("nav.settings")
+                            : t("nav.archive")
                   }}
                 </BreadcrumbPage>
               </BreadcrumbItem>
             </template>
           </BreadcrumbList>
         </Breadcrumb>
-        <div class="header-actions">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="size-8 text-muted-foreground hover:text-foreground"
-            @click="cycleTheme"
-            :title="`主题：${themeMeta.label}（点击切换至${themeMeta.nextLabel}）`"
-            :aria-label="`主题：${themeMeta.label}，点击切换`"
-          >
-            <component :is="themeMeta.icon" class="size-4" />
-          </Button>
+        <div class="header-actions flex items-center gap-1">
+          <!-- 语言菜单 -->
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="size-8 text-muted-foreground hover:text-foreground"
+                :title="localeMeta.title"
+                :aria-label="localeMeta.ariaLabel"
+              >
+                <Languages class="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="min-w-36">
+              <DropdownMenuItem
+                class="flex items-center justify-between"
+                @click="setLocale('zh')"
+              >
+                <span>{{ t("locale.zh") }}</span>
+                <Check
+                  v-if="currentLocale === 'zh'"
+                  class="size-3.5 text-primary"
+                />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="flex items-center justify-between"
+                @click="setLocale('en')"
+              >
+                <span>{{ t("locale.en") }}</span>
+                <Check
+                  v-if="currentLocale === 'en'"
+                  class="size-3.5 text-primary"
+                />
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <!-- 外观/主题菜单 -->
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="size-8 text-muted-foreground hover:text-foreground"
+                :title="themeMeta.title"
+                :aria-label="themeMeta.ariaLabel"
+              >
+                <component :is="themeMeta.icon" class="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="min-w-36">
+              <DropdownMenuItem
+                class="flex items-center justify-between"
+                @click="s.setTheme('light')"
+              >
+                <span class="inline-flex items-center gap-2">
+                  <Sun class="size-3.5 text-muted-foreground" />
+                  <span>{{ t("theme.light") }}</span>
+                </span>
+                <Check
+                  v-if="(s.theme.value || 'system') === 'light'"
+                  class="size-3.5 text-primary"
+                />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="flex items-center justify-between"
+                @click="s.setTheme('dark')"
+              >
+                <span class="inline-flex items-center gap-2">
+                  <Moon class="size-3.5 text-muted-foreground" />
+                  <span>{{ t("theme.dark") }}</span>
+                </span>
+                <Check
+                  v-if="(s.theme.value || 'system') === 'dark'"
+                  class="size-3.5 text-primary"
+                />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="flex items-center justify-between"
+                @click="s.setTheme('system')"
+              >
+                <span class="inline-flex items-center gap-2">
+                  <ThemeAutoIcon class="size-3.5 text-muted-foreground" />
+                  <span>{{ t("theme.system") }}</span>
+                </span>
+                <Check
+                  v-if="(s.theme.value || 'system') === 'system'"
+                  class="size-3.5 text-primary"
+                />
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
       <div class="page-content">
@@ -748,7 +859,7 @@ function cardActionLabel(a) {
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="关闭通知"
+            :aria-label="t('common.close_notice')"
             @click="s.notice.value = ''"
             ><X :size="14"
           /></Button>
@@ -761,7 +872,7 @@ function cardActionLabel(a) {
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="关闭错误"
+            :aria-label="t('common.close_error')"
             @click="s.error.value = ''"
             ><X :size="14"
           /></Button>
@@ -783,28 +894,28 @@ function cardActionLabel(a) {
                   ></span>
                   {{
                     s.status.value?.app?.config_ok
-                      ? "服务运行正常"
-                      : "配置需要检查"
+                      ? t("dashboard.status_ok")
+                      : t("dashboard.status_check")
                   }}
                 </span>
                 <span
                   v-if="s.status.value?.circuit?.state === 'open'"
                   class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20"
                 >
-                  熔断器 OPEN
+                  {{ t("dashboard.circuit_open") }}
                 </span>
                 <span
                   v-else
                   class="text-xs text-muted-foreground hidden sm:inline"
                 >
-                  熔断器正常 · 15s 自动同步
+                  {{ t("dashboard.circuit_normal") }}
                 </span>
               </div>
               <h1 class="text-2xl font-bold tracking-tight text-foreground">
-                服务概览
+                {{ t("dashboard.title") }}
               </h1>
               <p class="text-sm text-muted-foreground mt-1">
-                查看上游站点状态、出站请求与多级缓存负载。
+                {{ t("dashboard.desc") }}
               </p>
             </div>
           </div>
@@ -816,7 +927,7 @@ function cardActionLabel(a) {
               >
                 <CardTitle
                   class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >上游站点</CardTitle
+                  >{{ t("dashboard.upstream_site") }}</CardTitle
                 >
                 <CardAction
                   ><Globe class="size-4 text-muted-foreground"
@@ -847,7 +958,7 @@ function cardActionLabel(a) {
               >
                 <CardTitle
                   class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >出站请求总量</CardTitle
+                  >{{ t("dashboard.outbound_requests") }}</CardTitle
                 >
                 <CardAction
                   ><Activity class="size-4 text-muted-foreground"
@@ -876,7 +987,7 @@ function cardActionLabel(a) {
                   >
                   <span>·</span>
                   <span
-                    >图
+                    >{{ t("dashboard.image_req") }}
                     {{ s.status.value?.throttle?.image_requests || 0 }}</span
                   >
                 </div>
@@ -889,7 +1000,7 @@ function cardActionLabel(a) {
               >
                 <CardTitle
                   class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >内存缓存</CardTitle
+                  >{{ t("dashboard.memory_cache") }}</CardTitle
                 >
                 <CardAction
                   ><Database class="size-4 text-muted-foreground"
@@ -938,11 +1049,10 @@ function cardActionLabel(a) {
                   class="flex items-center justify-between mt-2 text-xs text-muted-foreground font-mono"
                 >
                   <span
-                    >命中 {{ s.status.value?.memory_cache?.hits ?? 0 }}</span
+                    >{{ t("dashboard.hits", { count: s.status.value?.memory_cache?.hits ?? 0 }) }}</span
                   >
                   <span
-                    >未命中
-                    {{ s.status.value?.memory_cache?.misses ?? 0 }}</span
+                    >{{ t("dashboard.misses", { count: s.status.value?.memory_cache?.misses ?? 0 }) }}</span
                   >
                 </div>
               </CardContent>
@@ -954,7 +1064,7 @@ function cardActionLabel(a) {
               >
                 <CardTitle
                   class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >磁盘图片缓存</CardTitle
+                  >{{ t("dashboard.disk_cache") }}</CardTitle
                 >
                 <CardAction
                   ><HardDrive class="size-4 text-muted-foreground"
@@ -966,7 +1076,7 @@ function cardActionLabel(a) {
                     class="text-2xl font-bold tracking-tight text-foreground"
                   >
                     {{
-                      s.status.value?.disk_cache?.enabled ? "已启用" : "已关闭"
+                      s.status.value?.disk_cache?.enabled ? t("dashboard.enabled") : t("dashboard.disabled")
                     }}
                   </div>
                   <Button
@@ -975,16 +1085,16 @@ function cardActionLabel(a) {
                     size="xs"
                     class="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
                     @click="s.askClearCache"
-                    title="清理图片缓存"
+                    :title="t('dashboard.clear_cache_title')"
                   >
-                    <Trash2 class="size-3 mr-1" />清理
+                    <Trash2 class="size-3 mr-1" />{{ t("dashboard.clear_btn") }}
                   </Button>
                 </div>
                 <div
                   class="flex items-center justify-between mt-1.5 text-xs text-muted-foreground font-mono"
                 >
                   <span
-                    >{{ s.status.value?.disk_cache?.entries ?? 0 }} 项条目</span
+                    >{{ t("dashboard.cache_entries_count", { count: s.status.value?.disk_cache?.entries ?? 0 }) }}</span
                   >
                   <span>{{
                     formatBytes(s.status.value?.disk_cache?.bytes ?? 0)
@@ -998,17 +1108,17 @@ function cardActionLabel(a) {
             <Card class="shadow-xs">
               <CardHeader class="border-b border-border/50 pb-3">
                 <CardTitle class="text-base font-semibold text-foreground"
-                  >运行详情</CardTitle
+                  >{{ t("dashboard.runtime_details") }}</CardTitle
                 >
                 <CardDescription class="text-xs text-muted-foreground"
-                  >当前进程与上游连接协议配置</CardDescription
+                  >{{ t("dashboard.runtime_desc") }}</CardDescription
                 >
               </CardHeader>
               <CardContent class="pt-2">
                 <div class="divide-y divide-border/50 text-sm">
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >版本</span
+                      >{{ t("dashboard.version") }}</span
                     >
                     <Badge variant="secondary" class="font-mono text-xs">
                       v{{ s.status.value?.app?.version || "—" }}
@@ -1016,20 +1126,20 @@ function cardActionLabel(a) {
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >外部 URL</span
+                      >{{ t("dashboard.external_url") }}</span
                     >
                     <span
                       class="font-mono text-xs text-foreground truncate max-w-[240px]"
                     >
                       {{
                         s.status.value?.site?.public_base_url ||
-                        "未设置（相对路径）"
+                        t("dashboard.unset_relative")
                       }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >IPB 登录状态</span
+                      >{{ t("dashboard.ipb_status") }}</span
                     >
                     <Badge
                       :variant="
@@ -1039,36 +1149,34 @@ function cardActionLabel(a) {
                     >
                       {{
                         s.status.value?.site?.has_ipb
-                          ? "已配置凭据"
-                          : "未配置（游客模式）"
+                          ? t("dashboard.ipb_configured")
+                          : t("dashboard.ipb_unconfigured")
                       }}
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >并发请求上限</span
+                      >{{ t("dashboard.max_concurrency") }}</span
                     >
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ s.status.value?.throttle?.max_concurrency ?? "—" }}
-                      线程
+                      {{ s.status.value?.throttle?.max_concurrency != null ? t("dashboard.threads", { count: s.status.value.throttle.max_concurrency }) : "—" }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >HTML 请求间隔</span
+                      >{{ t("dashboard.html_interval") }}</span
                     >
                     <span class="font-mono text-xs font-medium text-foreground">
                       {{
-                        s.status.value?.throttle?.html_interval_seconds ?? "—"
+                        s.status.value?.throttle?.html_interval_seconds != null ? t("dashboard.seconds_unit", { count: s.status.value.throttle.html_interval_seconds }) : "—"
                       }}
-                      秒
                     </span>
                   </div>
                   <div
                     v-if="s.status.value?.circuit?.state === 'open'"
                     class="flex items-center justify-between py-2.5 text-destructive"
                   >
-                    <span class="text-xs font-medium">熔断原因</span>
+                    <span class="text-xs font-medium">{{ t("dashboard.circuit_reason") }}</span>
                     <span class="text-xs font-mono">{{
                       s.status.value?.circuit?.reason
                     }}</span>
@@ -1082,10 +1190,10 @@ function cardActionLabel(a) {
                 <div class="flex items-center justify-between">
                   <div>
                     <CardTitle class="text-base font-semibold text-foreground"
-                      >首页布局</CardTitle
+                      >{{ t("dashboard.home_layout") }}</CardTitle
                     >
                     <CardDescription class="text-xs text-muted-foreground"
-                      >OPDS 首页编排与展示来源</CardDescription
+                      >{{ t("dashboard.home_layout_desc") }}</CardDescription
                     >
                   </div>
                   <Button
@@ -1094,7 +1202,7 @@ function cardActionLabel(a) {
                     class="h-7 text-xs gap-1"
                     @click="s.route('home')"
                   >
-                    进入编排 <ArrowUpRight :size="12" />
+                    {{ t("dashboard.enter_editor") }} <ArrowUpRight :size="12" />
                   </Button>
                 </div>
               </CardHeader>
@@ -1102,19 +1210,19 @@ function cardActionLabel(a) {
                 <div class="divide-y divide-border/50 text-sm">
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >内容来源</span
+                      >{{ t("dashboard.content_source") }}</span
                     >
                     <Badge variant="outline" class="font-mono text-xs">
                       {{
                         s.status.value?.home?.using_file
                           ? "home.toml"
-                          : "内置默认"
+                          : t("dashboard.builtin_default")
                       }}
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >配置文件路径</span
+                      >{{ t("dashboard.config_path") }}</span
                     >
                     <span
                       class="font-mono text-xs text-muted-foreground truncate max-w-[260px]"
@@ -1125,16 +1233,15 @@ function cardActionLabel(a) {
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >已配置分组 / 栏目</span
+                      >{{ t("dashboard.groups_sections") }}</span
                     >
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ s.status.value?.home?.groups ?? 0 }} 组 /
-                      {{ s.status.value?.home?.sections ?? 0 }} 栏目
+                      {{ t("dashboard.groups_sections_count", { groups: s.status.value?.home?.groups ?? 0, sections: s.status.value?.home?.sections ?? 0 }) }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >OPDS 协议版本</span
+                      >{{ t("dashboard.opds_versions") }}</span
                     >
                     <div class="flex items-center gap-1.5">
                       <Badge variant="secondary" class="text-[10px] font-mono"
@@ -1150,13 +1257,13 @@ function cardActionLabel(a) {
                   </div>
                   <div class="flex items-center justify-between py-2.5">
                     <span class="text-muted-foreground text-xs font-medium"
-                      >服务自愈心跳</span
+                      >{{ t("dashboard.heartbeat") }}</span
                     >
                     <span
                       class="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
                     >
                       <span class="size-1.5 rounded-full bg-emerald-500"></span>
-                      活跃中
+                      {{ t("dashboard.active") }}
                     </span>
                   </div>
                 </div>
@@ -1177,21 +1284,21 @@ function cardActionLabel(a) {
         <template v-if="s.page.value === 'config'"
           ><div class="heading">
             <div>
-              <small>服务选项</small>
-              <h1>设置</h1>
-              <p>环境变量锁定项需在部署环境中修改。</p>
+              <small>{{ t("config.header_small") }}</small>
+              <h1>{{ t("config.title") }}</h1>
+              <p>{{ t("config.desc") }}</p>
             </div>
             <Badge
               v-if="s.config.value?.pending"
               variant="outline"
               class="badge-warn"
-              >部分更改重启后生效</Badge
+              >{{ t("config.badge_pending") }}</Badge
             >
           </div>
           <Card v-if="s.config.value?.legacy" class="panel">
             <CardHeader class="panel-header">
               <CardTitle role="heading" aria-level="2"
-                >当前设置（只读）</CardTitle
+                >{{ t("config.readonly_title") }}</CardTitle
               >
             </CardHeader>
             <CardContent class="panel-body">
@@ -1213,9 +1320,9 @@ function cardActionLabel(a) {
                   ><span>{{
                     field.masked
                       ? field.set
-                        ? "••••••••（已设置）"
-                        : "（未设置）"
-                      : (field.value ?? "（未设置）")
+                        ? "••••••••（" + t("config.state_set") + "）"
+                        : t("config.state_unset_parentheses")
+                      : (field.value ?? t("config.state_unset_parentheses"))
                   }}</span
                   ><small v-if="field.note">{{ field.note }}</small>
                 </div>
@@ -1242,7 +1349,7 @@ function cardActionLabel(a) {
                   group.title
                 }}</CardTitle>
                 <CardDescription
-                  >保存的更改都需要重启服务后生效</CardDescription
+                  >{{ t("config.saved_pending_restart") }}</CardDescription
                 >
               </div>
             </CardHeader>
@@ -1252,36 +1359,31 @@ function cardActionLabel(a) {
                   <label :for="key"
                     >{{ labels[key] || key }}
                     <Badge v-if="f.pending" variant="outline" class="badge-warn"
-                      >待重启</Badge
+                      >{{ t("config.pending_restart") }}</Badge
                     ></label
                   ><small>{{
                     f.locked
                       ? lockedReason(key)
-                      : "来源：" +
-                        (f.source === "env"
-                          ? "环境变量"
+                      : (f.source === "env"
+                          ? t("config.source_env")
                           : f.source === "file"
-                            ? "配置文件"
-                            : "默认值")
+                            ? t("config.source_file")
+                            : t("config.source_default"))
                   }}</small>
                   <small v-if="key === 'archive_update_interval_days'"
-                    >0 关闭周期检查；仅写入 settings.toml。</small
+                    >{{ t("config.hint_archive_update_interval_days") }}</small
                   >
                   <small v-if="key === 'archive_auto_update'"
-                    >启用后自动购买新版归档，可能消耗 GP；仅写入
-                    settings.toml。</small
+                    >{{ t("config.hint_archive_auto_update") }}</small
                   >
                   <small v-if="key === 'favorites_sync_interval_seconds'"
-                    >默认 3600 秒；设为 0
-                    只关闭周期扫描，收藏操作触发的扫描和手动扫描仍可用。</small
+                    >{{ t("config.hint_favorites_sync_interval_seconds") }}</small
                   >
                   <small v-if="key === 'favorites_sync_categories'"
-                    >逗号分隔收藏夹 ID（0–9）；留空表示全部，-ID
-                    表示排除该收藏夹。只限制自动归档范围，不影响同步扫描。</small
+                    >{{ t("config.hint_favorites_sync_categories") }}</small
                   >
                   <small v-if="key === 'favorites_sync_archive'"
-                    >启用后会自动购买新发现收藏的归档，可能消耗
-                    GP；首次扫描只建立基线，不会归档已有收藏。保存后重启生效。</small
+                    >{{ t("config.hint_favorites_sync_archive") }}</small
                   >
                 </div>
                 <div class="control">
@@ -1301,7 +1403,7 @@ function cardActionLabel(a) {
                     @update:model-value="edit(key, $event)"
                   >
                     <SelectTrigger :id="key" class="control-select">
-                      <SelectValue placeholder="选择站点" />
+                      <SelectValue :placeholder="t('config.select_site')" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="e-hentai">E-Hentai</SelectItem>
@@ -1315,11 +1417,11 @@ function cardActionLabel(a) {
                     @update:model-value="edit(key, Number($event))"
                   >
                     <SelectTrigger :id="key" class="control-select">
-                      <SelectValue placeholder="选择页码起始值" />
+                      <SelectValue :placeholder="t('config.select_pse_page_base')" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">1-based（默认）</SelectItem>
-                      <SelectItem value="0">0-based</SelectItem>
+                      <SelectItem value="1">{{ t("config.pse_page_base_1") }}</SelectItem>
+                      <SelectItem value="0">{{ t("config.pse_page_base_0") }}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Select
@@ -1329,12 +1431,12 @@ function cardActionLabel(a) {
                     @update:model-value="edit(key, $event)"
                   >
                     <SelectTrigger :id="key" class="control-select">
-                      <SelectValue placeholder="选择标签筛选" />
+                      <SelectValue :placeholder="t('config.select_tag_filter')" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="balanced">平衡</SelectItem>
-                      <SelectItem value="strict">严格</SelectItem>
-                      <SelectItem value="off">关闭</SelectItem>
+                      <SelectItem value="balanced">{{ t("config.tag_filter_balanced") }}</SelectItem>
+                      <SelectItem value="strict">{{ t("config.tag_filter_strict") }}</SelectItem>
+                      <SelectItem value="off">{{ t("config.tag_filter_off") }}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Input
@@ -1375,8 +1477,8 @@ function cardActionLabel(a) {
                     :placeholder="
                       secret(key)
                         ? f.saved_set
-                          ? '已设置；留空不更改'
-                          : '未设置'
+                          ? t('config.placeholder_set_leave_blank')
+                          : t('config.placeholder_unset')
                         : ''
                     "
                     :disabled="f.locked"
@@ -1384,7 +1486,7 @@ function cardActionLabel(a) {
                     autocomplete="new-password"
                     @update:model-value="edit(key, $event)"
                   /><Badge v-if="f.locked" variant="outline" class="locked"
-                    >🔒 锁定</Badge
+                    >{{ t("config.locked") }}</Badge
                   ><Button
                     v-if="key === 'ipb_member_id'"
                     :disabled="f.locked"
@@ -1395,7 +1497,7 @@ function cardActionLabel(a) {
                       edit('ipb_pass_hash', '');
                     "
                   >
-                    清除成对凭据</Button
+                    {{ t("config.clear_pair_credentials") }}</Button
                   ><Button
                     v-if="key === 'igneous'"
                     :disabled="f.locked"
@@ -1403,40 +1505,41 @@ function cardActionLabel(a) {
                     size="sm"
                     @click="edit('igneous', '')"
                   >
-                    清除
+                    {{ t("common.clear") }}
                   </Button>
                 </div>
-                <small class="active-value"
-                  >当前生效：{{
-                    secret(key)
-                      ? f.set
-                        ? "已设置"
-                        : "未设置"
-                      : (f.active ?? "（未设置）")
+                <small class="active-value">
+                  {{
+                    t("config.active_val", {
+                      val: secret(key)
+                        ? (f.set ? t("config.state_set") : t("config.state_unset"))
+                        : (f.active ?? t("config.state_unset_parentheses")),
+                    })
                   }}
-                  · 已保存：{{
-                    secret(key)
-                      ? f.saved_set
-                        ? "已设置"
-                        : "未设置"
-                      : (f.saved ?? "（未设置）")
-                  }}</small
-                >
+                  ·
+                  {{
+                    t("config.saved_val", {
+                      val: secret(key)
+                        ? (f.saved_set ? t("config.state_set") : t("config.state_unset"))
+                        : (f.saved ?? t("config.state_unset_parentheses")),
+                    })
+                  }}
+                </small>
               </div>
             </CardContent>
           </Card>
           <div v-if="s.config.value?.fields" class="savebar">
             <span>{{
               Object.keys(s.confDirty.value).length
-                ? "有未保存的更改"
+                ? t("config.savebar_dirty")
                 : s.config.value?.pending
-                  ? "已保存，待重启"
-                  : "设置已同步"
+                  ? t("config.savebar_pending")
+                  : t("config.savebar_synced")
             }}</span
             ><Button
               :disabled="!Object.keys(s.confDirty.value).length || s.busy.value"
               @click="s.saveConfig"
-              ><Save />保存设置</Button
+              ><Save />{{ t("config.save_button") }}</Button
             >
           </div></template
         >
@@ -1444,9 +1547,9 @@ function cardActionLabel(a) {
         <template v-if="s.page.value === 'archive'">
           <div class="heading">
             <div>
-              <small>本地存档</small>
-              <h1>归档</h1>
-              <p>归档操作可能消耗账户 GP；每次开始前会明确确认。</p>
+              <small>{{ t("archive.header_small") }}</small>
+              <h1>{{ t("archive.title") }}</h1>
+              <p>{{ t("archive.desc") }}</p>
             </div>
             <div class="heading-actions">
               <div ref="syncMenuRef" class="relative inline-flex items-center">
@@ -1457,14 +1560,14 @@ function cardActionLabel(a) {
                     :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
                     @click="s.syncFavorites(false)"
                   >
-                    <RefreshCw class="size-3.5" />同步收藏
+                    <RefreshCw class="size-3.5" />{{ t("archive.sync_favorites") }}
                   </Button>
                   <Button
                     variant="outline"
                     size="icon"
                     class="rounded-l-none w-8 px-0"
                     :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
-                    aria-label="更多同步选项"
+                    :aria-label="t('archive.more_sync_options')"
                     aria-haspopup="menu"
                     :aria-expanded="syncMenuOpen"
                     @click.stop="syncMenuOpen = !syncMenuOpen"
@@ -1484,10 +1587,10 @@ function cardActionLabel(a) {
                     @click="requestFullSync"
                   >
                     <span class="font-medium text-foreground"
-                      >全量校准收藏…</span
+                      >{{ t("archive.full_sync_title") }}</span
                     >
                     <span class="text-[11px] text-muted-foreground mt-0.5"
-                      >遍历全部收藏页并清理上游已取消项</span
+                      >{{ t("archive.full_sync_desc") }}</span
                     >
                   </button>
                 </div>
@@ -1496,16 +1599,16 @@ function cardActionLabel(a) {
                 variant="outline"
                 :disabled="s.archiveScan.value.status === 'running'"
                 @click="s.startArchiveScan"
-                title="扫描 ARCHIVE_DIR 中已有的历史归档文件并导入索引"
+                :title="t('archive.scan_imports')"
               >
                 {{
                   s.archiveScan.value.status === "running"
-                    ? "正在导入…"
-                    : "导入本地归档"
+                    ? t("archive.importing")
+                    : t("archive.import_local")
                 }}
               </Button>
               <Button class="primary-action" @click="openCreateArchiveDialog">
-                <Plus />新建归档
+                <Plus />{{ t("archive.new_archive") }}
               </Button>
             </div>
           </div>
@@ -1516,29 +1619,43 @@ function cardActionLabel(a) {
             role="status"
           >
             <span v-if="s.archiveScan.value.status === 'running'"
-              >正在查找归档状态与图库资料…</span
+              >{{ t("archive.scan_searching") }}</span
             >
             <span v-else-if="s.archiveScan.value.status === 'success'"
-              >导入完成：导入 {{ s.archiveScan.value.imported }} 个文件，跳过
-              {{ s.archiveScan.value.skipped }} 个文件，冲突
-              {{ s.archiveScan.value.conflicts }} 个文件。</span
+              >{{
+                t("archive.scan_success", {
+                  imported: s.archiveScan.value.imported,
+                  skipped: s.archiveScan.value.skipped,
+                  conflicts: s.archiveScan.value.conflicts,
+                })
+              }}</span
             >
             <span v-else-if="s.archiveScan.value.status === 'skipped'"
-              >导入完成：未导入新文件，跳过
-              {{ s.archiveScan.value.skipped }} 个文件。</span
+              >{{
+                t("archive.scan_skipped", {
+                  skipped: s.archiveScan.value.skipped,
+                })
+              }}</span
             >
             <span v-else-if="s.archiveScan.value.status === 'conflict'"
-              >导入完成：未导入文件，发现
-              {{ s.archiveScan.value.conflicts }} 个冲突文件。</span
+              >{{
+                t("archive.scan_conflict", {
+                  conflicts: s.archiveScan.value.conflicts,
+                })
+              }}</span
             >
             <span v-else
-              >导入失败：{{ s.archiveScan.value.error || "未知错误" }}</span
+              >{{
+                t("archive.scan_error", {
+                  err: s.archiveScan.value.error || t("common.unknown"),
+                })
+              }}</span
             >
             <Button
               v-if="s.archiveScan.value.status !== 'running'"
               variant="ghost"
               size="icon-xs"
-              aria-label="关闭导入提示"
+              :aria-label="t('archive.close_import_hint')"
               @click="s.dismissArchiveScan()"
               ><X :size="14"
             /></Button>
@@ -1553,7 +1670,7 @@ function cardActionLabel(a) {
                 :class="{ active: selectedStatus === 'all' }"
                 @click="selectedStatus = 'all'"
               >
-                <span>全部</span>
+                <span>{{ t("archive.tab_all") }}</span>
               </button>
               <button
                 type="button"
@@ -1562,7 +1679,7 @@ function cardActionLabel(a) {
                 :class="{ active: selectedStatus === 'ready' }"
                 @click="selectedStatus = 'ready'"
               >
-                <span>已归档</span>
+                <span>{{ t("archive.tab_ready") }}</span>
                 <span v-if="statusCounts.ready > 0" class="segment-badge">
                   {{ statusCounts.ready }}
                 </span>
@@ -1574,7 +1691,7 @@ function cardActionLabel(a) {
                 :class="{ active: selectedStatus === 'unarchived' }"
                 @click="selectedStatus = 'unarchived'"
               >
-                <span>未归档</span>
+                <span>{{ t("archive.tab_unarchived") }}</span>
                 <span v-if="statusCounts.unarchived > 0" class="segment-badge">
                   {{ statusCounts.unarchived }}
                 </span>
@@ -1586,7 +1703,7 @@ function cardActionLabel(a) {
                 :class="{ active: selectedStatus === 'updates' }"
                 @click="selectedStatus = 'updates'"
               >
-                <span>可更新</span>
+                <span>{{ t("archive.tab_updates") }}</span>
                 <span
                   v-if="statusCounts.updates > 0"
                   class="segment-badge segment-badge-warn"
@@ -1601,7 +1718,7 @@ function cardActionLabel(a) {
                 :class="{ active: selectedStatus === 'downloading' }"
                 @click="selectedStatus = 'downloading'"
               >
-                <span>下载中</span>
+                <span>{{ t("archive.tab_downloading") }}</span>
                 <span
                   v-if="statusCounts.downloading > 0"
                   class="segment-badge segment-badge-active"
@@ -1616,7 +1733,7 @@ function cardActionLabel(a) {
                 :class="{ active: selectedStatus === 'failed' }"
                 @click="selectedStatus = 'failed'"
               >
-                <span>失败</span>
+                <span>{{ t("archive.tab_failed") }}</span>
                 <span
                   v-if="statusCounts.failed > 0"
                   class="segment-badge segment-badge-destructive"
@@ -1632,7 +1749,7 @@ function cardActionLabel(a) {
                 <Search class="size-3.5 search-icon text-muted-foreground" />
                 <Input
                   v-model="archiveSearch"
-                  placeholder="搜索画廊..."
+                  :placeholder="t('archive.search_placeholder')"
                   class="toolbar-search-input"
                 />
                 <button
@@ -1640,7 +1757,7 @@ function cardActionLabel(a) {
                   type="button"
                   class="search-clear-btn"
                   @click="archiveSearch = ''"
-                  aria-label="清除搜索"
+                  :aria-label="t('explore.clear_search')"
                 >
                   <X class="size-3" />
                 </button>
@@ -1656,7 +1773,7 @@ function cardActionLabel(a) {
                 </SelectTrigger>
                 <SelectContent position="popper">
                   <SelectItem value="all">
-                    <span class="font-medium">全部分类</span>
+                    <span class="font-medium">{{ t("archive.all_categories") }}</span>
                   </SelectItem>
                   <SelectItem
                     v-for="cat in EH_CATEGORIES"
@@ -1668,7 +1785,7 @@ function cardActionLabel(a) {
                         class="cat-dot"
                         :style="{ backgroundColor: cat.color }"
                       ></span>
-                      <span>{{ cat.label }}</span>
+                      <span>{{ t('category.' + cat.key) || cat.label }}</span>
                       <span class="text-xs text-muted-foreground font-mono"
                         >({{ categoryCounts[cat.key] || 0 }})</span
                       >
@@ -1687,11 +1804,11 @@ function cardActionLabel(a) {
                 </SelectTrigger>
                 <SelectContent position="popper">
                   <SelectItem value="all">
-                    <span class="font-medium">全部收藏</span>
+                    <span class="font-medium">{{ t("archive.all_favorites") }}</span>
                   </SelectItem>
                   <SelectItem value="unfavorited">
                     <span class="inline-flex items-center gap-1.5">
-                      <span>未收藏</span>
+                      <span>{{ t("common.unfavorited") }}</span>
                       <span class="text-xs text-muted-foreground font-mono"
                         >({{ unfavoritedCount }})</span
                       >
@@ -1699,7 +1816,7 @@ function cardActionLabel(a) {
                   </SelectItem>
                   <SelectItem value="favorited">
                     <span class="inline-flex items-center gap-1.5">
-                      <span>已收藏</span>
+                      <span>{{ t("common.favorited") }}</span>
                       <span class="text-xs text-muted-foreground font-mono"
                         >({{ favoritedCount }})</span
                       >
@@ -1728,25 +1845,30 @@ function cardActionLabel(a) {
                 class="h-8 text-xs text-muted-foreground hover:text-foreground px-2"
                 @click="resetFilters"
               >
-                重置
+                {{ t("common.reset") }}
               </Button>
             </div>
           </div>
           <div class="section-title">
-            <h2>浏览</h2>
+            <h2>{{ t("archive.browse_title") }}</h2>
             <span>{{
               isFiltered
-                ? `显示 ${filteredArchives.length} / ${s.archives.value.length} 个项目`
-                : `${s.archives.value.length} 个项目`
+                ? t("archive.showing_items", {
+                    shown: filteredArchives.length,
+                    total: s.archives.value.length,
+                  })
+                : t("archive.items_count", {
+                    count: s.archives.value.length,
+                  })
             }}</span>
           </div>
           <div v-if="!s.archives.value.length" class="panel empty">
-            当前没有归档项目。
+            {{ t("archive.empty_archives") }}
           </div>
           <div v-else-if="!filteredArchives.length" class="panel empty">
-            <p>没有符合当前筛选条件的归档项目。</p>
+            <p>{{ t("archive.empty_filtered") }}</p>
             <Button variant="link" size="sm" @click="resetFilters"
-              >清除所有筛选条件</Button
+              >{{ t("archive.clear_filters") }}</Button
             >
           </div>
           <div v-else class="gallery">
@@ -1759,35 +1881,25 @@ function cardActionLabel(a) {
                 <CoverImage
                   v-if="a.cover_url"
                   :src="a.cover_url"
-                  :alt="a.title || '封面'"
-                /><span v-else>暂无封面</span
+                  :alt="a.title || t('archive.cover')"
+                /><span v-else>{{ t("archive.no_cover") }}</span
                 ><b
                   :title="
                     a.metadata?.title_jpn ||
                     a.metadata?.title ||
                     a.title ||
-                    '未命名画廊'
+                    t('archive.unnamed_gallery')
                   "
                   ><span class="line-clamp-2 break-words">{{
                     a.metadata?.title_jpn ||
                     a.metadata?.title ||
                     a.title ||
-                    "未命名画廊"
+                    t("archive.unnamed_gallery")
                   }}</span></b
                 ><Badge variant="secondary" class="cover-status">{{
-                  {
-                    ready: "可用",
-                    unarchived: "未归档",
-                    downloading: "下载中",
-                    zipping: "转换中",
-                    pending: "准备中",
-                    submitting: "提交中",
-                    failed: "失败",
-                    quoting: "报价中",
-                    absent: "无",
-                  }[a.status] ||
+                  t("archive.status_map." + a.status) ||
                   a.status ||
-                  "未知"
+                  t("common.unknown")
                 }}</Badge>
               </div>
               <div class="gallery-meta">
@@ -1802,7 +1914,7 @@ function cardActionLabel(a) {
                   >{{
                     a.metadata?.filecount || a.page_count || "—"
                   }}
-                  页<template v-if="archiveSizeText(a)"
+                  {{ t("common.pages") }}<template v-if="archiveSizeText(a)"
                     >（{{ archiveSizeText(a) }}）</template
                   ></span
                 >
@@ -1832,16 +1944,16 @@ function cardActionLabel(a) {
                     ]"
                     :title="
                       a.favcat != null
-                        ? a.favcat_name || `收藏夹 ${a.favcat}`
-                        : '添加到收藏夹'
+                        ? a.favcat_name || t('archive.favcat_default', { id: a.favcat })
+                        : t('archive.add_to_fav')
                     "
                   >
                     <Bookmark class="size-3 shrink-0" />
-                    <SelectValue placeholder="未收藏">
+                    <SelectValue :placeholder="t('common.unfavorited')">
                       <span class="truncate">{{
                         a.favcat != null
-                          ? a.favcat_name || `收藏夹 ${a.favcat}`
-                          : "未收藏"
+                          ? a.favcat_name || t("archive.favcat_default", { id: a.favcat })
+                          : t("common.unfavorited")
                       }}</span>
                     </SelectValue>
                   </SelectTrigger>
@@ -1859,7 +1971,7 @@ function cardActionLabel(a) {
                         value="remove"
                         class="text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
                       >
-                        移除收藏
+                        {{ t("archive.remove_fav") }}
                       </SelectItem>
                     </template>
                   </SelectContent>
@@ -1877,11 +1989,11 @@ function cardActionLabel(a) {
                     "
                     target="_blank"
                     rel="noopener noreferrer"
-                    >打开 ↗</a
+                    >{{ t("archive.open_upstream") }}</a
                   >
                 </Button>
                 <Button variant="link" size="sm" @click="s.refreshMetadata(a)"
-                  >更新元数据</Button
+                  >{{ t("archive.update_meta") }}</Button
                 ><Button
                   variant="link"
                   size="sm"
@@ -1897,7 +2009,7 @@ function cardActionLabel(a) {
                     ].includes(a.version_update?.status)
                   "
                   @click="handleQuoteUpdate(a)"
-                  >更新版本</Button
+                  >{{ t("archive.update_version") }}</Button
                 ><Button
                   v-if="a.status === 'unarchived' && a.is_favorited"
                   variant="link"
@@ -1930,7 +2042,7 @@ function cardActionLabel(a) {
                   :disabled="archivePageCount(a) <= 0"
                   @click="openReader(a)"
                 >
-                  <BookOpen class="size-3.5" />阅读
+                  <BookOpen class="size-3.5" />{{ t("archive.read_btn") }}
                 </Button>
                 <Button
                   v-else-if="a.status === 'unarchived'"
@@ -1939,7 +2051,7 @@ function cardActionLabel(a) {
                   class="w-full text-xs"
                   @click="openReader(a)"
                 >
-                  <BookOpen class="size-3.5" />在线阅读
+                  <BookOpen class="size-3.5" />{{ t("common.read_online") }}
                 </Button>
                 <div v-else class="flex items-center gap-1.5 w-full">
                   <Button
@@ -1949,7 +2061,7 @@ function cardActionLabel(a) {
                     class="flex-1 text-xs"
                     @click="openReader(a)"
                   >
-                    <BookOpen class="size-3.5" />在线阅读
+                    <BookOpen class="size-3.5" />{{ t("common.read_online") }}
                   </Button>
                   <Button
                     variant="outline"
@@ -1958,7 +2070,7 @@ function cardActionLabel(a) {
                     :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
                     @click="handleQuoteArchive(a)"
                   >
-                    <RotateCcw class="size-3.5" />报价并重试
+                    <RotateCcw class="size-3.5" />{{ t("archive.quote_retry") }}
                   </Button>
                 </div>
               </div>
@@ -1975,8 +2087,12 @@ function cardActionLabel(a) {
             class="flex justify-center pt-4"
           >
             <Button variant="outline" size="sm" @click="visibleLimit += 60">
-              加载更多（已显示 {{ visibleArchives.length }} /
-              {{ filteredArchives.length }}）
+              {{
+                t("archive.load_more_btn", {
+                  shown: visibleArchives.length,
+                  total: filteredArchives.length,
+                })
+              }}
             </Button>
           </div></template
         >
@@ -1986,21 +2102,21 @@ function cardActionLabel(a) {
           <AlertDialogHeader>
             <AlertDialogTitle>{{
               s.quoteAction.value === "update"
-                ? "确认更新归档版本"
-                : "确认开始归档"
+                ? t("archive.dialog_confirm_update_title")
+                : t("archive.dialog_confirm_archive_title")
             }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{
                 s.quoteAction.value === "update"
-                  ? "将使用现有归档的画质档请求新版本。若该档位未解锁，可能消耗 GP，请核对报价后确认。"
+                  ? t("archive.dialog_desc_update")
                   : s.quoteAction.value === "refresh"
-                    ? "重试会重新向上游请求归档。未解锁档位可能消耗 GP，请核对画质档和报价。"
-                    : "归档任务会请求上游。未解锁档位会消耗你的账户 GP，请核对档位和价格。"
+                    ? t("archive.dialog_desc_retry")
+                    : t("archive.dialog_desc_start")
               }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div v-if="s.quote.value" class="dialog-detail">
-            <b>{{ s.quote.value.title || "选定画廊" }}</b>
+            <b>{{ s.quote.value.title || t("archive.selected_gallery") }}</b>
             <span>
               {{
                 s.quote.value.options?.find(
@@ -2018,13 +2134,13 @@ function cardActionLabel(a) {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">取消</Button></AlertDialogCancel
+              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button :disabled="s.busy.value" @click="s.startArchive">{{
                 s.quoteAction.value === "update"
-                  ? "确认更新版本"
-                  : "确认开始归档"
+                  ? t("archive.dialog_confirm_update_btn")
+                  : t("archive.dialog_confirm_archive_title")
               }}</Button></AlertDialogAction
             >
           </AlertDialogFooter>
@@ -2033,18 +2149,18 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="s.confirmCache.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>清理图片缓存？</AlertDialogTitle>
+            <AlertDialogTitle>{{ t("archive.dialog_clear_cache_title") }}</AlertDialogTitle>
             <AlertDialogDescription>
-              这会删除本地缓存的图片字节；下次访问时会重新从 E-Hentai 获取。
+              {{ t("archive.dialog_clear_cache_desc") }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">取消</Button></AlertDialogCancel
+              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button variant="destructive" @click="s.clearCache"
-                >清理缓存</Button
+                >{{ t("dashboard.clear_cache") }}</Button
               ></AlertDialogAction
             >
           </AlertDialogFooter>
@@ -2062,13 +2178,13 @@ function cardActionLabel(a) {
             <b>{{
               s.deleteTarget.value?.metadata?.title_jpn ||
               s.deleteTarget.value?.title ||
-              "画廊 " + (s.deleteTarget.value?.gid || "")
+              t("archive.gallery_id", { id: s.deleteTarget.value?.gid || "" })
             }}</b>
             <span>{{ deleteDialogMeta.note }}</span>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">取消</Button></AlertDialogCancel
+              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button variant="destructive" @click="s.deleteArchive">{{
@@ -2081,12 +2197,12 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="s.confirmFavoriteRemove.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>移除收藏？</AlertDialogTitle>
+            <AlertDialogTitle>{{ t("archive.dialog_fav_remove_title") }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{
                 s.favoriteRemoveTarget.value?.status === "unarchived"
-                  ? "这会从你的 E-Hentai 收藏夹移除此画廊，并同步清理未归档的本地建档记录。"
-                  : "这会从你的 E-Hentai 收藏夹移除此画廊。"
+                  ? t("archive.dialog_fav_remove_desc_unarchived")
+                  : t("archive.dialog_fav_remove_desc_default")
               }}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -2098,15 +2214,15 @@ function cardActionLabel(a) {
               type="checkbox"
               v-model="s.deleteAfterFavoriteRemove.value"
             />
-            同时删除本地归档（只有上游移除收藏成功后才会执行）
+            {{ t("archive.dialog_fav_remove_also_delete") }}
           </label>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">取消</Button></AlertDialogCancel
+              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button variant="destructive" @click="s.confirmFavoriteRemoval"
-                >移除收藏</Button
+                >{{ t("archive.remove_fav") }}</Button
               ></AlertDialogAction
             >
           </AlertDialogFooter>
@@ -2115,19 +2231,18 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="confirmFullSyncOpen">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>执行全量校准收藏？</AlertDialogTitle>
+            <AlertDialogTitle>{{ t("archive.dialog_full_sync_title") }}</AlertDialogTitle>
             <AlertDialogDescription>
-              将从头遍历你的 E-Hentai
-              收藏页（受最大扫描页数限制），补齐遗漏建档并自动清理上游已取消收藏的「未归档」条目。此操作不会触发付费归档，但会发起较多次列表页请求。
+              {{ t("archive.dialog_full_sync_desc") }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">取消</Button></AlertDialogCancel
+              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button :disabled="s.busy.value" @click="confirmAndRunFullSync"
-                >确认全量校准</Button
+                >{{ t("archive.dialog_full_sync_confirm") }}</Button
               ></AlertDialogAction
             >
           </AlertDialogFooter>
@@ -2136,9 +2251,9 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="createArchiveDialogOpen">
         <AlertDialogContent class="max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>新建画廊归档</AlertDialogTitle>
+            <AlertDialogTitle>{{ t("archive.dialog_new_title") }}</AlertDialogTitle>
             <AlertDialogDescription>
-              请输入画廊 URL 或 GID/TOKEN。归档需要已配置 IPB 登录凭据。
+              {{ t("archive.dialog_new_desc") }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div class="space-y-3 my-2 text-left">
@@ -2146,15 +2261,14 @@ function cardActionLabel(a) {
               <Alert variant="destructive">
                 <CircleAlert class="size-4" />
                 <AlertDescription class="text-xs">
-                  未检测到完整的 IPB
-                  登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。
+                  {{ t("archive.dialog_new_no_ipb") }}
                 </AlertDescription>
               </Alert>
             </div>
             <div class="flex gap-2">
               <Input
                 v-model="s.archiveInput.value"
-                placeholder="https://e-hentai.org/g/123456/abcdef/ 或 123456/abcdef"
+                :placeholder="t('archive.dialog_new_placeholder')"
                 @keydown.enter.prevent="s.getQuote('start')"
                 class="text-xs flex-1"
               />
@@ -2168,7 +2282,7 @@ function cardActionLabel(a) {
                 "
                 @click="s.getQuote('start')"
               >
-                <Search class="size-3.5" />查询
+                <Search class="size-3.5" />{{ t("archive.dialog_new_query") }}
               </Button>
             </div>
             <div
@@ -2176,21 +2290,27 @@ function cardActionLabel(a) {
               class="rounded-md border border-border bg-muted/40 p-3 space-y-2"
             >
               <div class="font-medium text-foreground text-xs line-clamp-2">
-                {{ s.quote.value.title || "报价已获取" }}
+                {{ s.quote.value.title || t("archive.dialog_new_quote_ready") }}
               </div>
               <div
                 v-if="s.quote.value.gp_balance"
                 class="text-muted-foreground text-[11px]"
               >
-                账户余额：{{ s.quote.value.gp_balance.toLocaleString() }} GP
+                {{
+                  t("archive.dialog_new_balance", {
+                    balance: s.quote.value.gp_balance.toLocaleString(),
+                  })
+                }}
               </div>
               <div class="flex items-center gap-2 pt-1">
                 <label class="text-xs text-muted-foreground shrink-0"
-                  >画质档</label
+                  >{{ t("archive.dialog_new_quality_label") }}</label
                 >
                 <Select v-model="s.selectedQuality.value">
                   <SelectTrigger class="h-8 text-xs flex-1">
-                    <SelectValue placeholder="选择画质档" />
+                    <SelectValue
+                      :placeholder="t('archive.dialog_new_quality_placeholder')"
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem
@@ -2200,7 +2320,9 @@ function cardActionLabel(a) {
                       :key="o.or"
                       :value="o.or"
                     >
-                      {{ o.label }}{{ o.unlocked ? "（已解锁）" : "" }} ·
+                      {{ o.label
+                      }}{{ o.unlocked ? t("archive.dialog_new_unlocked") : "" }}
+                      ·
                       {{
                         o.gp_price
                           ? o.gp_price.toLocaleString() + " GP"
@@ -2211,7 +2333,7 @@ function cardActionLabel(a) {
                 </Select>
               </div>
               <p class="text-[11px] text-amber-600 dark:text-amber-400">
-                归档任务会请求上游。未解锁档位会消耗账户 GP，请核对档位和价格。
+                {{ t("archive.dialog_new_warning") }}
               </p>
             </div>
           </div>
@@ -2221,7 +2343,7 @@ function cardActionLabel(a) {
                 variant="outline"
                 size="sm"
                 @click="closeCreateArchiveDialog"
-                >取消</Button
+                >{{ t("common.cancel") }}</Button
               >
             </AlertDialogCancel>
             <AlertDialogAction as-child>
@@ -2232,7 +2354,7 @@ function cardActionLabel(a) {
                 "
                 @click="confirmAndStartArchive"
               >
-                确认
+                {{ t("archive.dialog_new_confirm") }}
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>

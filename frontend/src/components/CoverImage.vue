@@ -29,10 +29,11 @@ function getSharedObserver() {
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from "vue";
 import { useApp } from "@/state.js";
+import { t } from "@/i18n.js";
 
 const props = defineProps({
   src: { type: String, required: true },
-  alt: { type: String, default: "封面" },
+  alt: { type: String, default: "" },
 });
 
 const s = useApp();
@@ -111,11 +112,11 @@ watch([() => props.src, () => s.authToken.value], () => {
     <img
       v-if="resolvedSrc && !failed"
       :src="resolvedSrc"
-      :alt="alt"
+      :alt="alt || t('archive.cover')"
       loading="lazy"
       class="size-full object-cover"
       @error="failed = true"
     />
-    <span v-else-if="failed">暂无封面</span>
+    <span v-else-if="failed">{{ t("archive.no_cover") }}</span>
   </div>
 </template>

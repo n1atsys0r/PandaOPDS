@@ -15,6 +15,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { t } from "@/i18n.js";
 
 const props = defineProps({ page: { type: String, required: true } });
 const emit = defineEmits(["navigate"]);
@@ -35,37 +36,37 @@ function navigate(page) {
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'dashboard'"
-              tooltip="概览"
+              :tooltip="t('nav.dashboard')"
               @click="navigate('dashboard')"
             >
-              <LayoutDashboard /><span class="group-data-[collapsible=icon]:hidden">概览</span>
+              <LayoutDashboard /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.dashboard") }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'home'"
-              tooltip="编排"
+              :tooltip="t('explore.edit_home')"
               @click="navigate('home')"
             >
-              <PanelsTopLeft /><span class="group-data-[collapsible=icon]:hidden">编排</span>
+              <PanelsTopLeft /><span class="group-data-[collapsible=icon]:hidden">{{ t("explore.edit_home") }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'explore'"
-              tooltip="探索"
+              :tooltip="t('nav.explore')"
               @click="navigate('explore')"
             >
-              <Compass /><span class="group-data-[collapsible=icon]:hidden">探索</span>
+              <Compass /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.explore") }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'archive'"
-              tooltip="归档"
+              :tooltip="t('nav.archive')"
               @click="navigate('archive')"
             >
-              <Package2 /><span class="group-data-[collapsible=icon]:hidden">归档</span>
+              <Package2 /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.archive") }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -79,10 +80,10 @@ function navigate(page) {
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'config'"
-              tooltip="设置"
+              :tooltip="t('nav.settings')"
               @click="navigate('config')"
             >
-              <Settings /><span class="group-data-[collapsible=icon]:hidden">设置</span>
+              <Settings /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.settings") }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

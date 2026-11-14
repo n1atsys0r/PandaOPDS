@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useApp } from "@/state.js";
+import { t } from "@/i18n.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -126,7 +127,7 @@ function executeSearch(query, displayTitle) {
   routePageStack.value = [];
   detailOpen.value = false;
 
-  const title = displayTitle || `搜索: ${q}`;
+  const title = displayTitle || `${t("common.search")}: ${q}`;
   s.enterExploreSubRoute(
     {
       title,
@@ -153,7 +154,7 @@ function clearSearch() {
 function handleTagClick(tagName) {
   if (!tagName) return;
   const query = formatTagForSearch(tagName);
-  executeSearch(query, `标签: ${tagName}`);
+  executeSearch(query, `${t("explore.modal_tags")}: ${tagName}`);
 }
 
 // Drill-down route state
@@ -207,17 +208,17 @@ const currentArchiveBadge = computed(() => {
   if (item) {
     const isFavorited = Boolean(item.is_favorited || item.status === "unarchived" || isFavoritedFromMeta);
     if (item.status === "ready") {
-      return { label: "已归档", variant: "default", isReady: true, isFavorited };
+      return { label: t("explore.badge_archived"), variant: "default", isReady: true, isFavorited };
     } else if (item.status === "downloading" || item.status === "staging") {
-      return { label: "下载中", variant: "secondary", isDownloading: true, isFavorited };
+      return { label: t("explore.badge_downloading"), variant: "secondary", isDownloading: true, isFavorited };
     } else if (item.status === "failed") {
-      return { label: "归档失败", variant: "destructive", isFailed: true, isFavorited };
+      return { label: t("explore.badge_failed"), variant: "destructive", isFailed: true, isFavorited };
     } else if (isFavorited) {
-      return { label: "收藏", variant: "outline", isFavorited: true };
+      return { label: t("explore.badge_fav"), variant: "outline", isFavorited: true };
     }
   }
   if (isFavoritedFromMeta) {
-    return { label: "已收藏", variant: "outline", isFavorited: true };
+    return { label: t("explore.badge_favorited"), variant: "outline", isFavorited: true };
   }
   return selectedPub.value?.archiveBadge || null;
 });
@@ -323,7 +324,7 @@ const currentFavcatInfo = computed(() => {
     }
     if (!name && favcatId != null) {
       const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
-      name = found?.name || `收藏夹 ${favcatId}`;
+      name = found?.name || t("archive.favcat_default", { id: favcatId });
     }
     if (!href && favcatId != null) {
       href = `/opds/v2.0/gallery?favcat=${favcatId}&query=favorites`;
@@ -366,7 +367,7 @@ function handleFavcatClick() {
     detailOpen.value = false;
     s.enterExploreSubRoute(
       {
-        title: `收藏夹: ${currentFavcatInfo.value.name}`,
+        title: `${t("common.favorite")}: ${currentFavcatInfo.value.name}`,
         href: currentFavcatInfo.value.href,
       },
       true,
@@ -578,19 +579,47 @@ function normalizePublication(pub, feedHref = window.location.href) {
   );
   if (archiveItem) {
     if (archiveItem.status === "ready") {
-      archiveBadge = { label: "已归档", variant: "default", isReady: true, isFavorited };
+      archiveBadge = {
+        labelKey: "explore.badge_archived",
+        get label() { return t(this.labelKey); },
+        variant: "default",
+        isReady: true,
+        isFavorited
+      };
     } else if (
       archiveItem.status === "downloading" ||
       archiveItem.status === "staging"
     ) {
-      archiveBadge = { label: "下载中", variant: "secondary", isDownloading: true, isFavorited };
+      archiveBadge = {
+        labelKey: "explore.badge_downloading",
+        get label() { return t(this.labelKey); },
+        variant: "secondary",
+        isDownloading: true,
+        isFavorited
+      };
     } else if (archiveItem.status === "failed") {
-      archiveBadge = { label: "归档失败", variant: "destructive", isFailed: true, isFavorited };
+      archiveBadge = {
+        labelKey: "explore.badge_failed",
+        get label() { return t(this.labelKey); },
+        variant: "destructive",
+        isFailed: true,
+        isFavorited
+      };
     } else if (isFavorited) {
-      archiveBadge = { label: "收藏", variant: "outline", isFavorited: true };
+      archiveBadge = {
+        labelKey: "explore.badge_fav",
+        get label() { return t(this.labelKey); },
+        variant: "outline",
+        isFavorited: true
+      };
     }
   } else if (isFavoritedFromMeta) {
-    archiveBadge = { label: "已收藏", variant: "outline", isFavorited: true };
+    archiveBadge = {
+      labelKey: "explore.badge_favorited",
+      get label() { return t(this.labelKey); },
+      variant: "outline",
+      isFavorited: true
+    };
   }
 
   const category =
@@ -618,7 +647,7 @@ function normalizePublication(pub, feedHref = window.location.href) {
   return {
     gid,
     token,
-    title: meta.title || "未知画廊",
+    title: meta.title || t("common.unknown"),
     authors,
     category,
     rating: Number(meta["x:rating"] || 0),
@@ -930,7 +959,7 @@ const publicationGroups = computed(() => {
     if (pubs.length > 0) {
       groups.push({
         id: "root-group",
-        title: catalog.value.metadata?.title || "最新精选",
+        title: catalog.value.metadata?.title || t("explore.featured_latest"),
         publications: pubs,
         link: null,
       });
@@ -968,7 +997,7 @@ async function loadCatalog() {
     catalogFeedHref = new URL(requestHref, window.location.href).href;
     catalog.value = res.data;
   } catch (err) {
-    error.value = err.message || "加载 OPDS 目录失败";
+    error.value = err.message || t("explore.empty_explore");
   } finally {
     loading.value = false;
   }
@@ -980,7 +1009,7 @@ function drillDown(navItem) {
   routePageStack.value = [];
   s.enterExploreSubRoute(
     {
-      title: navItem.title || "画廊列表",
+      title: navItem.title || t("notice.gallery_list"),
       href: navItem.href,
     },
     true,
@@ -1024,7 +1053,7 @@ async function loadRouteFeed(url) {
       feedHref: routeFeedHref,
     }));
   } catch (err) {
-    routeError.value = err.message || "加载列表失败";
+    routeError.value = err.message || t("explore.loading_more_failed", { err: "" });
   } finally {
     routeLoading.value = false;
   }
@@ -1058,7 +1087,7 @@ async function loadNextPage() {
     }
     rawRoutePublications.value = [...rawRoutePublications.value, ...newItems];
   } catch (err) {
-    loadingMoreError.value = err.message || "加载下一页失败";
+    loadingMoreError.value = err.message || t("explore.loading_more_failed", { err: "" });
   } finally {
     loadingMore.value = false;
   }
@@ -1407,20 +1436,20 @@ const relatedPublications = computed(() => {
 function handleCategoryClick(category) {
   if (!category) return;
   detailOpen.value = false;
-  executeSearch(category, `分类: ${category}`);
+  executeSearch(category, t("explore.search_title_category", { cat: category }));
 }
 
 function handleAuthorClick(author) {
   if (!author) return;
   detailOpen.value = false;
   const q = author.includes(" ") ? `artist:"${author}$"` : `artist:${author}$`;
-  executeSearch(q, `作者: ${author}`);
+  executeSearch(q, t("explore.search_title_author", { author }));
 }
 
 function handleUploaderClick(uploader) {
   if (!uploader) return;
   detailOpen.value = false;
-  executeSearch(`uploader:${uploader}`, `上传者: ${uploader}`);
+  executeSearch(`uploader:${uploader}`, t("explore.search_title_uploader", { uploader }));
 }
 
 function handleKeyDown(e) {
@@ -1514,13 +1543,13 @@ onUnmounted(() => {
           variant="ghost"
           size="icon"
           class="size-8 shrink-0 text-muted-foreground hover:text-foreground"
-          title="返回探索"
+          :title="t('explore.back_to_explore')"
           @click="exitDrillDown"
         >
           <ArrowLeft class="size-4" />
         </Button>
         <h2 class="text-xl font-bold tracking-tight text-foreground truncate">
-          {{ activeRoute ? activeRoute.title : "探索" }}
+          {{ activeRoute ? activeRoute.title : t("explore.title") }}
         </h2>
       </div>
 
@@ -1531,7 +1560,7 @@ onUnmounted(() => {
           <Search class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none" />
           <Input
             v-model="searchInput"
-            placeholder="搜索画廊、标签或关键词..."
+            :placeholder="t('explore.search_placeholder')"
             class="h-8 pl-8 pr-7 text-xs bg-card/60 border-border/80 focus-visible:bg-background"
             @keydown.enter="handleSearchSubmit"
           />
@@ -1540,7 +1569,7 @@ onUnmounted(() => {
             type="button"
             class="absolute right-2 p-0.5 text-muted-foreground hover:text-foreground cursor-pointer rounded-full hover:bg-muted"
             @click="clearSearch"
-            title="清空搜索"
+            :title="t('explore.clear_search')"
           >
             <X class="size-3" />
           </button>
@@ -1552,7 +1581,7 @@ onUnmounted(() => {
           :disabled="!searchInput.trim()"
           @click="handleSearchSubmit"
         >
-          搜索
+          {{ t("common.search") }}
         </Button>
 
         <div class="flex items-center gap-2 shrink-0">
@@ -1566,7 +1595,7 @@ onUnmounted(() => {
             <RefreshCw
               :class="['size-3.5', (loading || routeLoading) && 'animate-spin']"
             />
-            <span class="hidden sm:inline">刷新</span>
+            <span class="hidden sm:inline">{{ t("common.refresh") }}</span>
           </Button>
         </div>
       </div>
@@ -1607,7 +1636,7 @@ onUnmounted(() => {
       <nav
         v-if="navigationItems.length"
         class="flex flex-wrap items-center gap-2.5 pt-0.5"
-        aria-label="探索导航"
+        :aria-label="t('explore.nav_label')"
       >
         <button
           v-for="nav in navigationItems"
@@ -1651,7 +1680,7 @@ onUnmounted(() => {
               variant="ghost"
               size="icon"
               class="size-7 rounded-full"
-              title="向左滚动"
+              :title="t('explore.scroll_left')"
               @click="scrollShelf(group.id, -1)"
             >
               <ChevronLeft class="size-4" />
@@ -1660,7 +1689,7 @@ onUnmounted(() => {
               variant="ghost"
               size="icon"
               class="size-7 rounded-full"
-              title="向右滚动"
+              :title="t('explore.scroll_right')"
               @click="scrollShelf(group.id, 1)"
             >
               <ChevronRight class="size-4" />
@@ -1672,7 +1701,7 @@ onUnmounted(() => {
               class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
               @click="drillDown(group.link)"
             >
-              <span>查看全部</span>
+              <span>{{ t("common.view_all") }}</span>
               <ChevronRight class="size-3" />
             </Button>
           </div>
@@ -1770,9 +1799,9 @@ onUnmounted(() => {
         class="py-16 text-center text-muted-foreground space-y-2"
       >
         <Search class="size-8 mx-auto text-muted-foreground/40" />
-        <p class="text-sm font-medium">未找到相关画廊或数据为空。</p>
+        <p class="text-sm font-medium">{{ t("explore.empty_explore") }}</p>
         <p v-if="activeRoute" class="text-xs text-muted-foreground/70">
-          可尝试更换关键词或检查筛选标签重新搜索。
+          {{ t("explore.empty_explore_hint") }}
         </p>
       </div>
 
@@ -1870,7 +1899,7 @@ onUnmounted(() => {
           class="flex items-center justify-center gap-2.5 py-6 text-sm text-muted-foreground"
         >
           <RefreshCw class="size-4 animate-spin text-primary" />
-          <span class="font-medium">正在加载下一页...</span>
+          <span class="font-medium">{{ t("explore.loading_more") }}</span>
         </div>
 
         <!-- Error State with Retry Button -->
@@ -1878,14 +1907,14 @@ onUnmounted(() => {
           v-else-if="loadingMoreError"
           class="flex flex-col sm:flex-row items-center justify-center gap-3 py-6 text-sm text-destructive"
         >
-          <span>加载下一页失败：{{ loadingMoreError }}</span>
+          <span>{{ t("explore.loading_more_failed", { err: loadingMoreError }) }}</span>
           <Button
             variant="outline"
             size="sm"
             class="gap-1.5 text-foreground hover:text-foreground"
             @click="loadNextPage"
           >
-            <RefreshCw class="size-3.5" /> 点击重试
+            <RefreshCw class="size-3.5" /> {{ t("explore.click_retry") }}
           </Button>
         </div>
 
@@ -1895,7 +1924,7 @@ onUnmounted(() => {
           class="flex items-center justify-center gap-3 py-8 text-xs text-muted-foreground/60 select-none"
         >
           <div class="h-px w-12 sm:w-20 bg-border/60" />
-          <span>已加载全部画廊（共 {{ drillDownPublications.length }} 本）</span>
+          <span>{{ t("explore.all_loaded", { count: drillDownPublications.length }) }}</span>
           <div class="h-px w-12 sm:w-20 bg-border/60" />
         </div>
       </div>
@@ -1932,7 +1961,7 @@ onUnmounted(() => {
                 variant="ghost"
                 size="icon-sm"
                 class="absolute top-5 right-5 sm:top-6 sm:right-6 z-20 size-8 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white border border-white/10 transition-colors focus-visible:ring-0 focus-visible:outline-none focus:outline-none active:scale-95"
-                title="关闭 (Esc)"
+                :title="t('common.close_esc')"
               >
                 <X class="size-4" />
               </Button>
@@ -1958,7 +1987,7 @@ onUnmounted(() => {
                       v-if="selectedPub?.category"
                       class="inline-flex items-center gap-0.5 text-xs font-semibold tracking-wide text-white/80 hover:text-white transition-colors cursor-pointer"
                       @click="handleCategoryClick(selectedPub.category)"
-                      :title="`搜索分类: ${selectedPub.category}`"
+                      :title="t('explore.search_category', { cat: selectedPub.category })"
                     >
                       <span>{{ selectedPub.category }}</span>
                       <ChevronRight class="size-3 opacity-60" />
@@ -1998,7 +2027,7 @@ onUnmounted(() => {
                             color: currentFavcatStyle.text,
                           }"
                           :class="currentFavcatInfo.href ? 'cursor-pointer hover:brightness-125 active:scale-95' : ''"
-                          :title="'收藏夹: ' + currentFavcatInfo.name + (currentFavcatInfo.href ? ' (点击按此收藏夹筛选)' : '')"
+                          :title="currentFavcatInfo.name + (currentFavcatInfo.href ? t('explore.click_favcat_filter') : '')"
                           @click="handleFavcatClick"
                         >
                           {{ currentFavcatInfo.name }}
@@ -2012,9 +2041,9 @@ onUnmounted(() => {
                 <div class="space-y-3.5 sm:space-y-4">
                   <!-- Metadata Form Grid (One per row: Key: Value) -->
                   <div class="grid grid-cols-[auto_1fr] items-center gap-x-6 sm:gap-x-7 gap-y-1.5 sm:gap-y-2 text-xs text-left w-fit mx-auto sm:mx-0">
-                    <span class="text-white/50 select-none">页数:</span>
+                    <span class="text-white/50 select-none">{{ t("explore.page_count") }}</span>
                     <span class="text-white/95 font-medium truncate inline-flex items-center">
-                      <span>{{ selectedPub?.pageCount ? `${selectedPub.pageCount} 页` : "未知" }}</span>
+                      <span>{{ selectedPub?.pageCount ? t("common.page_count", { count: selectedPub.pageCount }) : t("common.unknown") }}</span>
                       <Transition
                         enter-active-class="transition-opacity duration-300 ease-out"
                         enter-from-class="opacity-0"
@@ -2031,15 +2060,15 @@ onUnmounted(() => {
                     </span>
 
                     <template v-if="selectedPub?.publishTime">
-                      <span class="text-white/50 select-none">发布时间:</span>
+                      <span class="text-white/50 select-none">{{ t("explore.posted_date") }}</span>
                       <span class="text-white/95 font-medium font-mono text-[11.5px] truncate">{{ formatDisplayDate(selectedPub.publishTime) }}</span>
                     </template>
 
                     <template v-if="selectedPub?.uploader">
-                      <span class="text-white/50 select-none">上传者:</span>
+                      <span class="text-white/50 select-none">{{ t("explore.uploader") }}</span>
                       <span
                         class="text-white/95 font-medium hover:text-white underline decoration-white/30 underline-offset-2 cursor-pointer transition-colors truncate"
-                        :title="`搜索上传者: ${selectedPub.uploader}`"
+                        :title="t('explore.search_uploader', { uploader: selectedPub.uploader })"
                         @click="handleUploaderClick(selectedPub.uploader)"
                       >
                         {{ selectedPub.uploader }}
@@ -2058,7 +2087,7 @@ onUnmounted(() => {
                     @click="handleRead(selectedPub)"
                   >
                     <BookOpen class="size-4" />
-                    <span>在线阅读</span>
+                    <span>{{ t("common.read_online") }}</span>
                   </Button>
 
                   <!-- Secondary Icon Button: Favorite (SF Symbol fill boolean style) -->
@@ -2069,7 +2098,7 @@ onUnmounted(() => {
                     :class="currentArchiveBadge?.isFavorited
                       ? 'bg-amber-400/15 hover:bg-amber-400/25 border-amber-400/35 text-amber-400'
                       : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'"
-                    :title="currentArchiveBadge?.isFavorited ? '已收藏 (点击取消)' : '加入收藏'"
+                    :title="currentArchiveBadge?.isFavorited ? t('explore.favorite_remove') : t('explore.favorite_add')"
                     @click="handleFavorite(selectedPub)"
                   >
                     <Bookmark
@@ -2088,7 +2117,7 @@ onUnmounted(() => {
                       : currentArchiveBadge?.isDownloading
                       ? 'bg-white/20 border-white/30 text-white cursor-wait'
                       : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'"
-                    :title="currentArchiveBadge?.isReady ? '已归档' : currentArchiveBadge?.isDownloading ? '正在下载归档...' : currentArchiveBadge?.isFailed ? '归档失败 (点击重试)' : '开始归档'"
+                    :title="currentArchiveBadge?.isReady ? t('explore.status_archived') : currentArchiveBadge?.isDownloading ? t('explore.status_downloading') : currentArchiveBadge?.isFailed ? t('explore.status_failed') : t('explore.status_unarchived')"
                     @click="handleArchive(selectedPub)"
                   >
                     <Loader2
@@ -2116,7 +2145,7 @@ onUnmounted(() => {
                     target="_blank"
                     rel="noopener noreferrer"
                     class="size-9 rounded-full border border-white/20 bg-white/15 hover:bg-white/25 text-white transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
-                    title="在 E-Hentai 原站打开"
+                    :title="t('explore.open_original')"
                   >
                     <ExternalLink class="size-4" />
                   </Button>
@@ -2140,7 +2169,7 @@ onUnmounted(() => {
                 class="space-y-2.5 pt-1"
               >
                 <div class="text-sm font-bold text-foreground">
-                  标签
+                  {{ t("explore.modal_tags") }}
                 </div>
 
                 <!-- Tags Layout: left-aligned, no quote mark, no indent -->
@@ -2168,22 +2197,22 @@ onUnmounted(() => {
                       class="flex flex-wrap gap-1.5 flex-1 min-w-0"
                     >
                       <span
-                        v-for="t in grp.tags"
-                        :key="grp.namespace + ':' + t.rawName"
-                        :style="t.tagStyle"
+                        v-for="tag in grp.tags"
+                        :key="grp.namespace + ':' + tag.rawName"
+                        :style="tag.tagStyle"
                         :class="[
                           'text-[11px] sm:text-xs font-normal px-2.5 py-0.5 rounded-md cursor-pointer select-none transition-all duration-150 inline-flex items-center gap-1 active:scale-95',
-                          t.isWeak ? 'border border-dashed' : 'border border-solid',
-                          t.hasCustomStyle
+                          tag.isWeak ? 'border border-dashed' : 'border border-solid',
+                          tag.hasCustomStyle
                             ? 'shadow-2xs hover:brightness-110 hover:shadow-xs'
-                            : t.isWeak
+                            : tag.isWeak
                               ? 'border-border/70 text-foreground/80 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
                               : 'border-border text-foreground/90 bg-muted/30 hover:bg-primary hover:text-primary-foreground hover:border-primary',
                         ]"
-                        :title="`点击搜索标签: ${t.searchName}`"
-                        @click="handleTagClick(t.searchName)"
+                        :title="t('explore.search_tag', { tag: tag.searchName })"
+                        @click="handleTagClick(tag.searchName)"
                       >
-                        {{ t.displayName }}
+                        {{ tag.displayName }}
                       </span>
                     </TransitionGroup>
                   </div>
@@ -2201,11 +2230,11 @@ onUnmounted(() => {
                 @click="detailSubView = 'thumbnails'"
               >
                 <span class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors">
-                  页面预览
+                  {{ t("explore.modal_preview") }}
                   <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
                 </span>
                 <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
-                  共 {{ selectedPub.pageCount || selectedPub.readingOrder.length }} 页
+                  {{ t("explore.modal_pages_total", { count: selectedPub.pageCount || selectedPub.readingOrder.length }) }}
                 </span>
               </div>
 
@@ -2218,14 +2247,14 @@ onUnmounted(() => {
                   @click="handleRead(selectedPub, idx)"
                 >
                   <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm group-hover/thumb:shadow-md group-hover/thumb:border-primary/50 transition-all">
-                    <CoverImage :src="page.thumbnailHref || page.href" :alt="`第 ${idx + 1} 页`" />
+                    <CoverImage :src="page.thumbnailHref || page.href" :alt="t('common.page_n', { n: idx + 1 })" />
                     <!-- Hover overlay with read icon -->
                     <div class="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/25 transition-colors flex items-center justify-center">
                       <BookOpen class="size-5 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity drop-shadow" />
                     </div>
                   </div>
                   <p class="text-[10px] text-center text-muted-foreground mt-1 group-hover/thumb:text-foreground transition-colors">
-                    第 {{ idx + 1 }} 页
+                    {{ t("common.page_n", { n: idx + 1 }) }}
                   </p>
                 </div>
 
@@ -2236,8 +2265,8 @@ onUnmounted(() => {
                   @click="detailSubView = 'thumbnails'"
                 >
                   <Grid class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1" />
-                  <span class="text-[11px] font-medium text-muted-foreground group-hover/more:text-foreground">全部页面</span>
-                  <span class="text-[9px] text-muted-foreground/70 mt-0.5">{{ selectedPub.readingOrder.length }} 页</span>
+                  <span class="text-[11px] font-medium text-muted-foreground group-hover/more:text-foreground">{{ t("explore.all_pages") }}</span>
+                  <span class="text-[9px] text-muted-foreground/70 mt-0.5">{{ t("common.page_count", { count: selectedPub.readingOrder.length }) }}</span>
                 </div>
               </div>
             </div>
@@ -2252,11 +2281,11 @@ onUnmounted(() => {
                 @click="detailSubView = 'reviews'"
               >
                 <span class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors">
-                  用户评价
+                  {{ t("explore.modal_reviews") }}
                   <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
                 </span>
                 <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
-                  共 {{ selectedPub.reviews.length }} 条
+                  {{ t("explore.modal_reviews_total", { count: selectedPub.reviews.length }) }}
                 </span>
               </div>
 
@@ -2286,8 +2315,8 @@ onUnmounted(() => {
                   @click="detailSubView = 'reviews'"
                 >
                   <MessageSquare class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1.5" />
-                  <span class="text-xs font-medium text-muted-foreground group-hover/more:text-foreground">全部评价</span>
-                  <span class="text-[10px] text-muted-foreground/70 mt-0.5">{{ selectedPub.reviews.length }} 条</span>
+                  <span class="text-xs font-medium text-muted-foreground group-hover/more:text-foreground">{{ t("explore.all_reviews") }}</span>
+                  <span class="text-[10px] text-muted-foreground/70 mt-0.5">{{ t("explore.modal_reviews_total", { count: selectedPub.reviews.length }) }}</span>
                 </div>
               </div>
             </div>
@@ -2296,10 +2325,10 @@ onUnmounted(() => {
             <div v-if="relatedPublications.length > 0" class="space-y-3 pt-3 border-t">
               <div class="flex items-center justify-between">
                 <span class="text-sm font-bold text-foreground inline-flex items-center gap-1">
-                  当前列表的其他作品
+                  {{ t("explore.modal_series") }}
                   <ChevronRight class="size-3.5 opacity-60" />
                 </span>
-                <span class="text-[11px] text-muted-foreground">共 {{ relatedPublications.length }} 本</span>
+                <span class="text-[11px] text-muted-foreground">{{ t("explore.modal_series_total", { count: relatedPublications.length }) }}</span>
               </div>
 
               <!-- Horizontal Shelf Track -->
@@ -2343,30 +2372,30 @@ onUnmounted(() => {
                   @click="detailSubView = 'main'"
                 >
                   <ChevronLeft class="size-4" />
-                  <span>返回详情</span>
+                  <span>{{ t("explore.back_to_detail") }}</span>
                 </Button>
                 <div class="h-4 w-px bg-border" />
                 <span class="text-sm font-bold text-foreground">
-                  页面预览
+                  {{ t("explore.modal_preview") }}
                 </span>
               </div>
               <div class="flex items-center gap-3">
                 <span class="text-xs text-muted-foreground hidden sm:inline">
-                  共 {{ selectedPub?.readingOrder?.length || 0 }} 页 · 点击跳转阅读
+                  {{ t("explore.preview_hint", { count: selectedPub?.readingOrder?.length || 0 }) }}
                 </span>
                 <!-- Quick Page Jump (if more than 48 pages) -->
                 <div
                   v-if="(selectedPub?.readingOrder?.length || 0) > 48"
                   class="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/40 border rounded-lg px-2 py-0.5"
                 >
-                  <span class="text-[11px] select-none">跳至</span>
+                  <span class="text-[11px] select-none">{{ t("explore.jump_to") }}</span>
                   <input
                     v-model.number="pageJumpInput"
                     type="number"
                     min="1"
                     :max="selectedPub?.readingOrder?.length || 1"
                     class="w-12 h-6 text-xs text-center border rounded bg-background text-foreground px-1 outline-none font-mono focus:border-primary"
-                    placeholder="页码"
+                    :placeholder="t('explore.page_no')"
                     @keydown.enter.prevent="handleQuickJump"
                   />
                   <Button
@@ -2375,7 +2404,7 @@ onUnmounted(() => {
                     class="h-6 text-[11px] px-1.5 text-muted-foreground hover:text-foreground"
                     @click="handleQuickJump"
                   >
-                    跳转
+                    {{ t("common.jump") }}
                   </Button>
                 </div>
                 <DialogClose as-child>
@@ -2383,7 +2412,7 @@ onUnmounted(() => {
                     variant="ghost"
                     size="icon-sm"
                     class="size-8 rounded-full text-muted-foreground hover:text-foreground"
-                    title="关闭 (Esc)"
+                    :title="t('common.close_esc')"
                   >
                     <X class="size-4" />
                   </Button>
@@ -2393,7 +2422,7 @@ onUnmounted(() => {
 
             <!-- Mobile Hint -->
             <div class="sm:hidden px-5 pt-3 text-xs text-muted-foreground">
-              共 {{ selectedPub?.readingOrder?.length || 0 }} 页 · 点击任意缩略图跳转阅读
+              {{ t("explore.preview_hint", { count: selectedPub?.readingOrder?.length || 0 }) }}
             </div>
 
             <!-- Thumbnails Grid -->
@@ -2402,7 +2431,7 @@ onUnmounted(() => {
                 v-if="!selectedPub?.readingOrder || selectedPub.readingOrder.length === 0"
                 class="py-16 text-center text-muted-foreground text-sm"
               >
-                暂无页面缩略图
+                {{ t("explore.no_thumbnails") }}
               </div>
               <div
                 v-else
@@ -2416,14 +2445,14 @@ onUnmounted(() => {
                   @click="handleRead(selectedPub, idx)"
                 >
                   <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-xl border bg-muted shadow-xs group-hover/gridpage:shadow-md group-hover/gridpage:border-primary transition-all active:scale-95">
-                    <CoverImage :src="page.thumbnailHref || page.href" :alt="`第 ${idx + 1} 页`" />
+                    <CoverImage :src="page.thumbnailHref || page.href" :alt="t('common.page_n', { n: idx + 1 })" />
                     <!-- Hover overlay with read icon -->
                     <div class="absolute inset-0 bg-black/35 opacity-0 group-hover/gridpage:opacity-100 flex items-center justify-center transition-opacity">
                       <BookOpen class="size-7 text-white drop-shadow-md" />
                     </div>
                   </div>
                   <span class="text-xs text-muted-foreground mt-1.5 group-hover/gridpage:text-foreground group-hover/gridpage:font-medium transition-colors">
-                    第 {{ idx + 1 }} 页
+                    {{ t("common.page_n", { n: idx + 1 }) }}
                   </span>
                 </div>
 
@@ -2434,7 +2463,7 @@ onUnmounted(() => {
                   class="col-span-full py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2"
                 >
                   <RefreshCw class="size-3.5 animate-spin opacity-60" />
-                  <span>正在载入后续页面... (已显示 {{ displayedThumbnails.length }} / {{ selectedPub?.readingOrder?.length }} 页)</span>
+                  <span>{{ t("explore.loading_more_thumbs", { shown: displayedThumbnails.length, total: selectedPub?.readingOrder?.length }) }}</span>
                 </div>
               </div>
             </div>
@@ -2456,23 +2485,23 @@ onUnmounted(() => {
                   @click="detailSubView = 'main'"
                 >
                   <ChevronLeft class="size-4" />
-                  <span>返回详情</span>
+                  <span>{{ t("explore.back_to_detail") }}</span>
                 </Button>
                 <div class="h-4 w-px bg-border" />
                 <span class="text-sm font-bold text-foreground">
-                  用户评价
+                  {{ t("explore.modal_reviews") }}
                 </span>
               </div>
               <div class="flex items-center gap-3">
                 <span class="text-xs text-muted-foreground hidden sm:inline">
-                  共 {{ selectedPub?.reviews?.length || 0 }} 条评价
+                  {{ t("explore.modal_reviews_total", { count: selectedPub?.reviews?.length || 0 }) }}
                 </span>
                 <DialogClose as-child>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     class="size-8 rounded-full text-muted-foreground hover:text-foreground"
-                    title="关闭 (Esc)"
+                    :title="t('common.close_esc')"
                   >
                     <X class="size-4" />
                   </Button>
@@ -2487,7 +2516,7 @@ onUnmounted(() => {
                 class="py-16 text-center text-muted-foreground text-sm space-y-2"
               >
                 <MessageSquare class="size-8 mx-auto opacity-40" />
-                <p>暂无用户评价</p>
+                <p>{{ t("explore.no_reviews") }}</p>
               </div>
 
               <div
@@ -2510,7 +2539,7 @@ onUnmounted(() => {
                   <div class="text-right text-[11px] text-muted-foreground font-mono">
                     <div>{{ rev.time }}</div>
                     <div v-if="rev.lastEditTime" class="text-[10px] text-muted-foreground/70">
-                      编辑于 {{ rev.lastEditTime }}
+                      {{ t("explore.edited_at", { time: rev.lastEditTime }) }}
                     </div>
                   </div>
                 </div>
@@ -2530,7 +2559,7 @@ onUnmounted(() => {
                 @click="reviewRenderLimit += 20"
               >
                 <RefreshCw class="size-3.5 animate-spin opacity-60" />
-                <span>正在加载更多评价... (已显示 {{ displayedReviews.length }} / {{ selectedPub?.reviews?.length }} 条)</span>
+                <span>{{ t("explore.loading_more_reviews", { shown: displayedReviews.length, total: selectedPub?.reviews?.length }) }}</span>
               </div>
             </div>
           </div>
@@ -2552,8 +2581,8 @@ onUnmounted(() => {
         variant="secondary"
         size="icon"
         class="fixed bottom-6 right-6 z-30 size-10 rounded-full shadow-lg border border-border/70 backdrop-blur-md bg-background/80 hover:bg-accent hover:border-border text-foreground transition-transform active:scale-90"
-        title="返回顶部"
-        aria-label="返回顶部"
+        :title="t('explore.back_to_top')"
+        :aria-label="t('explore.back_to_top')"
         @click="scrollToTop"
       >
         <ChevronUp class="size-5" />

@@ -1,5 +1,6 @@
 import { reactive, toRefs } from "vue";
 import { canUseFacets, chooseInitialHomeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
+import { t } from "./i18n.js";
 const state = reactive({
   page: "dashboard",
   exploreSubRoute: null,
@@ -228,7 +229,7 @@ async function loadConfig() {
     if (e.status === 401) return;
     try {
       state.config = { legacy: (await api("/api/config")).data };
-      state.error = "编辑接口不可用，当前显示只读配置";
+      state.error = t("notice.config_readonly_error");
     } catch (fallbackErr) {
       if (fallbackErr.status !== 401) state.error = e.message;
     }
@@ -257,9 +258,7 @@ async function saveConfig() {
       const a = state.form.ipb_member_id || "",
         b = state.form.ipb_pass_hash || "";
       if (Boolean(a) !== Boolean(b))
-        throw Error(
-          "IPB Member ID 和 IPB Pass Hash 必须同时填写；同时留空可清除登录态。",
-        );
+        throw Error(t("notice.missing_secrets"));
       patch.ipb_member_id = a || null;
       patch.ipb_pass_hash = b || null;
     }
@@ -268,7 +267,7 @@ async function saveConfig() {
       headers: { "If-Match": state.etag },
       body: JSON.stringify(patch),
     });
-    state.notice = "设置已保存";
+    state.notice = t("notice.settings_saved");
     await loadConfig();
   });
 }
@@ -288,7 +287,7 @@ async function loadHome(options = {}) {
     if (e.status === 401) return;
     try {
       state.home = { legacy: (await api("/api/home")).data };
-      state.error = "首页编辑接口不可用，当前显示只读布局";
+      state.error = t("notice.home_readonly_error");
     } catch (fallbackErr) {
       if (fallbackErr.status !== 401) state.error = e.message;
     }
@@ -296,11 +295,11 @@ async function loadHome(options = {}) {
 }
 async function saveHome() {
   if (!state.homeMode) {
-    state.error = "请先选择要保留的首页布局模式。";
+    state.error = t("notice.select_home_mode_first");
     return;
   }
   if (state.homeMode === "publications" && state.layout.facets.length && !canUseFacets(state.layout.publication)) {
-    state.error = "现有筛选来源不受支持。请移除筛选，或将出版物来源改为搜索、latest、toplist 或 favorites。";
+    state.error = t("notice.unsupported_facet_source");
     return;
   }
   const sections = serializeHomeLayout(state.layout, state.homeMode);
@@ -313,7 +312,7 @@ async function saveHome() {
     });
     state.home = saved.data;
     state.homeTag = (saved.headers.get("ETag") || "").replace(/^W\//i, "");
-    state.notice = "首页布局已保存";
+    state.notice = t("notice.home_saved");
     state.homeDirty = JSON.stringify(serializeHomeLayout(state.layout, state.homeMode)) !== submitted;
   });
 }
@@ -326,7 +325,7 @@ function canAddFacet() {
   return canUseFacets(state.layout.publication);
 }
 function addNavigation() {
-  state.layout.navigation.push({ kind: "navigation", group: false, title: "最新画廊", type: "preset", query: "latest" });
+  state.layout.navigation.push({ kind: "navigation", group: false, title: t("home_editor.latest"), type: "preset", query: "latest" });
   state.homeDirty = true;
 }
 function removeItem(collection, i) {
@@ -342,7 +341,7 @@ function moveItem(collection, i, delta) {
 }
 function addPublication() {
   if (state.layout.publication) return;
-  state.layout.publication = { kind: "publication", group: false, title: "最新画廊", type: "preset", query: "latest", count: 10 };
+  state.layout.publication = { kind: "publication", group: false, title: t("home_editor.latest"), type: "preset", query: "latest", count: 10 };
   state.homeDirty = true;
 }
 function removePublication() {
@@ -351,13 +350,13 @@ function removePublication() {
 }
 function addFacet() {
   if (!canAddFacet()) return;
-  state.layout.facets.push({ title: "分类" });
+  state.layout.facets.push({ title: t("explore.modal_tags") });
   state.homeDirty = true;
 }
 function addGroupSection(kind) {
   state.layout.groups.push(kind === "navigation"
-    ? { kind, group: true, title: "最新画廊", type: "preset", query: "latest" }
-    : { kind: "publication", group: true, title: "热门画廊", type: "preset", query: "popular", count: 10 });
+    ? { kind, group: true, title: t("home_editor.latest"), type: "preset", query: "latest" }
+    : { kind: "publication", group: true, title: t("home_editor.popular"), type: "preset", query: "popular", count: 10 });
   state.homeDirty = true;
 }
 async function loadArchives() {
@@ -435,8 +434,7 @@ async function getQuote(action = "start", target = null) {
   state.quoteAction = action;
   state.quoteTarget = target;
   if (!gallery) {
-    state.error =
-      "无法解析 gid/token。请输入画廊 URL、archiver URL 或 123456/abcdef。";
+    state.error = t("notice.invalid_input");
     return;
   }
   await run(async () => {
@@ -444,10 +442,10 @@ async function getQuote(action = "start", target = null) {
       await api("/api/archive/" + gallery.gid + "/" + gallery.token + "/quote")
     ).data;
     if (state.archiveInput.trim() !== input)
-      throw Error("报价已过期，因为输入内容发生了变化。请重新查询。");
+      throw Error(t("notice.quote_expired"));
     const option = (result.options || []).find((item) => item.available &&
       (action !== "update" || String(item.or) === String(target.root.quality)));
-    if (!option) throw Error(result.error || "没有可用的画质档");
+    if (!option) throw Error(result.error || t("notice.no_quality_option"));
     if (action === "update") {
       result.options = result.options.filter(
         (item) => String(item.or) === String(target.root.quality),
@@ -476,13 +474,13 @@ function quoteUpdateFor(a) {
 }
 function openArchiveConfirm() {
   if (!state.quote || state.quoteFor !== state.archiveInput.trim())
-    return (state.error = "查询报价后若输入有变化，请重新查询。");
+    return (state.error = t("notice.quote_expired"));
   if (
     !state.quote.options?.some(
       (o) => o.available && String(o.or) === String(state.selectedQuality),
     )
   )
-    return (state.error = "请选择可用画质档。");
+    return (state.error = t("notice.select_quality_tier"));
   state.confirmArchive = true;
 }
 async function startArchive() {
@@ -492,7 +490,7 @@ async function startArchive() {
     (o) => o.available && String(o.or) === String(state.selectedQuality),
   );
   if (!p || !option || state.quoteFor !== state.archiveInput.trim() || (update && (!state.quoteTarget?.root || String(option.or) !== String(state.quoteTarget.root.quality))))
-    return (state.error = "报价已过期或画质档无效，请重新查询。");
+    return (state.error = t("notice.quote_expired_or_invalid"));
   state.confirmArchive = false;
   const quality = state.selectedQuality;
   state.quote = null;
@@ -510,13 +508,13 @@ async function startArchive() {
           !Number.isFinite(maxGP) ||
           maxGP < 0
         )
-          return (state.error = "报价中的 GP 金额无效，请重新查询。");
+          return (state.error = t("notice.invalid_gp"));
       }
       await api("/api/archive/" + root.gid + "/" + root.token + "/update", {
         method: "POST",
         body: JSON.stringify({ gid: target.gid, token: target.token, max_gp: maxGP }),
       });
-      state.notice = "版本更新任务已提交";
+      state.notice = t("notice.update_submitted");
     } else {
       const result = await api(
         "/api/archive/" + p.gid + "/" + p.token + "/start",
@@ -529,8 +527,8 @@ async function startArchive() {
         },
       );
       state.notice = result.data.skipped
-        ? "该画廊已归档，未重复提交任务。"
-        : "归档任务已提交";
+        ? t("notice.archive_skipped")
+        : t("notice.archive_submitted");
     }
     state.quote = null;
     state.quoteFor = "";
@@ -545,7 +543,7 @@ async function refreshMetadata(a) {
       method: "POST",
       body: JSON.stringify({}),
     });
-    state.notice = "画廊元数据已刷新";
+    state.notice = t("notice.meta_refreshed");
     await loadArchives();
   });
 }
@@ -569,7 +567,7 @@ async function confirmFavoriteRemoval() {
     });
     if (result.data.ok !== true)
       throw Error(
-        result.data.detail || result.data.items?.[0]?.error || "移除收藏失败",
+        result.data.detail || result.data.items?.[0]?.error || t("notice.fav_remove_failed"),
       );
     if (state.deleteAfterFavoriteRemove && target.status !== "unarchived") {
       await api("/api/archive/" + target.gid + "/" + target.token, {
@@ -578,10 +576,10 @@ async function confirmFavoriteRemoval() {
     }
     state.notice =
       target.status === "unarchived"
-        ? "已移除收藏并清理本地建档记录。"
+        ? t("notice.fav_removed_unarchived")
         : state.deleteAfterFavoriteRemove
-          ? "已移除收藏并删除本地归档。"
-          : "已移除收藏。";
+          ? t("notice.fav_removed_deleted")
+          : t("notice.fav_removed");
     state.deleteAfterFavoriteRemove = false;
     await loadArchives();
   });
@@ -600,18 +598,18 @@ async function deleteArchive() {
     ).data;
     if (a.status === "failed") {
       state.notice = res.retained_catalog
-        ? "已清除失败状态并恢复为未归档"
-        : "失败记录已清除";
+        ? t("notice.failed_cleared_catalog_kept")
+        : t("notice.failed_cleared");
     } else if (["pending", "downloading", "zipping", "submitting"].includes(a.status)) {
       state.notice = res.retained_catalog
-        ? "归档任务已取消并恢复为未归档"
-        : "归档任务已取消并移除";
+        ? t("notice.task_cancelled_catalog_kept")
+        : t("notice.task_cancelled");
     } else if (a.status === "unarchived") {
-      state.notice = "残留记录已移除";
+      state.notice = t("notice.orphan_removed");
     } else {
       state.notice = res.retained_catalog
-        ? "本地归档已删除（收藏记录保留为未归档）"
-        : "本地归档及记录已删除";
+        ? t("notice.archive_deleted_catalog_kept")
+        : t("notice.archive_deleted");
     }
     await loadArchives();
   });
@@ -623,9 +621,13 @@ async function syncFavorites(full = false) {
       await api("/api/favorites/sync/run" + query, { method: "POST" })
     ).data;
     if (result.skipped) {
-      state.notice = result.error || "已跳过收藏同步";
+      state.notice = result.error || t("notice.sync_skipped");
     } else {
-      state.notice = `收藏同步完成：扫描 ${result.scanned_pages ?? 0} 页，新增 ${result.new_count ?? 0} 项，新建档 ${result.cataloged_count ?? 0} 项`;
+      state.notice = t("notice.sync_complete", {
+        scanned: result.scanned_pages ?? 0,
+        newCount: result.new_count ?? 0,
+        cataloged: result.cataloged_count ?? 0,
+      });
     }
     await Promise.all([loadArchives(), loadCategories(), loadStatus()]);
   });
@@ -637,7 +639,7 @@ async function clearCache() {
   state.confirmCache = false;
   await run(async () => {
     const r = await api("/api/cache/clear", { method: "POST" });
-    state.notice = "已清理 " + (r.data.cleared ?? "") + " 条缓存";
+    state.notice = t("notice.cache_cleared", { count: r.data.cleared ?? "" });
     await loadStatus();
   });
 }
@@ -653,8 +655,8 @@ async function favorite(a, action, favcat) {
       }),
     });
     if (r.data.ok === false)
-      throw Error(r.data.detail || r.data.items?.[0]?.error || "收藏操作失败");
-    state.notice = action === "remove" ? "已移除收藏" : "收藏类别已更新";
+      throw Error(r.data.detail || r.data.items?.[0]?.error || t("notice.fav_op_failed"));
+    state.notice = action === "remove" ? t("notice.fav_removed") : t("notice.fav_updated");
     await loadArchives();
   });
 }
@@ -670,7 +672,7 @@ function enterExploreSubRoute(navItem, pushHistory = true) {
   if (!navItem) return;
   state.page = "explore";
   state.exploreSubRoute = {
-    title: navItem.title || "画廊列表",
+    title: navItem.title || t("notice.gallery_list"),
     href: navItem.href,
   };
   if (pushHistory && typeof window !== "undefined") {
@@ -772,8 +774,8 @@ async function login(username, password) {
   } catch (e) {
     state.loginError =
       e.status === 401
-        ? "用户名或密码错误，请重试"
-        : e.message || "登录失败，请检查网络或服务配置";
+        ? t("auth.error_credentials")
+        : e.message || t("auth.error_failed");
     return false;
   } finally {
     state.busy = false;
