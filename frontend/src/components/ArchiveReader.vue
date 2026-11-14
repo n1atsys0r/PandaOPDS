@@ -611,7 +611,20 @@ async function startSession() {
   cleanupSessionResources();
   if (!props.open || !props.archive || pageCount.value <= 0) return;
   abortController = new AbortController();
-  const startIdx = readSavedPageIndex();
+  let startIdx = readSavedPageIndex();
+  if (Number.isFinite(props.archive?.start_page)) {
+    startIdx = Math.min(
+      Math.max(0, Math.floor(props.archive.start_page)),
+      Math.max(0, pageCount.value - 1),
+    );
+    savePageIndex(startIdx);
+  } else if (Number.isFinite(props.archive?.initial_page_index)) {
+    startIdx = Math.min(
+      Math.max(0, Math.floor(props.archive.initial_page_index)),
+      Math.max(0, pageCount.value - 1),
+    );
+    savePageIndex(startIdx);
+  }
   currentPageIndex.value = startIdx;
   await nextTick();
   if (readerMode.value === "paged") {
@@ -622,7 +635,12 @@ async function startSession() {
 }
 
 watch(
-  () => [props.open, galleryKey.value],
+  () => [
+    props.open,
+    galleryKey.value,
+    props.archive?.start_page,
+    props.archive?.initial_page_index,
+  ],
   ([isOpen]) => {
     lockBodyScroll(Boolean(isOpen));
     if (isOpen) {

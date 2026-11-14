@@ -43,8 +43,27 @@ const state = reactive({
   form: {},
   layout: { navigation: [], publication: null, facets: [], groups: [] },
 });
+const MAX_COVER_CACHE = 300;
 const coverCache = new Map();
 const coverInflight = new Map();
+
+function setCoverCache(cacheKey, url) {
+  if (coverCache.has(cacheKey)) {
+    coverCache.delete(cacheKey);
+  } else if (coverCache.size >= MAX_COVER_CACHE) {
+    const oldestKey = coverCache.keys().next().value;
+    if (oldestKey) {
+      const oldUrl = coverCache.get(oldestKey);
+      if (oldUrl && oldUrl.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(oldUrl);
+        } catch {}
+      }
+      coverCache.delete(oldestKey);
+    }
+  }
+  coverCache.set(cacheKey, url);
+}
 
 function clearCoverCache() {
   for (const url of coverCache.values()) {
@@ -65,7 +84,14 @@ function peekCoverUrl(path) {
   if (!path) return "";
   const token = state.authToken || localStorage.getItem("pandaopds_auth");
   if (!token) return path;
-  return coverCache.get(`${token}:${path}`) || "";
+  const cacheKey = `${token}:${path}`;
+  const url = coverCache.get(cacheKey);
+  if (url) {
+    coverCache.delete(cacheKey);
+    coverCache.set(cacheKey, url);
+    return url;
+  }
+  return "";
 }
 
 async function fetchMediaBlobUrl(path, signal, directWhenUnauthed) {
@@ -115,7 +141,7 @@ async function resolveCoverUrl(path) {
     try {
       const objectUrl = await fetchAuthedBlobUrl(path);
       if (!objectUrl) return "";
-      coverCache.set(cacheKey, objectUrl);
+      setCoverCache(cacheKey, objectUrl);
       return objectUrl;
     } finally {
       coverInflight.delete(cacheKey);

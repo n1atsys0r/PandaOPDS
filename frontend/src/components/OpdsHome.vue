@@ -46,6 +46,8 @@ import {
   Minimize2Icon as Minimize2,
   XIcon as X,
   InfoIcon as Info,
+  MessageSquareIcon as MessageSquare,
+  GridIcon as Grid,
 } from "@lucide/vue";
 
 const emit = defineEmits([
@@ -176,6 +178,7 @@ let routeFeedHref = window.location.href;
 // Gallery detail drawer
 const detailOpen = ref(false);
 const selectedPub = ref(null);
+const detailSubView = ref("main"); // "main" | "reviews" | "thumbnails"
 
 // Home Editor drawer
 const editorOpen = ref(false);
@@ -411,6 +414,8 @@ function normalizePublication(pub, feedHref = window.location.href) {
 
   const language = extractLanguage(meta);
 
+  const reviews = Array.isArray(meta["x:reviews"]) ? meta["x:reviews"] : [];
+
   return {
     gid,
     token,
@@ -430,6 +435,8 @@ function normalizePublication(pub, feedHref = window.location.href) {
     archiveBadge,
     archiveItem,
     raw: pub,
+    reviews,
+    readingOrder: [],
   };
 }
 
@@ -468,8 +475,16 @@ function ensurePublicationDetails(pub) {
     for (const subject of Array.isArray(metadata.subject) ? metadata.subject : []) {
       if (!subject?.name) continue;
       const index = subjects.findIndex((item) => item?.name === subject.name);
-      if (index < 0) subjects.push(subject);
-      else subjects[index] = { ...subjects[index], ...subject };
+      if (index < 0) {
+        subjects.push(subject);
+      } else {
+        const mergedStyle = subject["x:style"] || subjects[index]["x:style"];
+        subjects[index] = {
+          ...subjects[index],
+          ...subject,
+          ...(mergedStyle ? { "x:style": mergedStyle } : {}),
+        };
+      }
     }
     const sourceLinks = [...(data.links || [])];
     for (const link of pub.raw?.links || []) {
@@ -486,13 +501,18 @@ function ensurePublicationDetails(pub) {
       href,
     );
     const rawPages = Array.isArray(data.readingOrder) ? data.readingOrder : [];
-    const pages = rawPages.map((page) => ({
+    const pages = rawPages.map((page, index) => ({
+      pageNumber: index + 1,
       href: localApiUrl(page?.href, href),
       thumbnailHref: localApiUrl(page?.properties?.["x:thumbnail"]?.href, href),
     }));
     const validPages = pages.length > 0 && pages.every((page) => page.href);
+    const reviews = Array.isArray(metadata["x:reviews"])
+      ? metadata["x:reviews"]
+      : (normalized.reviews || pub.reviews || []);
     Object.assign(pub, normalized, {
       subjects,
+      reviews,
       detailLoaded: true,
       readingOrder: validPages ? pages : [],
       pageCount: validPages ? pages.length : (normalized.pageCount || pub.pageCount),
@@ -505,7 +525,133 @@ function ensurePublicationDetails(pub) {
 
 watch([selectedPub, detailOpen], ([pub, open]) => {
   if (pub && open) ensurePublicationDetails(pub);
+  if (!open) detailSubView.value = "main";
 });
+
+const previewPages = computed(() => {
+  return (selectedPub.value?.readingOrder || []).slice(0, 16);
+});
+
+const previewReviews = computed(() => {
+  return (selectedPub.value?.reviews || []).slice(0, 6);
+});
+
+function stripHtmlToSnippet(html, maxLength = 120) {
+  if (!html) return "";
+  if (typeof document === "undefined") {
+    return html.replace(/<[^>]*>/g, "").slice(0, maxLength);
+  }
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  const text = (tmp.textContent || tmp.innerText || "").trim().replace(/\s+/g, " ");
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + "…";
+}
+
+// Progressive chunked rendering for large thumbnail lists & reviews
+const thumbnailRenderLimit = ref(64);
+const reviewRenderLimit = ref(20);
+const pageJumpInput = ref("");
+
+const displayedThumbnails = computed(() => {
+  return (selectedPub.value?.readingOrder || []).slice(
+    0,
+    thumbnailRenderLimit.value,
+  );
+});
+
+const displayedReviews = computed(() => {
+  return (selectedPub.value?.reviews || []).slice(0, reviewRenderLimit.value);
+});
+
+function formatReviewHtml(html) {
+  if (!html) return "";
+  // Injects loading="lazy" decoding="async" to <img> to prevent network choke
+  let res = html.replace(
+    /<img\s+(?![^>]*\bloading=)/gi,
+    '<img loading="lazy" decoding="async" ',
+  );
+  // Injects target="_blank" rel="noopener noreferrer" to <a> for security
+  res = res.replace(
+    /<a\s+(?![^>]*\btarget=)/gi,
+    '<a target="_blank" rel="noopener noreferrer" ',
+  );
+  return res;
+}
+
+const thumbnailSentinelRef = ref(null);
+const reviewSentinelRef = ref(null);
+let sentinelObserver = null;
+
+function setupSentinelObserver() {
+  if (typeof IntersectionObserver === "undefined") return;
+  sentinelObserver?.disconnect();
+  sentinelObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        if (entry.target === thumbnailSentinelRef.value) {
+          const total = selectedPub.value?.readingOrder?.length || 0;
+          if (thumbnailRenderLimit.value < total) {
+            thumbnailRenderLimit.value = Math.min(
+              total,
+              thumbnailRenderLimit.value + 64,
+            );
+          }
+        } else if (entry.target === reviewSentinelRef.value) {
+          const total = selectedPub.value?.reviews?.length || 0;
+          if (reviewRenderLimit.value < total) {
+            reviewRenderLimit.value = Math.min(
+              total,
+              reviewRenderLimit.value + 20,
+            );
+          }
+        }
+      }
+    },
+    { rootMargin: "450px 0px" },
+  );
+  if (thumbnailSentinelRef.value) {
+    sentinelObserver.observe(thumbnailSentinelRef.value);
+  }
+  if (reviewSentinelRef.value) {
+    sentinelObserver.observe(reviewSentinelRef.value);
+  }
+}
+
+watch([thumbnailSentinelRef, reviewSentinelRef], () => {
+  setupSentinelObserver();
+});
+
+watch(detailSubView, (subView) => {
+  if (subView === "thumbnails") {
+    thumbnailRenderLimit.value = 64;
+    pageJumpInput.value = "";
+  } else if (subView === "reviews") {
+    reviewRenderLimit.value = 20;
+  }
+  nextTick(() => {
+    setupSentinelObserver();
+  });
+});
+
+function handleQuickJump() {
+  const total = selectedPub.value?.readingOrder?.length || 1;
+  const target = Math.max(
+    1,
+    Math.min(Number(pageJumpInput.value) || 1, total),
+  );
+  thumbnailRenderLimit.value = Math.max(
+    thumbnailRenderLimit.value,
+    target + 32,
+  );
+  nextTick(() => {
+    const el = document.getElementById(`thumb-page-${target}`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  });
+}
 
 // Normalized Navigation Pills
 const navigationItems = computed(() => {
@@ -772,6 +918,7 @@ function scrollModalToTop() {
 function prevGallery() {
   if (hasPrev.value) {
     selectedPub.value = currentPubList.value[currentIndex.value - 1];
+    detailSubView.value = "main";
     scrollModalToTop();
   }
 }
@@ -779,30 +926,78 @@ function prevGallery() {
 function nextGallery() {
   if (hasNext.value) {
     selectedPub.value = currentPubList.value[currentIndex.value + 1];
+    detailSubView.value = "main";
     scrollModalToTop();
   }
 }
 
 function selectPublication(pub) {
   selectedPub.value = pub;
+  detailSubView.value = "main";
   scrollModalToTop();
 }
 
-// Namespace tag grouping logic (no local scrollview, flows naturally)
-const NAMESPACE_ORDER = [
-  "parody",
-  "character",
-  "group",
-  "artist",
-  "cosplayer",
-  "female",
-  "male",
-  "mixed",
-  "language",
-  "other",
-  "temp",
-  "misc",
-];
+// Canonical namespace weights matching OPDS standard & E-Hentai ordering
+const NAMESPACE_WEIGHTS = {
+  category: 0,
+  分类: 0,
+  language: 1,
+  语言: 1,
+  parody: 2,
+  原作: 2,
+  character: 3,
+  角色: 3,
+  cosplayer: 4,
+  coser: 4,
+  group: 5,
+  团队: 5,
+  社团: 5,
+  artist: 6,
+  艺术家: 6,
+  作者: 6,
+  female: 7,
+  女性: 7,
+  male: 8,
+  男性: 8,
+  mixed: 9,
+  混合: 9,
+  location: 10,
+  地点: 10,
+  other: 11,
+  其他: 11,
+  temp: 12,
+  misc: 13,
+};
+
+function getNamespaceWeight(ns) {
+  const lower = String(ns || "").trim().toLowerCase();
+  return NAMESPACE_WEIGHTS[lower] ?? 99;
+}
+
+function parseTagStyle(rawStyle) {
+  if (!rawStyle) return null;
+  const style = {};
+  if (typeof rawStyle === "object") {
+    if (rawStyle.color) style.color = rawStyle.color;
+    if (rawStyle.borderColor || rawStyle["border-color"]) {
+      style.borderColor = rawStyle.borderColor || rawStyle["border-color"];
+    }
+    if (rawStyle.background || rawStyle.backgroundColor || rawStyle["background-color"]) {
+      style.background = rawStyle.background || rawStyle.backgroundColor || rawStyle["background-color"];
+    }
+  } else if (typeof rawStyle === "string") {
+    for (const part of rawStyle.split(";")) {
+      const [k, v] = part.split(":").map((s) => s.trim());
+      if (!k || !v) continue;
+      const cleanV = v.replace(/!important/g, "").trim();
+      const lk = k.toLowerCase();
+      if (lk === "color") style.color = cleanV;
+      else if (lk === "border-color" || lk === "bordercolor") style.borderColor = cleanV;
+      else if (lk === "background" || lk === "background-color") style.background = cleanV;
+    }
+  }
+  return Object.keys(style).length > 0 ? style : null;
+}
 
 const groupedTags = computed(() => {
   if (!selectedPub.value?.subjects || !selectedPub.value.subjects.length) {
@@ -810,6 +1005,7 @@ const groupedTags = computed(() => {
   }
 
   const map = new Map();
+  let firstSeenCounter = 0;
 
   for (const item of selectedPub.value.subjects) {
     const rawName = typeof item === "string" ? item : item?.name || "";
@@ -823,41 +1019,49 @@ const groupedTags = computed(() => {
       key = rawName.slice(colonIdx + 1).trim();
     }
 
-    const styleStr =
-      typeof item === "object" ? String(item["x:style"] || "") : "";
+    const rawStyle =
+      typeof item === "object" ? (item["x:style"] || item.style || null) : null;
+    const tagStyle = parseTagStyle(rawStyle);
+    const hasCustomStyle = Boolean(tagStyle);
     const isWeak =
-      styleStr.includes("weak") ||
-      styleStr.includes("secondary") ||
-      styleStr.includes("dash");
+      typeof item === "object" &&
+      (String(item.status || "").includes("skepticism") ||
+       String(item["x:style"] || "").includes("dash") ||
+       String(item["x:style"] || "").includes("weak"));
 
     if (!map.has(ns)) {
-      map.set(ns, []);
+      map.set(ns, {
+        namespace: ns,
+        firstSeenIndex: firstSeenCounter++,
+        tags: [],
+      });
     }
-    map.get(ns).push({
+    map.get(ns).tags.push({
       rawName,
       namespace: ns,
       key,
       displayName: key,
       searchName: rawName,
       isWeak,
+      tagStyle,
+      hasCustomStyle,
     });
   }
 
-  const result = [];
-  for (const ns of NAMESPACE_ORDER) {
-    if (map.has(ns)) {
-      result.push({
-        namespace: ns,
-        tags: map.get(ns),
-      });
-      map.delete(ns);
-    }
-  }
+  // 1. Sort namespace rows by canonical weights
+  const result = Array.from(map.values()).sort((a, b) => {
+    const wa = getNamespaceWeight(a.namespace);
+    const wb = getNamespaceWeight(b.namespace);
+    if (wa !== wb) return wa - wb;
+    return a.firstSeenIndex - b.firstSeenIndex;
+  });
 
-  for (const [ns, tags] of map.entries()) {
-    result.push({
-      namespace: ns,
-      tags,
+  // 2. Sort tags within each group: styled tags come first (stable sort preserving relative order)
+  for (const grp of result) {
+    grp.tags.sort((a, b) => {
+      if (a.hasCustomStyle && !b.hasCustomStyle) return -1;
+      if (!a.hasCustomStyle && b.hasCustomStyle) return 1;
+      return 0;
     });
   }
 
@@ -899,8 +1103,10 @@ function handleKeyDown(e) {
     return;
   }
   if (e.key === "ArrowLeft") {
+    if (detailSubView.value !== "main") return;
     prevGallery();
   } else if (e.key === "ArrowRight") {
+    if (detailSubView.value !== "main") return;
     nextGallery();
   }
 }
@@ -908,6 +1114,7 @@ function handleKeyDown(e) {
 // Gallery Actions
 function openGallery(pub, list = null) {
   selectedPub.value = pub;
+  detailSubView.value = "main";
   if (list && Array.isArray(list)) {
     currentPubList.value = list;
   }
@@ -915,18 +1122,23 @@ function openGallery(pub, list = null) {
   scrollModalToTop();
 }
 
-async function handleRead(pub) {
+async function handleRead(pub, startPage = null) {
   const selectedAtClick = pub;
   const detailedPub = await ensurePublicationDetails(pub);
   if (!detailedPub?.pageCount || !detailOpen.value || selectedPub.value !== selectedAtClick) return;
   detailOpen.value = false;
-  emit("read-gallery", {
+  const payload = {
     gid: detailedPub.gid,
     token: detailedPub.token,
     title: detailedPub.title,
     page_count: detailedPub.pageCount || 0,
     reading_order: detailedPub.readingOrder || [],
-  });
+  };
+  if (typeof startPage === "number" && startPage >= 0) {
+    payload.start_page = startPage;
+    payload.initial_page_index = startPage;
+  }
+  emit("read-gallery", payload);
 }
 
 function handleArchive(pub) {
@@ -960,6 +1172,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
+  sentinelObserver?.disconnect();
+  sentinelObserver = null;
 });
 </script>
 
@@ -1352,44 +1566,15 @@ onUnmounted(() => {
 
     <!-- ================= APPLE BOOKS STYLE GALLERY DETAIL DIALOG ================= -->
     <Dialog v-model:open="detailOpen">
-      <!-- Flanking Prev/Next Navigation Arrows (Floating beside the modal card) -->
-      <div
-        v-if="detailOpen"
-        class="fixed inset-0 pointer-events-none z-50 flex items-center justify-between p-2 sm:p-5"
-      >
-        <Button
-          v-if="hasPrev"
-          variant="ghost"
-          size="icon"
-          class="pointer-events-auto size-10 sm:size-12 rounded-full bg-black/60 hover:bg-black/80 text-white shadow-xl backdrop-blur-md transition-all active:scale-95 border border-white/10"
-          title="上一部画廊 (←)"
-          @click.stop="prevGallery"
-        >
-          <ChevronLeft class="size-6" />
-        </Button>
-        <div v-else class="w-10 sm:w-12 pointer-events-none" />
-
-        <Button
-          v-if="hasNext"
-          variant="ghost"
-          size="icon"
-          class="pointer-events-auto size-10 sm:size-12 rounded-full bg-black/60 hover:bg-black/80 text-white shadow-xl backdrop-blur-md transition-all active:scale-95 border border-white/10"
-          title="下一部画廊 (→)"
-          @click.stop="nextGallery"
-        >
-          <ChevronRight class="size-6" />
-        </Button>
-        <div v-else class="w-10 sm:w-12 pointer-events-none" />
-      </div>
-
       <DialogContent
         :show-close-button="false"
-        class="w-full max-w-[calc(100%-1.5rem)] sm:max-w-3xl md:max-w-4xl max-h-[90vh] p-0 rounded-2xl sm:rounded-3xl border border-border/50 shadow-2xl overflow-hidden bg-background flex flex-col"
+        class="w-full max-w-[calc(100%-1.5rem)] sm:max-w-3xl md:max-w-4xl h-[88vh] max-h-[90vh] p-0 rounded-2xl sm:rounded-3xl border border-border/50 shadow-2xl overflow-hidden bg-background flex flex-col"
+        @escape-key-down="(e) => { if (detailSubView !== 'main') { e.preventDefault(); detailSubView = 'main'; } }"
       >
-        <!-- Modal Scrollable Content Container -->
+        <!-- BASE VIEW: Main Gallery Details (always mounted, preserving scroll position) -->
         <div
           ref="modalScrollRef"
-          class="overflow-y-auto max-h-[90vh] flex flex-col select-text"
+          class="overflow-y-auto flex-1 flex flex-col select-text no-scrollbar"
         >
           <!-- 1. HERO HEADER (Apple Books Dark Slate Banner) -->
           <div
@@ -1502,17 +1687,6 @@ onUnmounted(() => {
                     {{ selectedPub?.title }}
                   </DialogTitle>
 
-                  <!-- Author with Chevron -->
-                  <div
-                    v-if="selectedPub?.authors"
-                    class="inline-flex items-center gap-0.5 text-xs sm:text-sm font-medium text-white/85 hover:text-white transition-colors cursor-pointer"
-                    @click="handleAuthorClick(selectedPub.authors)"
-                    :title="`搜索作者: ${selectedPub.authors}`"
-                  >
-                    <span>{{ selectedPub.authors }}</span>
-                    <ChevronRight class="size-3 opacity-60" />
-                  </div>
-
                   <!-- Rating & Stats Row -->
                   <div class="flex items-center justify-center sm:justify-start gap-2 text-xs text-white/70 pt-0.5">
                     <div class="flex items-center gap-1 font-semibold text-amber-300">
@@ -1609,46 +1783,162 @@ onUnmounted(() => {
             <!-- Section B: Namespace Tag Groups (NO local scrollview, flows naturally) -->
             <div
               v-if="groupedTags.length > 0"
+              :key="selectedPub?.gid + ':' + selectedPub?.token"
               class="space-y-2.5 pt-1"
             >
-              <div class="flex items-center justify-between pb-1 border-b">
-                <span class="text-sm font-bold text-foreground">分类标签</span>
-                <span class="text-[11px] text-muted-foreground">点击标签可快速检索</span>
+              <div class="text-sm font-bold text-foreground">
+                分类标签
               </div>
 
-              <!-- Tags Layout matching user's image: Left red/accent vertical bar, left namespace labels, wrapped tags -->
-              <div class="border-l-2 border-primary/40 pl-3 sm:pl-4 space-y-2">
+              <!-- Tags Layout: left-aligned, no quote mark, no indent -->
+              <TransitionGroup
+                name="tag-group"
+                tag="div"
+                class="space-y-2"
+              >
                 <div
                   v-for="grp in groupedTags"
                   :key="grp.namespace"
-                  class="flex items-start gap-2.5 sm:gap-3 py-0.5"
+                  class="flex items-start gap-2 sm:gap-2.5 py-0.5"
                 >
-                  <!-- Namespace label (right-aligned, monospace/neat, matching screenshot) -->
-                  <div class="w-18 sm:w-22 shrink-0 text-right text-xs font-semibold text-muted-foreground/90 pt-0.5 select-none font-mono">
+                  <!-- Namespace label: flushed with left edge, text-left -->
+                  <div
+                    class="shrink-0 text-left text-xs font-semibold text-muted-foreground/90 pt-0.5 select-none font-mono min-w-12 sm:min-w-14"
+                  >
                     {{ grp.namespace }}:
                   </div>
-                  <!-- Tags container (NO overflow-y-auto, NO max-h) -->
-                  <div class="flex flex-wrap gap-1.5 flex-1 min-w-0">
+
+                  <!-- Tags container with TransitionGroup for silky-smooth tag addition/rearrangement -->
+                  <TransitionGroup
+                    name="tag-pill"
+                    tag="div"
+                    class="flex flex-wrap gap-1.5 flex-1 min-w-0"
+                  >
                     <span
                       v-for="t in grp.tags"
-                      :key="t.rawName"
+                      :key="grp.namespace + ':' + t.rawName"
+                      :style="t.tagStyle"
                       :class="[
                         'text-[11px] sm:text-xs font-normal px-2.5 py-0.5 rounded-md cursor-pointer select-none transition-all duration-150 inline-flex items-center gap-1 active:scale-95',
-                        t.isWeak
-                          ? 'border border-dashed border-primary/40 text-foreground/85 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
-                          : 'border border-solid border-primary/60 text-foreground bg-muted/40 hover:bg-primary hover:text-primary-foreground hover:border-primary',
+                        t.isWeak ? 'border border-dashed' : 'border border-solid',
+                        t.hasCustomStyle
+                          ? 'shadow-2xs hover:brightness-110 hover:shadow-xs'
+                          : t.isWeak
+                            ? 'border-border/70 text-foreground/80 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
+                            : 'border-border text-foreground/90 bg-muted/30 hover:bg-primary hover:text-primary-foreground hover:border-primary',
                       ]"
                       :title="`点击搜索标签: ${t.searchName}`"
                       @click="handleTagClick(t.searchName)"
                     >
                       {{ t.displayName }}
                     </span>
+                  </TransitionGroup>
+                </div>
+              </TransitionGroup>
+            </div>
+
+            <!-- Section C: Thumbnails Preview (页面预览) -->
+            <div
+              v-if="selectedPub?.readingOrder?.length > 0"
+              class="space-y-3 pt-3 border-t"
+            >
+              <div
+                class="flex items-center justify-between cursor-pointer group/sec select-none"
+                @click="detailSubView = 'thumbnails'"
+              >
+                <span class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors">
+                  页面预览
+                  <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
+                </span>
+                <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
+                  共 {{ selectedPub.pageCount || selectedPub.readingOrder.length }} 页 · 查看全部
+                </span>
+              </div>
+
+              <!-- Horizontal Thumbnails Track -->
+              <div class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none">
+                <div
+                  v-for="(page, idx) in previewPages"
+                  :key="page.href || idx"
+                  class="group/thumb relative w-24 sm:w-28 shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                  @click="handleRead(selectedPub, idx)"
+                >
+                  <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm group-hover/thumb:shadow-md group-hover/thumb:border-primary/50 transition-all">
+                    <CoverImage :src="page.thumbnailHref || page.href" :alt="`第 ${idx + 1} 页`" />
+                    <!-- Hover overlay with read icon -->
+                    <div class="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/25 transition-colors flex items-center justify-center">
+                      <BookOpen class="size-5 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity drop-shadow" />
+                    </div>
                   </div>
+                  <p class="text-[10px] text-center text-muted-foreground mt-1 group-hover/thumb:text-foreground transition-colors">
+                    第 {{ idx + 1 }} 页
+                  </p>
+                </div>
+
+                <!-- Trailing "See all" card if more pages exist -->
+                <div
+                  v-if="selectedPub.readingOrder.length > previewPages.length"
+                  class="group/more relative w-24 sm:w-28 shrink-0 cursor-pointer flex flex-col items-center justify-center aspect-[1/1.414] rounded-lg border border-dashed border-border/80 hover:border-primary/60 bg-muted/20 hover:bg-muted/40 transition-all text-center"
+                  @click="detailSubView = 'thumbnails'"
+                >
+                  <Grid class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1" />
+                  <span class="text-[11px] font-medium text-muted-foreground group-hover/more:text-foreground">全部页面</span>
+                  <span class="text-[9px] text-muted-foreground/70 mt-0.5">{{ selectedPub.readingOrder.length }} 页</span>
                 </div>
               </div>
             </div>
 
-            <!-- Section C: More in this list / Series (このシリーズの他のブック) -->
+            <!-- Section D: Reviews Preview (Apple Books style) -->
+            <div
+              v-if="selectedPub?.reviews?.length > 0"
+              class="space-y-3 pt-3 border-t"
+            >
+              <div
+                class="flex items-center justify-between cursor-pointer group/sec select-none"
+                @click="detailSubView = 'reviews'"
+              >
+                <span class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors">
+                  用户评价
+                  <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
+                </span>
+                <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
+                  共 {{ selectedPub.reviews.length }} 条 · 查看全部
+                </span>
+              </div>
+
+              <!-- Horizontal Review Cards Track -->
+              <div class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none">
+                <div
+                  v-for="rev in previewReviews"
+                  :key="rev.id || rev.time + rev.username"
+                  class="group/rev relative w-72 sm:w-80 shrink-0 p-3.5 sm:p-4 rounded-xl border bg-muted/40 dark:bg-muted/20 hover:bg-muted/60 dark:hover:bg-muted/30 cursor-pointer transition-all duration-200 flex flex-col justify-between space-y-3"
+                  @click="detailSubView = 'reviews'"
+                >
+                  <p class="text-xs sm:text-[13px] text-foreground/90 line-clamp-3 leading-relaxed break-words font-normal">
+                    {{ stripHtmlToSnippet(rev.content) }}
+                  </p>
+                  <div class="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/30">
+                    <span class="font-medium text-foreground/80 truncate max-w-[150px] group-hover/rev:text-primary transition-colors">
+                      {{ rev.username }}
+                    </span>
+                    <span class="font-mono text-[10px]">{{ rev.time ? rev.time.slice(0, 10) : '' }}</span>
+                  </div>
+                </div>
+
+                <!-- Trailing "See all" card if more reviews exist -->
+                <div
+                  v-if="selectedPub.reviews.length > previewReviews.length"
+                  class="group/more relative w-32 sm:w-36 shrink-0 cursor-pointer flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-border/80 hover:border-primary/60 bg-muted/20 hover:bg-muted/40 transition-all text-center"
+                  @click="detailSubView = 'reviews'"
+                >
+                  <MessageSquare class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1.5" />
+                  <span class="text-xs font-medium text-muted-foreground group-hover/more:text-foreground">全部评价</span>
+                  <span class="text-[10px] text-muted-foreground/70 mt-0.5">{{ selectedPub.reviews.length }} 条</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section E: More in this list / Series (当前列表的其他作品) -->
             <div v-if="relatedPublications.length > 0" class="space-y-3 pt-3 border-t">
               <div class="flex items-center justify-between">
                 <span class="text-sm font-bold text-foreground inline-flex items-center gap-1">
@@ -1680,6 +1970,217 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+
+        <!-- OVERLAY SUBVIEW: Thumbnails or Reviews (Cover from right to left) -->
+        <Transition name="slide-cover">
+          <!-- ================= VIEW 2: THUMBNAILS FULL GRID ================= -->
+          <div
+            v-if="detailSubView === 'thumbnails'"
+            key="thumbnails"
+            class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto no-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
+          >
+            <!-- Sticky Subview Header -->
+            <div class="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b px-5 sm:px-7 py-3 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="gap-1 text-xs -ml-2 text-foreground/80 hover:text-foreground"
+                  @click="detailSubView = 'main'"
+                >
+                  <ChevronLeft class="size-4" />
+                  <span>返回详情</span>
+                </Button>
+                <div class="h-4 w-px bg-border" />
+                <span class="text-sm font-bold text-foreground">
+                  页面预览
+                </span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-xs text-muted-foreground hidden sm:inline">
+                  共 {{ selectedPub?.readingOrder?.length || 0 }} 页 · 点击跳转阅读
+                </span>
+                <!-- Quick Page Jump (if more than 48 pages) -->
+                <div
+                  v-if="(selectedPub?.readingOrder?.length || 0) > 48"
+                  class="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/40 border rounded-lg px-2 py-0.5"
+                >
+                  <span class="text-[11px] select-none">跳至</span>
+                  <input
+                    v-model.number="pageJumpInput"
+                    type="number"
+                    min="1"
+                    :max="selectedPub?.readingOrder?.length || 1"
+                    class="w-12 h-6 text-xs text-center border rounded bg-background text-foreground px-1 outline-none font-mono focus:border-primary"
+                    placeholder="页码"
+                    @keydown.enter.prevent="handleQuickJump"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-6 text-[11px] px-1.5 text-muted-foreground hover:text-foreground"
+                    @click="handleQuickJump"
+                  >
+                    跳转
+                  </Button>
+                </div>
+                <DialogClose as-child>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="size-8 rounded-full text-muted-foreground hover:text-foreground"
+                    title="关闭 (Esc)"
+                  >
+                    <X class="size-4" />
+                  </Button>
+                </DialogClose>
+              </div>
+            </div>
+
+            <!-- Mobile Hint -->
+            <div class="sm:hidden px-5 pt-3 text-xs text-muted-foreground">
+              共 {{ selectedPub?.readingOrder?.length || 0 }} 页 · 点击任意缩略图跳转阅读
+            </div>
+
+            <!-- Thumbnails Grid -->
+            <div class="p-5 sm:p-7 flex-1">
+              <div
+                v-if="!selectedPub?.readingOrder || selectedPub.readingOrder.length === 0"
+                class="py-16 text-center text-muted-foreground text-sm"
+              >
+                暂无页面缩略图
+              </div>
+              <div
+                v-else
+                class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 sm:gap-4.5"
+              >
+                <div
+                  v-for="(page, idx) in displayedThumbnails"
+                  :id="`thumb-page-${idx + 1}`"
+                  :key="page.href || idx"
+                  class="group/gridpage cursor-pointer flex flex-col items-center select-none"
+                  @click="handleRead(selectedPub, idx)"
+                >
+                  <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-xl border bg-muted shadow-xs group-hover/gridpage:shadow-md group-hover/gridpage:border-primary transition-all active:scale-95">
+                    <CoverImage :src="page.thumbnailHref || page.href" :alt="`第 ${idx + 1} 页`" />
+                    <!-- Hover overlay with read icon -->
+                    <div class="absolute inset-0 bg-black/35 opacity-0 group-hover/gridpage:opacity-100 flex items-center justify-center transition-opacity">
+                      <BookOpen class="size-7 text-white drop-shadow-md" />
+                    </div>
+                  </div>
+                  <span class="text-xs text-muted-foreground mt-1.5 group-hover/gridpage:text-foreground group-hover/gridpage:font-medium transition-colors">
+                    第 {{ idx + 1 }} 页
+                  </span>
+                </div>
+
+                <!-- Progressive loading sentinel for thumbnails -->
+                <div
+                  v-if="thumbnailRenderLimit < (selectedPub?.readingOrder?.length || 0)"
+                  ref="thumbnailSentinelRef"
+                  class="col-span-full py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2"
+                >
+                  <RefreshCw class="size-3.5 animate-spin opacity-60" />
+                  <span>正在载入后续页面... (已显示 {{ displayedThumbnails.length }} / {{ selectedPub?.readingOrder?.length }} 页)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ================= VIEW 3: FULL REVIEWS LIST ================= -->
+          <div
+            v-else-if="detailSubView === 'reviews'"
+            key="reviews"
+            class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto no-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
+          >
+            <!-- Sticky Subview Header -->
+            <div class="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b px-5 sm:px-7 py-3 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="gap-1 text-xs -ml-2 text-foreground/80 hover:text-foreground"
+                  @click="detailSubView = 'main'"
+                >
+                  <ChevronLeft class="size-4" />
+                  <span>返回详情</span>
+                </Button>
+                <div class="h-4 w-px bg-border" />
+                <span class="text-sm font-bold text-foreground">
+                  用户评价
+                </span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-xs text-muted-foreground hidden sm:inline">
+                  共 {{ selectedPub?.reviews?.length || 0 }} 条评价
+                </span>
+                <DialogClose as-child>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="size-8 rounded-full text-muted-foreground hover:text-foreground"
+                    title="关闭 (Esc)"
+                  >
+                    <X class="size-4" />
+                  </Button>
+                </DialogClose>
+              </div>
+            </div>
+
+            <!-- Reviews List -->
+            <div class="p-5 sm:p-7 space-y-4 flex-1">
+              <div
+                v-if="!selectedPub?.reviews || selectedPub.reviews.length === 0"
+                class="py-16 text-center text-muted-foreground text-sm space-y-2"
+              >
+                <MessageSquare class="size-8 mx-auto opacity-40" />
+                <p>暂无用户评价</p>
+              </div>
+
+              <div
+                v-for="rev in displayedReviews"
+                :key="rev.id || rev.time + rev.username"
+                class="p-4 sm:p-5 rounded-2xl border bg-card/60 space-y-3 shadow-xs hover:border-border transition-colors select-text"
+              >
+                <!-- Reviewer & Time Info -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <div class="size-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs select-none">
+                      {{ (rev.username || "?").charAt(0).toUpperCase() }}
+                    </div>
+                    <div>
+                      <span class="text-xs sm:text-sm font-semibold text-foreground">
+                        {{ rev.username }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="text-right text-[11px] text-muted-foreground font-mono">
+                    <div>{{ rev.time }}</div>
+                    <div v-if="rev.lastEditTime" class="text-[10px] text-muted-foreground/70">
+                      编辑于 {{ rev.lastEditTime }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Review Content HTML with lazy images & safe links -->
+                <div
+                  class="text-xs sm:text-[13px] text-foreground/90 break-words leading-relaxed review-html-content"
+                  v-html="formatReviewHtml(rev.content)"
+                />
+              </div>
+
+              <!-- Progressive loading sentinel for reviews -->
+              <div
+                v-if="reviewRenderLimit < (selectedPub?.reviews?.length || 0)"
+                ref="reviewSentinelRef"
+                class="py-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-2 cursor-pointer hover:text-foreground"
+                @click="reviewRenderLimit += 20"
+              >
+                <RefreshCw class="size-3.5 animate-spin opacity-60" />
+                <span>正在加载更多评价... (已显示 {{ displayedReviews.length }} / {{ selectedPub?.reviews?.length }} 条)</span>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </DialogContent>
     </Dialog>
 
@@ -1731,5 +2232,25 @@ onUnmounted(() => {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.review-html-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+  display: inline-block;
+  margin: 0.35rem 0;
+}
+.review-html-content :deep(a) {
+  color: var(--color-primary, #3b82f6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.review-html-content :deep(blockquote) {
+  border-left: 2px solid var(--color-border, #e5e7eb);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  color: var(--color-muted-foreground, #6b7280);
+  font-style: italic;
 }
 </style>

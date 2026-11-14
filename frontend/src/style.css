@@ -1503,3 +1503,140 @@
     max-width: 100%;
   }
 }
+
+/* ==========================================================================
+   Dialog & Modal Smooth Transitions (Apple Style Fade & Scale)
+   ========================================================================== */
+
+@keyframes dialog-fade-in {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes dialog-fade-out {
+  from {
+    opacity: 1;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+[data-slot="dialog-content"][data-state="open"] {
+  animation: dialog-fade-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+[data-slot="dialog-content"][data-state="closed"] {
+  animation: dialog-fade-out 0.15s ease-in forwards;
+}
+
+[data-slot="dialog-overlay"][data-state="open"] {
+  animation: overlay-fade-in 0.2s ease-out forwards;
+}
+
+[data-slot="dialog-overlay"][data-state="closed"] {
+  animation: overlay-fade-out 0.15s ease-in forwards;
+}
+
+/* ==========================================================================
+   Smooth Tag Transitions (Manifest Dynamic Replacement Animation)
+   ========================================================================== */
+
+.tag-group-move,
+.tag-group-enter-active {
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tag-group-leave-active {
+  transition: all 0.2s ease-in;
+  position: absolute;
+}
+
+.tag-group-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.tag-group-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.tag-pill-move,
+.tag-pill-enter-active {
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tag-pill-leave-active {
+  transition: all 0.2s ease-in;
+  position: absolute;
+}
+
+.tag-pill-enter-from {
+  opacity: 0;
+  transform: scale(0.85) translateY(4px);
+}
+
+.tag-pill-leave-to {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+/* ==========================================================================
+   Dialog Subview Slide-Cover Transitions (iOS Push Style: Right to Left)
+   ========================================================================== */
+
+.slide-cover-enter-active,
+.slide-cover-leave-active {
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s ease;
+  will-change: transform;
+}
+
+.slide-cover-enter-from,
+.slide-cover-leave-to {
+  transform: translateX(100%);
+  box-shadow: none;
+}
+
+.slide-cover-enter-to,
+.slide-cover-leave-from {
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-cover-enter-active,
+  .slide-cover-leave-active {
+    transition: opacity 0.15s ease;
+  }
+  .slide-cover-enter-from,
+  .slide-cover-leave-to {
+    opacity: 0;
+    transform: none;
+  }
+}

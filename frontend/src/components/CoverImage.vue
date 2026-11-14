@@ -1,3 +1,31 @@
+<script>
+// Module-level shared IntersectionObserver for all CoverImage instances
+let sharedObserver = null;
+const observerCallbacks = new Map();
+
+function getSharedObserver() {
+  if (typeof IntersectionObserver === "undefined") return null;
+  if (!sharedObserver) {
+    sharedObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const cb = observerCallbacks.get(entry.target);
+            if (cb) {
+              observerCallbacks.delete(entry.target);
+              sharedObserver?.unobserve(entry.target);
+              cb();
+            }
+          }
+        }
+      },
+      { rootMargin: "250px" },
+    );
+  }
+  return sharedObserver;
+}
+</script>
+
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from "vue";
 import { useApp } from "@/state.js";
@@ -13,7 +41,6 @@ const initial = s.peekCoverUrl(props.src);
 const visible = ref(Boolean(initial) || typeof IntersectionObserver === "undefined");
 const resolvedSrc = ref(initial);
 const failed = ref(false);
-let observer = null;
 let loadSeq = 0;
 
 async function load() {
@@ -40,26 +67,27 @@ async function load() {
 
 onMounted(() => {
   if (!visible.value && rootEl.value) {
-    observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          visible.value = true;
-          observer?.disconnect();
-          observer = null;
-          load();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(rootEl.value);
+    const obs = getSharedObserver();
+    if (obs) {
+      observerCallbacks.set(rootEl.value, () => {
+        visible.value = true;
+        load();
+      });
+      obs.observe(rootEl.value);
+    } else {
+      visible.value = true;
+      load();
+    }
   } else if (!resolvedSrc.value) {
     load();
   }
 });
 
 onBeforeUnmount(() => {
-  observer?.disconnect();
-  observer = null;
+  if (rootEl.value) {
+    observerCallbacks.delete(rootEl.value);
+    sharedObserver?.unobserve(rootEl.value);
+  }
 });
 
 watch([() => props.src, () => s.authToken.value], () => {
@@ -67,8 +95,10 @@ watch([() => props.src, () => s.authToken.value], () => {
   if (cached) {
     resolvedSrc.value = cached;
     failed.value = false;
-    observer?.disconnect();
-    observer = null;
+    if (rootEl.value) {
+      observerCallbacks.delete(rootEl.value);
+      sharedObserver?.unobserve(rootEl.value);
+    }
     visible.value = true;
     return;
   }
