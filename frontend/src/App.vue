@@ -55,6 +55,7 @@ import {
 import AppSidebarNav from "@/components/AppSidebarNav.vue";
 import ArchiveReader from "@/components/ArchiveReader.vue";
 import CoverImage from "@/components/CoverImage.vue";
+import HomeEditor from "@/components/HomeEditor.vue";
 import LoginForm from "@/components/LoginForm.vue";
 import OpdsHome from "@/components/OpdsHome.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
@@ -712,11 +713,13 @@ function cardActionLabel(a) {
                   {{
                     s.page.value === "dashboard"
                       ? "概览"
-                      : s.page.value === "explore"
-                        ? "探索"
-                        : s.page.value === "config"
-                          ? "设置"
-                          : "归档"
+                      : s.page.value === "home"
+                        ? "编排"
+                        : s.page.value === "explore"
+                          ? "探索"
+                          : s.page.value === "config"
+                            ? "设置"
+                            : "归档"
                   }}
                 </BreadcrumbPage>
               </BreadcrumbItem>
@@ -1160,6 +1163,9 @@ function cardActionLabel(a) {
               </CardContent>
             </Card>
           </div>
+        </template>
+        <template v-if="s.page.value === 'home'">
+          <HomeEditor />
         </template>
         <template v-if="s.page.value === 'explore'">
           <OpdsHome

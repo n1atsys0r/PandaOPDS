@@ -5,13 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -20,14 +13,12 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import CoverImage from "@/components/CoverImage.vue";
-import HomeEditor from "@/components/HomeEditor.vue";
 import {
   CompassIcon as Compass,
   ChevronLeftIcon as ChevronLeft,
   ChevronRightIcon as ChevronRight,
   ChevronUpIcon as ChevronUp,
   RefreshCwIcon as RefreshCw,
-  PanelsTopLeftIcon as PanelsTopLeft,
   BookOpenIcon as BookOpen,
   BookmarkIcon as Bookmark,
   DownloadIcon as Download,
@@ -43,8 +34,6 @@ import {
   HeartIcon as Heart,
   SparklesIcon as Sparkles,
   TagIcon as Tag,
-  Maximize2Icon as Maximize2,
-  Minimize2Icon as Minimize2,
   XIcon as X,
   Loader2Icon as Loader2,
   MessageSquareIcon as MessageSquare,
@@ -186,10 +175,6 @@ let routeFeedHref = window.location.href;
 const detailOpen = ref(false);
 const selectedPub = ref(null);
 const detailSubView = ref("main"); // "main" | "reviews" | "thumbnails"
-
-// Home Editor drawer
-const editorOpen = ref(false);
-const editorExpanded = ref(false);
 
 // Local archive lookup
 const archivesMap = computed(() => {
@@ -1501,14 +1486,6 @@ watch(
   },
 );
 
-watch(editorOpen, (open, oldOpen) => {
-  if (open) {
-    s.loadHome();
-  } else if (oldOpen) {
-    loadCatalog();
-  }
-});
-
 onMounted(() => {
   s.loadArchives();
   loadCatalog();
@@ -1590,16 +1567,6 @@ onUnmounted(() => {
               :class="['size-3.5', (loading || routeLoading) && 'animate-spin']"
             />
             <span class="hidden sm:inline">刷新</span>
-          </Button>
-          <Button
-            v-if="!activeRoute"
-            variant="secondary"
-            size="sm"
-            class="h-8 gap-1.5"
-            @click="editorOpen = true"
-          >
-            <PanelsTopLeft class="size-3.5" />
-            <span class="hidden sm:inline">编排主页</span>
           </Button>
         </div>
       </div>
@@ -2570,44 +2537,6 @@ onUnmounted(() => {
         </Transition>
       </DialogContent>
     </Dialog>
-
-    <!-- ================= WYSIWYG HOME EDITOR DRAWER ================= -->
-    <Sheet v-model:open="editorOpen">
-      <SheetContent
-        side="right"
-        :class="[
-          'overflow-y-auto space-y-4 p-6 transition-all duration-300',
-          editorExpanded
-            ? 'w-full sm:max-w-[95vw]'
-            : 'w-full sm:max-w-[750px]',
-        ]"
-      >
-        <SheetHeader class="text-left border-b pb-3 pr-10">
-          <div class="flex items-center justify-between">
-            <div>
-              <SheetTitle class="text-lg font-bold">首页编排 (Home.toml)</SheetTitle>
-              <SheetDescription class="text-xs">
-                修改保存后，主页将所见即所得地自动刷新展示效果。
-              </SheetDescription>
-            </div>
-            <div class="flex items-center gap-2 mr-6">
-              <Button
-                variant="outline"
-                size="sm"
-                class="h-8 gap-1.5 text-xs"
-                @click="editorExpanded = !editorExpanded"
-              >
-                <component :is="editorExpanded ? Minimize2 : Maximize2" class="size-3.5" />
-                <span>{{ editorExpanded ? "标准宽度" : "宽屏模式" }}</span>
-              </Button>
-            </div>
-          </div>
-        </SheetHeader>
-        <div class="pt-2">
-          <HomeEditor />
-        </div>
-      </SheetContent>
-    </Sheet>
 
     <!-- Floating Back to Top Button -->
     <Transition

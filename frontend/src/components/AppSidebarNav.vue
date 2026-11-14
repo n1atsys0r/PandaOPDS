@@ -2,6 +2,7 @@
 import {
   Package2Icon as Package2,
   LayoutDashboardIcon as LayoutDashboard,
+  PanelsTopLeftIcon as PanelsTopLeft,
   CompassIcon as Compass,
   SettingsIcon as Settings,
 } from "@lucide/vue";
@@ -9,7 +10,6 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -28,8 +28,8 @@ function navigate(page) {
 
 <template>
   <SidebarContent>
+    <!-- 主导航功能区 -->
     <SidebarGroup>
-      <SidebarGroupLabel>运行</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -39,6 +39,15 @@ function navigate(page) {
               @click="navigate('dashboard')"
             >
               <LayoutDashboard /><span class="group-data-[collapsible=icon]:hidden">概览</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              :is-active="props.page === 'home'"
+              tooltip="编排"
+              @click="navigate('home')"
+            >
+              <PanelsTopLeft /><span class="group-data-[collapsible=icon]:hidden">编排</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -62,8 +71,9 @@ function navigate(page) {
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
-    <SidebarGroup>
-      <SidebarGroupLabel>配置</SidebarGroupLabel>
+
+    <!-- 置底工具区 -->
+    <SidebarGroup class="mt-auto">
       <SidebarGroupContent>
         <SidebarMenu>
           <SidebarMenuItem>

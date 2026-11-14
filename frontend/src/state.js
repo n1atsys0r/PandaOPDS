@@ -705,7 +705,7 @@ function onPopState(e) {
         ? window.location.hash.replace(/^#\/?/, "")
         : "";
     const rootPage = rawHash.split("/")[0] || "dashboard";
-    if (["dashboard", "explore", "archive", "config"].includes(rootPage)) {
+    if (["dashboard", "explore", "archive", "config", "home"].includes(rootPage)) {
       state.page = rootPage;
     }
     state.exploreSubRoute = null;
@@ -718,7 +718,6 @@ function onPopState(e) {
 }
 
 function route(v, pushHistory = true) {
-  if (v === "home") v = "explore";
   state.page = v;
   state.mobile = false;
   state.error = "";
@@ -730,6 +729,9 @@ function route(v, pushHistory = true) {
     loadHome();
     loadArchives();
     loadCategories();
+  }
+  if (v === "home") {
+    loadHome();
   }
   if (v === "config") loadConfig();
   if (v === "archive") {
@@ -801,7 +803,7 @@ function init() {
     const rawHash = window.location.hash.replace(/^#\/?/, "");
     const parts = rawHash.split("/");
     const rootPage = parts[0];
-    if (["dashboard", "explore", "archive", "config"].includes(rootPage)) {
+    if (["dashboard", "explore", "archive", "config", "home"].includes(rootPage)) {
       route(rootPage, false);
       if (rootPage === "explore" && window.history.state?.subRoute) {
         state.exploreSubRoute = window.history.state.subRoute;
