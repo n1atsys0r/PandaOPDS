@@ -11,7 +11,7 @@ defineOptions({ inheritAttrs: false });
 const props = defineProps({
   side: { type: String, required: false, default: "left" },
   variant: { type: String, required: false, default: "sidebar" },
-  collapsible: { type: String, required: false, default: "offcanvas" },
+  collapsible: { type: String, required: false, default: "icon" },
   class: {
     type: [Boolean, null, String, Object, Array],
     required: false,

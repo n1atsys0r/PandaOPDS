@@ -35,25 +35,28 @@ function navigate(page) {
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'dashboard'"
+              tooltip="概览"
               @click="navigate('dashboard')"
             >
-              <LayoutDashboard /><span>概览</span>
+              <LayoutDashboard /><span class="group-data-[collapsible=icon]:hidden">概览</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'explore'"
+              tooltip="主页"
               @click="navigate('explore')"
             >
-              <Compass /><span>主页</span>
+              <Compass /><span class="group-data-[collapsible=icon]:hidden">主页</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'archive'"
+              tooltip="归档"
               @click="navigate('archive')"
             >
-              <Package2 /><span>归档</span>
+              <Package2 /><span class="group-data-[collapsible=icon]:hidden">归档</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -66,9 +69,10 @@ function navigate(page) {
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'config'"
+              tooltip="设置"
               @click="navigate('config')"
             >
-              <Settings /><span>设置</span>
+              <Settings /><span class="group-data-[collapsible=icon]:hidden">设置</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

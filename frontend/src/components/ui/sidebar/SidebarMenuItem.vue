@@ -14,7 +14,7 @@ const props = defineProps({
   <li
     data-slot="sidebar-menu-item"
     data-sidebar="menu-item"
-    :class="cn('group/menu-item relative', props.class)"
+    :class="cn('group/menu-item relative group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center', props.class)"
   >
     <slot />
   </li>

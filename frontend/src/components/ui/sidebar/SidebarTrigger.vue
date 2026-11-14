@@ -1,7 +1,7 @@
 <script setup>
-import { PanelLeftIcon } from "@lucide/vue";
+import { MenuIcon, PanelLeftIcon } from "@lucide/vue";
 import { cn } from "cn";
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import { useSidebar } from "./utils";
 
 const props = defineProps({
@@ -24,7 +24,10 @@ const { toggleSidebar } = useSidebar();
     :class="cn('', props.class)"
     @click="toggleSidebar"
   >
-    <PanelLeftIcon class="cn-rtl-flip" />
-    <span class="sr-only">Toggle Sidebar</span>
+    <slot>
+      <MenuIcon class="md:hidden" />
+      <PanelLeftIcon class="hidden md:block cn-rtl-flip" />
+      <span class="sr-only">Toggle Sidebar</span>
+    </slot>
   </Button>
 </template>

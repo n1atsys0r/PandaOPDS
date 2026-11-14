@@ -40,6 +40,11 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Breadcrumb,
   BreadcrumbList,
   BreadcrumbItem,
@@ -618,27 +623,55 @@ function cardActionLabel(a) {
     </div>
   </div>
   <SidebarProvider v-else class="app-layout" style="--sidebar-width: 17.5rem">
-    <Sidebar collapsible="offcanvas" variant="inset">
-      <SidebarHeader class="brand-header px-5 py-4">
-        <span
-          class="font-bold text-base tracking-tight text-foreground select-none"
+    <Sidebar collapsible="icon" variant="inset">
+      <SidebarHeader
+        class="brand-header px-4 py-4 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:items-center"
+      >
+        <div
+          class="flex items-center gap-2.5 overflow-hidden group-data-[collapsible=icon]:justify-center"
         >
-          PandaOPDS
-        </span>
+          <div
+            class="size-8 shrink-0 rounded-lg bg-foreground text-background flex items-center justify-center font-bold text-sm shadow-xs select-none"
+            title="PandaOPDS"
+          >
+            P
+          </div>
+          <span
+            class="font-bold text-base tracking-tight text-foreground select-none truncate group-data-[collapsible=icon]:hidden"
+          >
+            PandaOPDS
+          </span>
+        </div>
       </SidebarHeader>
       <AppSidebarNav :page="s.page.value" @navigate="s.route" />
       <SidebarFooter
         v-if="s.authToken.value || s.status.value?.app?.auth_enabled"
-        class="sidebar-footer border-t border-sidebar-border/60 p-3"
+        class="sidebar-footer border-t border-sidebar-border/60 p-3 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:items-center"
       >
         <Button
           variant="ghost"
           size="xs"
-          class="w-full justify-start text-xs text-muted-foreground hover:text-foreground h-7 px-2 gap-1.5"
+          class="w-full justify-start text-xs text-muted-foreground hover:text-foreground h-7 px-2 gap-1.5 group-data-[collapsible=icon]:hidden"
           @click="s.logout"
         >
           <LogOut class="size-3.5" />退出登录
         </Button>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="hidden group-data-[collapsible=icon]:inline-flex text-muted-foreground hover:text-foreground size-8"
+              @click="s.logout"
+            >
+              <LogOut class="size-3.5" />
+              <span class="sr-only">退出登录</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            退出登录
+          </TooltipContent>
+        </Tooltip>
       </SidebarFooter>
     </Sidebar>
     <SidebarInset class="webui-inset">
@@ -646,7 +679,7 @@ function cardActionLabel(a) {
         <SidebarTrigger aria-label="切换导航菜单" class="-ml-1" />
         <Separator
           orientation="vertical"
-          class="mr-2 h-4 my-auto self-center shrink-0"
+          class="header-separator mr-2 h-4 my-auto self-center shrink-0"
         />
         <Breadcrumb>
           <BreadcrumbList>

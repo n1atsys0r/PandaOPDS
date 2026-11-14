@@ -33,6 +33,7 @@ import {
   TrophyIcon as Trophy,
   HeartIcon as Heart,
   SparklesIcon as Sparkles,
+  TagIcon as Tag,
   Maximize2Icon as Maximize2,
   Minimize2Icon as Minimize2,
   XIcon as X,
@@ -103,6 +104,151 @@ const archivesMap = computed(() => {
   return map;
 });
 
+const LANGUAGE_DISPLAY_NAMES = {
+  // Japanese
+  japanese: "日本语",
+  ja: "日本语",
+  "日文": "日本语",
+  "日语": "日本语",
+  "日本語": "日本语",
+  "日本语": "日本语",
+
+  // English
+  english: "English",
+  en: "English",
+  "英文": "English",
+  "英语": "English",
+
+  // Chinese
+  chinese: "中文",
+  zh: "中文",
+  "中文": "中文",
+  "汉语": "中文",
+  "國語": "中文",
+  "国语": "中文",
+
+  // Korean
+  korean: "韩语",
+  ko: "韩语",
+  "韩文": "韩语",
+  "韩语": "韩语",
+  "한국어": "韩语",
+
+  // European languages
+  spanish: "Español",
+  es: "Español",
+  "西班牙语": "Español",
+
+  french: "Français",
+  fr: "Français",
+  "法语": "Français",
+
+  german: "Deutsch",
+  de: "Deutsch",
+  "德语": "Deutsch",
+
+  russian: "Русский",
+  ru: "Русский",
+  "俄语": "Русский",
+
+  italian: "Italiano",
+  it: "Italiano",
+  "意大利语": "Italiano",
+
+  portuguese: "Português",
+  pt: "Português",
+  "葡萄牙语": "Português",
+  "pt-br": "Português",
+  brazilian: "Português",
+
+  // Other languages
+  thai: "ไทย",
+  th: "ไทย",
+  "泰语": "ไทย",
+
+  vietnamese: "Tiếng Việt",
+  vi: "Tiếng Việt",
+  "越南语": "Tiếng Việt",
+
+  indonesian: "Indonesia",
+  id: "Indonesia",
+  "印尼语": "Indonesia",
+
+  polish: "Polski",
+  pl: "Polski",
+  "波兰语": "Polski",
+
+  dutch: "Nederlands",
+  nl: "Nederlands",
+  "荷兰语": "Nederlands",
+
+  swedish: "Svenska",
+  sv: "Svenska",
+  "瑞典语": "Svenska",
+
+  turkish: "Türkçe",
+  tr: "Türkçe",
+  "土耳其语": "Türkçe",
+
+  ukrainian: "Українська",
+  uk: "Українська",
+  "乌克兰语": "Українська",
+};
+
+function extractLanguage(meta) {
+  if (!meta) return "";
+
+  // 1. Check meta.subject tags first (e.g. "language:japanese", "语言:日文")
+  const subjects = Array.isArray(meta.subject) ? meta.subject : [];
+  for (const s of subjects) {
+    if (!s || !s.name) continue;
+    const raw = String(s.name).trim();
+    const colonIdx = raw.indexOf(":");
+    if (colonIdx === -1) continue;
+
+    const ns = raw.slice(0, colonIdx).trim().toLowerCase();
+    const key = raw.slice(colonIdx + 1).trim();
+    const keyLower = key.toLowerCase();
+
+    if (ns === "language" || ns === "语言" || ns === "lang") {
+      // Skip auxiliary tags like "translated", "rewrite", "翻译", "改图"
+      if (
+        keyLower === "translated" ||
+        keyLower === "rewrite" ||
+        keyLower === "翻译" ||
+        keyLower === "改图"
+      ) {
+        continue;
+      }
+
+      if (LANGUAGE_DISPLAY_NAMES[keyLower]) {
+        return LANGUAGE_DISPLAY_NAMES[keyLower];
+      }
+      if (LANGUAGE_DISPLAY_NAMES[key]) {
+        return LANGUAGE_DISPLAY_NAMES[key];
+      }
+      return key.charAt(0).toUpperCase() + key.slice(1);
+    }
+  }
+
+  // 2. Fallback to meta.language if subject had no language tag
+  let langCode = "";
+  if (Array.isArray(meta.language) && meta.language.length > 0) {
+    langCode = String(meta.language[0]).trim().toLowerCase();
+  } else if (typeof meta.language === "string" && meta.language.trim()) {
+    langCode = meta.language.trim().toLowerCase();
+  }
+
+  if (langCode) {
+    if (LANGUAGE_DISPLAY_NAMES[langCode]) {
+      return LANGUAGE_DISPLAY_NAMES[langCode];
+    }
+    return langCode.toUpperCase();
+  }
+
+  return "";
+}
+
 function normalizePublication(pub) {
   if (!pub) return null;
   const meta = pub.metadata || {};
@@ -172,6 +318,8 @@ function normalizePublication(pub) {
     ? meta.authors.map((a) => a.name).join(", ")
     : meta.author || "";
 
+  const language = extractLanguage(meta);
+
   return {
     gid,
     token,
@@ -182,6 +330,7 @@ function normalizePublication(pub) {
     pageCount: Number(meta.numberOfPages || meta["x:page_count"] || 0),
     uploader: meta["x:uploader"] || "",
     publishTime: meta.published || "",
+    language,
     coverUrl,
     streamHref,
     upstreamUrl,
@@ -197,12 +346,18 @@ const navigationItems = computed(() => {
   if (!catalog.value || !Array.isArray(catalog.value.navigation)) return [];
   return catalog.value.navigation.map((nav) => {
     let icon = Compass;
+    const hrefLower = (nav.href || "").toLowerCase();
     const titleLower = (nav.title || "").toLowerCase();
-    if (titleLower.includes("watch")) icon = Eye;
-    else if (titleLower.includes("fav")) icon = Heart;
-    else if (titleLower.includes("top") || titleLower.includes("rank")) icon = Trophy;
-    else if (titleLower.includes("arch")) icon = Package2;
-    else if (titleLower.includes("pop")) icon = Sparkles;
+
+    if (hrefLower.includes("watched") || titleLower.includes("watch")) icon = Eye;
+    else if (hrefLower.includes("favorites") || titleLower.includes("fav")) icon = Heart;
+    else if (hrefLower.includes("archives") || titleLower.includes("arch")) icon = Package2;
+    else if (hrefLower.includes("top") || titleLower.includes("rank") || hrefLower.includes("toplist")) icon = Trophy;
+    else if (hrefLower.includes("popular") || titleLower.includes("pop")) icon = Sparkles;
+    else if (hrefLower.includes("query=") || hrefLower.includes("search")) icon = Search;
+    else if (hrefLower.includes("tag=") || titleLower.includes("tag") || titleLower.includes(":")) icon = Tag;
+    else if (titleLower.includes("category") || titleLower.includes("分类")) icon = Layers;
+
     return {
       title: nav.title,
       href: nav.href,
@@ -494,8 +649,12 @@ onMounted(() => {
 
     <!-- Loading Skeleton -->
     <div v-if="loading && !catalog" class="space-y-6 animate-pulse">
-      <div class="flex gap-2">
-        <div v-for="i in 5" :key="i" class="h-8 w-20 bg-muted rounded-lg" />
+      <div class="flex flex-wrap gap-2.5 pt-0.5">
+        <div
+          v-for="i in 4"
+          :key="i"
+          class="h-9 w-28 bg-muted/60 rounded-full"
+        />
       </div>
       <div v-for="i in 2" :key="i" class="space-y-3">
         <div class="h-6 w-36 bg-muted rounded" />
@@ -511,24 +670,29 @@ onMounted(() => {
 
     <!-- ================= CATALOG HOME VIEW ================= -->
     <div v-else-if="!activeRoute" class="space-y-8">
-      <!-- 1. Top Navigation Bar (Shadcn Segmented Capsule Dock) -->
+      <!-- 1. Top Navigation Bar (Independent Premium Navigation Capsules) -->
       <nav
         v-if="navigationItems.length"
-        class="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-muted/40 border border-border/50 backdrop-blur-xs shadow-2xs"
+        class="flex flex-wrap items-center gap-2.5 pt-0.5"
         aria-label="主页导航"
       >
         <button
           v-for="nav in navigationItems"
           :key="nav.href"
           type="button"
-          class="group inline-flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg text-muted-foreground transition-all duration-150 hover:text-foreground hover:bg-background hover:shadow-xs active:scale-[0.98] cursor-pointer"
+          class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
           @click="drillDown(nav)"
         >
           <component
             :is="nav.icon"
-            class="size-3.5 text-muted-foreground/70 transition-colors group-hover:text-foreground"
+            class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
           />
-          <span>{{ nav.title }}</span>
+          <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+            {{ nav.title }}
+          </span>
+          <ChevronRight
+            class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+          />
         </button>
       </nav>
 
@@ -598,9 +762,9 @@ onMounted(() => {
             >
               <CoverImage :src="pub.coverUrl" :alt="pub.title" />
 
-              <!-- Overlay Gradient for readable badges -->
+              <!-- Overlay Gradient (only covering bottom 1/2) -->
               <div
-                class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none"
+                class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
               />
 
               <!-- Top Left: Category Badge -->
@@ -622,19 +786,35 @@ onMounted(() => {
                 </Badge>
               </div>
 
-              <!-- Bottom Info bar (Rating & Pages) -->
+              <!-- Bottom info -->
               <div
                 class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
               >
-                <div class="flex items-center gap-0.5">
+                <div class="flex items-center gap-0.5 shrink-0">
                   <Star class="size-3 fill-amber-400 text-amber-400" />
                   <span>{{ pub.rating.toFixed(1) }}</span>
                 </div>
-                <span v-if="pub.pageCount > 0">{{ pub.pageCount }}P</span>
+                <span
+                  v-if="pub.language || pub.pageCount > 0"
+                  class="truncate ml-1.5 text-right drop-shadow-xs"
+                  :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                >
+                  <template v-if="pub.language && pub.pageCount > 0">
+                    <span>{{ pub.language }}</span>
+                    <span class="mx-1 opacity-70">·</span>
+                    <span class="font-mono">{{ pub.pageCount }}P</span>
+                  </template>
+                  <template v-else-if="pub.pageCount > 0">
+                    <span class="font-mono">{{ pub.pageCount }}P</span>
+                  </template>
+                  <template v-else>
+                    <span>{{ pub.language }}</span>
+                  </template>
+                </span>
               </div>
             </div>
 
-            <!-- Card Title -->
+            <!-- Title -->
             <div
               class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
               :title="pub.title"
@@ -674,8 +854,10 @@ onMounted(() => {
             class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
           >
             <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+
+            <!-- Overlay Gradient (only covering bottom 1/2) -->
             <div
-              class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none"
+              class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
             />
 
             <!-- Category -->
@@ -701,11 +883,27 @@ onMounted(() => {
             <div
               class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
             >
-              <div class="flex items-center gap-0.5">
+              <div class="flex items-center gap-0.5 shrink-0">
                 <Star class="size-3 fill-amber-400 text-amber-400" />
                 <span>{{ pub.rating.toFixed(1) }}</span>
               </div>
-              <span v-if="pub.pageCount > 0">{{ pub.pageCount }}P</span>
+              <span
+                v-if="pub.language || pub.pageCount > 0"
+                class="truncate ml-1.5 text-right drop-shadow-xs"
+                :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+              >
+                <template v-if="pub.language && pub.pageCount > 0">
+                  <span>{{ pub.language }}</span>
+                  <span class="mx-1 opacity-70">·</span>
+                  <span class="font-mono">{{ pub.pageCount }}P</span>
+                </template>
+                <template v-else-if="pub.pageCount > 0">
+                  <span class="font-mono">{{ pub.pageCount }}P</span>
+                </template>
+                <template v-else>
+                  <span>{{ pub.language }}</span>
+                </template>
+              </span>
             </div>
           </div>
 
@@ -794,6 +992,15 @@ onMounted(() => {
               <Star class="size-3.5 fill-amber-400 text-amber-400" />
               <span>{{ selectedPub.rating.toFixed(2) }}</span>
             </div>
+          </div>
+          <div
+            v-if="selectedPub.language"
+            class="flex items-center justify-between py-1 border-b"
+          >
+            <span>语言</span>
+            <span class="font-medium text-foreground">
+              {{ selectedPub.language }}
+            </span>
           </div>
           <div class="flex items-center justify-between py-1 border-b">
             <span>页数</span>
