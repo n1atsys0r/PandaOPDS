@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useApp } from "@/state.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ import {
   CompassIcon as Compass,
   ChevronLeftIcon as ChevronLeft,
   ChevronRightIcon as ChevronRight,
+  ChevronUpIcon as ChevronUp,
   RefreshCwIcon as RefreshCw,
   PanelsTopLeftIcon as PanelsTopLeft,
   BookOpenIcon as BookOpen,
@@ -172,6 +173,12 @@ const routeFeed = ref(null);
 const routeLoading = ref(false);
 const routeError = ref("");
 const routePageStack = ref([]);
+const rawRoutePublications = ref([]);
+const loadingMore = ref(false);
+const loadingMoreError = ref("");
+const gridSentinelRef = ref(null);
+const showBackToTop = ref(false);
+let gridObserver = null;
 let catalogFeedHref = window.location.href;
 let routeFeedHref = window.location.href;
 
@@ -771,16 +778,42 @@ function drillDown(navItem) {
   );
 }
 
+function getPubId(pub) {
+  if (!pub) return "";
+  const meta = pub.metadata || {};
+  let gid = meta["x:gid"] || 0;
+  let token = meta["x:token"] || "";
+
+  if (!gid || !token) {
+    const match = (meta.identifier || "").match(
+      /urn:ehentai:gallery:(\d+):([a-f0-9]+)/i,
+    );
+    if (match) {
+      gid = match[1];
+      token = match[2];
+    }
+  }
+  return gid && token ? `${gid}:${token}` : (meta.identifier || "");
+}
+
 async function loadRouteFeed(url) {
   if (!url) return;
   routeLoading.value = true;
   routeError.value = "";
+  loadingMore.value = false;
+  loadingMoreError.value = "";
+  rawRoutePublications.value = [];
   try {
     const res = await s.api(url, {
       headers: { Accept: "application/opds+json, application/json" },
     });
     routeFeedHref = localApiUrl(url) || url;
     routeFeed.value = res.data;
+    const pubs = Array.isArray(res.data?.publications) ? res.data.publications : [];
+    rawRoutePublications.value = pubs.map((pub) => ({
+      pub,
+      feedHref: routeFeedHref,
+    }));
   } catch (err) {
     routeError.value = err.message || "加载列表失败";
   } finally {
@@ -788,14 +821,104 @@ async function loadRouteFeed(url) {
   }
 }
 
+async function loadNextPage() {
+  if (!nextLink.value || loadingMore.value || routeLoading.value) return;
+  const targetUrl = nextLink.value;
+  loadingMore.value = true;
+  loadingMoreError.value = "";
+  try {
+    const res = await s.api(targetUrl, {
+      headers: { Accept: "application/opds+json, application/json" },
+    });
+    const currentHref = localApiUrl(targetUrl) || targetUrl;
+    routeFeedHref = currentHref;
+    routeFeed.value = res.data;
+
+    const seen = new Set(
+      rawRoutePublications.value
+        .map((item) => getPubId(item.pub))
+        .filter(Boolean),
+    );
+    const newItems = [];
+    for (const pub of res.data?.publications || []) {
+      const id = getPubId(pub);
+      if (!id || !seen.has(id)) {
+        if (id) seen.add(id);
+        newItems.push({ pub, feedHref: currentHref });
+      }
+    }
+    rawRoutePublications.value = [...rawRoutePublications.value, ...newItems];
+  } catch (err) {
+    loadingMoreError.value = err.message || "加载下一页失败";
+  } finally {
+    loadingMore.value = false;
+  }
+}
+
+function setupGridObserver() {
+  if (typeof IntersectionObserver === "undefined") return;
+  gridObserver?.disconnect();
+  if (!gridSentinelRef.value) return;
+
+  gridObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (
+          entry.isIntersecting &&
+          nextLink.value &&
+          !loadingMore.value &&
+          !routeLoading.value &&
+          !loadingMoreError.value
+        ) {
+          loadNextPage();
+        }
+      }
+    },
+    { rootMargin: "600px 0px" },
+  );
+  gridObserver.observe(gridSentinelRef.value);
+}
+
+watch(gridSentinelRef, (el) => {
+  if (el) {
+    setupGridObserver();
+  } else {
+    gridObserver?.disconnect();
+  }
+});
+
+watch(loadingMore, async (loading) => {
+  if (!loading && nextLink.value) {
+    await nextTick();
+    setupGridObserver();
+  }
+});
+
+function handleWindowScroll() {
+  if (typeof window !== "undefined") {
+    showBackToTop.value = window.scrollY > 400;
+  }
+}
+
+function scrollToTop() {
+  if (typeof window !== "undefined") {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
 function exitDrillDown() {
   routePageStack.value = [];
+  rawRoutePublications.value = [];
+  loadingMore.value = false;
+  loadingMoreError.value = "";
+  gridObserver?.disconnect();
   s.exitExploreSubRoute(true);
 }
 
 const drillDownPublications = computed(() => {
-  if (!routeFeed.value || !Array.isArray(routeFeed.value.publications)) return [];
-  return routeFeed.value.publications.map((pub) => normalizePublication(pub, routeFeedHref)).filter(Boolean);
+  return rawRoutePublications.value
+    .map(({ pub, feedHref }) => normalizePublication(pub, feedHref))
+    .filter(Boolean);
 });
 
 const nextLink = computed(() => {
@@ -812,19 +935,7 @@ const prevLink = computed(() => {
   );
 });
 
-async function goNextPage() {
-  if (!nextLink.value || !activeRoute.value) return;
-  routePageStack.value.push(activeRoute.value.href);
-  s.enterExploreSubRoute(
-    {
-      title: activeRoute.value.title,
-      href: nextLink.value,
-    },
-    true,
-  );
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
+const goNextPage = loadNextPage;
 async function goPrevPage() {
   if (routePageStack.value.length > 0) {
     const prevUrl = routePageStack.value.pop();
@@ -858,8 +969,12 @@ watch(
       loadRouteFeed(newHref);
     } else {
       routeFeed.value = null;
+      rawRoutePublications.value = [];
       routeError.value = "";
+      loadingMore.value = false;
+      loadingMoreError.value = "";
       routePageStack.value = [];
+      gridObserver?.disconnect();
     }
   },
   { immediate: true },
@@ -1173,12 +1288,16 @@ watch(editorOpen, (open, oldOpen) => {
 onMounted(() => {
   loadCatalog();
   window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("scroll", handleWindowScroll, { passive: true });
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
+  window.removeEventListener("scroll", handleWindowScroll);
   sentinelObserver?.disconnect();
   sentinelObserver = null;
+  gridObserver?.disconnect();
+  gridObserver = null;
 });
 </script>
 
@@ -1543,29 +1662,50 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Pagination Controls -->
-      <div
-        v-if="nextLink || routePageStack.length > 0 || prevLink"
-        class="flex items-center justify-center gap-3 pt-6 border-t"
-      >
-        <Button
-          variant="outline"
-          size="sm"
-          class="gap-1"
-          :disabled="routePageStack.length === 0 && !prevLink"
-          @click="goPrevPage"
+      <!-- Infinite Scroll Sentinel & Status Footer -->
+      <div class="pt-4 pb-8 space-y-4">
+        <!-- Invisible Sentinel (triggers auto loading when within 600px of bottom) -->
+        <div
+          v-if="nextLink && !loadingMoreError"
+          ref="gridSentinelRef"
+          class="h-8 w-full pointer-events-none -mt-4"
+          aria-hidden="true"
+        />
+
+        <!-- Loading More Spinner -->
+        <div
+          v-if="loadingMore"
+          class="flex items-center justify-center gap-2.5 py-6 text-sm text-muted-foreground"
         >
-          <ChevronLeft class="size-4" /> 上一页
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          class="gap-1"
-          :disabled="!nextLink"
-          @click="goNextPage"
+          <RefreshCw class="size-4 animate-spin text-primary" />
+          <span class="font-medium">正在加载下一页...</span>
+        </div>
+
+        <!-- Error State with Retry Button -->
+        <div
+          v-else-if="loadingMoreError"
+          class="flex flex-col sm:flex-row items-center justify-center gap-3 py-6 text-sm text-destructive"
         >
-          下一页 <ChevronRight class="size-4" />
-        </Button>
+          <span>加载下一页失败：{{ loadingMoreError }}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            class="gap-1.5 text-foreground hover:text-foreground"
+            @click="loadNextPage"
+          >
+            <RefreshCw class="size-3.5" /> 点击重试
+          </Button>
+        </div>
+
+        <!-- All Items Loaded (End of list) -->
+        <div
+          v-else-if="!nextLink && drillDownPublications.length > 0"
+          class="flex items-center justify-center gap-3 py-8 text-xs text-muted-foreground/60 select-none"
+        >
+          <div class="h-px w-12 sm:w-20 bg-border/60" />
+          <span>已加载全部画廊（共 {{ drillDownPublications.length }} 本）</span>
+          <div class="h-px w-12 sm:w-20 bg-border/60" />
+        </div>
       </div>
     </div>
 
@@ -2226,6 +2366,28 @@ onUnmounted(() => {
         </div>
       </SheetContent>
     </Sheet>
+
+    <!-- Floating Back to Top Button -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0 translate-y-3 scale-95"
+      enter-to-class="opacity-100 translate-y-0 scale-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="opacity-100 translate-y-0 scale-100"
+      leave-to-class="opacity-0 translate-y-3 scale-95"
+    >
+      <Button
+        v-if="activeRoute && showBackToTop"
+        variant="secondary"
+        size="icon"
+        class="fixed bottom-6 right-6 z-30 size-10 rounded-full shadow-lg border border-border/70 backdrop-blur-md bg-background/80 hover:bg-accent hover:border-border text-foreground transition-transform active:scale-90"
+        title="返回顶部"
+        aria-label="返回顶部"
+        @click="scrollToTop"
+      >
+        <ChevronUp class="size-5" />
+      </Button>
+    </Transition>
   </div>
 </template>
 
