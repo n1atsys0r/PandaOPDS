@@ -106,6 +106,44 @@ func TestParseDetailPageCommentsAndMyTags(t *testing.T) {
 	}
 }
 
+func TestParseDetailPageFavoriteStateRequiresValidSlot(t *testing.T) {
+	tests := []struct {
+		name     string
+		gdf      string
+		wantSlot *int
+		wantName string
+	}{
+		{name: "favorited", gdf: `<div id="gdf">Doujinshi<div style="background:url(https://ehgt.org/fav.png);background-position:0px -40px"></div></div>`, wantSlot: intPointer(2), wantName: "Doujinshi"},
+		{name: "not favorited", gdf: `<div id="gdf">Add to Favorites<div style="background:url(https://ehgt.org/fav.png);background-position:0px -40px"></div></div>`},
+		{name: "missing slot", gdf: `<div id="gdf">Doujinshi<div style="background:url(https://ehgt.org/fav.png)"></div></div>`},
+		{name: "out of range", gdf: `<div id="gdf">Doujinshi<div style="background:url(https://ehgt.org/fav.png);background-position:0px -192px"></div></div>`},
+		{name: "misaligned slot", gdf: `<div id="gdf">Doujinshi<div style="background:url(https://ehgt.org/fav.png);background-position:0px -41px"></div></div>`},
+		{name: "missing gdf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			page := `<!doctype html><html><body>` + tt.gdf + `
+			<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
+			</body></html>`
+			detail, err := ParseDetailPage(page, "e-hentai.org", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantSlot == nil {
+				if detail.Favcat != nil || detail.FavcatName != "" {
+					t.Fatalf("favorite state=%v/%q, want omitted", detail.Favcat, detail.FavcatName)
+				}
+				return
+			}
+			if detail.Favcat == nil || *detail.Favcat != *tt.wantSlot || detail.FavcatName != tt.wantName {
+				t.Fatalf("favorite state=%v/%q, want %d/%q", detail.Favcat, detail.FavcatName, *tt.wantSlot, tt.wantName)
+			}
+		})
+	}
+}
+
+func intPointer(value int) *int { return &value }
+
 func TestParseDetailPageNewerVersionsOnlyFromGNDWithDedupeAndTailDates(t *testing.T) {
 	page := `<!doctype html><html><body>
 	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
@@ -135,5 +173,51 @@ func TestParseDetailPageNewerVersionsOnlyFromGNDWithDedupeAndTailDates(t *testin
 		if detail.NewerVersions[i] != want[i] {
 			t.Fatalf("version[%d]=%#v, want %#v", i, detail.NewerVersions[i], want[i])
 		}
+	}
+}
+
+func TestParseDetailPageExactRatingFromLabelAndScript(t *testing.T) {
+	// 1. From #rating_label text (e.g. Average: 4.58)
+	pageWithLabel := `<!doctype html><html><body>
+	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
+	<div id="gdr"><div id="rating_image" class="ir" style="background-position:-16px -21px"></div>
+		<table><tr><td id="rating_label">Average: 4.58</td></tr></table>
+	</div></body></html>`
+	detail, err := ParseDetailPage(pageWithLabel, "e-hentai.org", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Rating != 4.58 {
+		t.Fatalf("detail.Rating = %v, want 4.58", detail.Rating)
+	}
+
+	// 2. From page script (e.g. var average_rating = 4.76;) when label is absent
+	pageWithScript := `<!doctype html><html><head>
+	<script type="text/javascript">
+		var average_rating = 4.76;
+		var display_rating = 4.76;
+	</script></head><body>
+	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
+	<div id="gdr"><div id="rating_image" class="ir" style="background-position:-16px -21px"></div></div>
+	</body></html>`
+	detail2, err := ParseDetailPage(pageWithScript, "e-hentai.org", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail2.Rating != 4.76 {
+		t.Fatalf("detail2.Rating = %v, want 4.76", detail2.Rating)
+	}
+
+	// 3. Not Yet Rated
+	pageUnrated := `<!doctype html><html><body>
+	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
+	<div id="gdr"><table><tr><td id="rating_label">Not Yet Rated</td></tr></table></div>
+	</body></html>`
+	detail3, err := ParseDetailPage(pageUnrated, "e-hentai.org", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail3.Rating != 0 {
+		t.Fatalf("detail3.Rating = %v, want 0", detail3.Rating)
 	}
 }

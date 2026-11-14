@@ -318,7 +318,16 @@ async function handleExploreArchive(pub) {
 }
 
 async function handleExploreFavorite(pub) {
-  await s.favorite(pub, "add", 0);
+  const item = s.archives.value?.find(
+    (a) =>
+      (a.gid === pub.gid || a.active_gid === pub.gid) &&
+      (a.token === pub.token || a.active_token === pub.token),
+  );
+  if (item?.is_favorited) {
+    s.requestFavoriteRemove(item);
+  } else {
+    await s.favorite(pub, "add", 0);
+  }
 }
 
 function requestFullSync() {

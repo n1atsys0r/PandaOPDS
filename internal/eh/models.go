@@ -70,6 +70,8 @@ type GalleryVersion struct {
 type DetailPageInfo struct {
 	ActiveGID     int              `json:"-"`
 	ActiveToken   string           `json:"-"`
+	Favcat        *int             `json:"-"`
+	FavcatName    string           `json:"-"`
 	ImageNoFrom   int              `json:"image_no_from"`
 	ImageNoTo     int              `json:"image_no_to"`
 	ImageCount    int              `json:"image_count"`

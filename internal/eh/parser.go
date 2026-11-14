@@ -21,6 +21,7 @@ var (
 	streamHrefRE  = regexp.MustCompile(`/s/([^/]+)/(\d+)-(\d+)$`)
 	showingRE     = regexp.MustCompile(`Showing\s+(\d+)\s*-\s*(\d+)\s+of\s+(\d+)\s+images`)
 	urlRE         = regexp.MustCompile(`url\(["']?(.+?)["']?\)`)
+	favcatPosRE   = regexp.MustCompile(`(?i)background-position\s*:\s*0px\s*-\s*(\d+)px`)
 	pageCursorRE  = regexp.MustCompile(`(?:next|prev)=([\d-]+)`)
 	pageLinkRE    = regexp.MustCompile(`(?:p|page)=(\d+)`)
 	pageNumRE     = regexp.MustCompile(`(\d+)\s+pages?`)
@@ -407,6 +408,7 @@ func ParseDetailPage(src, siteHost string, pageIndex int) (DetailPageInfo, error
 		return DetailPageInfo{}, fmt.Errorf("detail page has no #gdt block")
 	}
 	out := DetailPageInfo{CurrentPageNo: 1, Thumbnails: []Thumbnail{}, Tags: []GalleryTag{}, Comments: []GalleryComment{}, NewerVersions: []GalleryVersion{}}
+	out.Favcat, out.FavcatName = parseDetailFavorite(findID(doc, "gdf"))
 	for i, a := range all(gdt, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "a" }) {
 		href := attr(a, "href")
 		div := first(a, func(n *xhtml.Node) bool {
@@ -541,6 +543,28 @@ func ParseDetailPage(src, siteHost string, pageIndex int) (DetailPageInfo, error
 			}
 		}
 	}
+	if label := findID(doc, "rating_label"); label != nil {
+		text := nodeText(label)
+		if m := regexp.MustCompile(`(?i)(?:average|score|rating)?\s*:\s*(\d+(?:\.\d+)?)`).FindStringSubmatch(text); len(m) > 1 {
+			if r, err := strconv.ParseFloat(m[1], 64); err == nil && r > 0 {
+				out.Rating = r
+			}
+		} else if strings.EqualFold(strings.TrimSpace(text), "Not Yet Rated") {
+			out.Rating = 0
+		}
+	} else if gdr := findID(doc, "gdr"); gdr != nil {
+		text := nodeText(gdr)
+		if m := regexp.MustCompile(`(?i)(?:average|score|rating)?\s*:\s*(\d+(?:\.\d+)?)`).FindStringSubmatch(text); len(m) > 1 {
+			if r, err := strconv.ParseFloat(m[1], 64); err == nil && r > 0 {
+				out.Rating = r
+			}
+		}
+	}
+	if m := regexp.MustCompile(`(?i)average_rating\s*=\s*(\d+(?:\.\d+)?)`).FindStringSubmatch(src); len(m) > 1 {
+		if r, err := strconv.ParseFloat(m[1], 64); err == nil && r > 0 {
+			out.Rating = r
+		}
+	}
 	for _, tag := range all(doc, func(n *xhtml.Node) bool {
 		return n.Type == xhtml.ElementNode && strings.HasPrefix(attr(n, "id"), "td_")
 	}) {
@@ -584,6 +608,37 @@ func ParseDetailPage(src, siteHost string, pageIndex int) (DetailPageInfo, error
 		out.NewerVersions = append(out.NewerVersions, version)
 	}
 	return out, nil
+}
+
+func parseDetailFavorite(gdf *xhtml.Node) (*int, string) {
+	if gdf == nil {
+		return nil, ""
+	}
+	name := strings.TrimSpace(nodeText(gdf))
+	if name == "" || strings.EqualFold(name, "Add to Favorites") {
+		return nil, ""
+	}
+	for _, node := range all(gdf, func(n *xhtml.Node) bool {
+		return n.Type == xhtml.ElementNode && attr(n, "style") != ""
+	}) {
+		style := attr(node, "style")
+		if !strings.Contains(strings.ToLower(style), "/fav.png") {
+			continue
+		}
+		match := favcatPosRE.FindStringSubmatch(style)
+		if len(match) != 2 {
+			continue
+		}
+		position, err := strconv.Atoi(match[1])
+		if err != nil || position < 2 || (position-2)%19 != 0 {
+			continue
+		}
+		slot := (position - 2) / 19
+		if slot <= 9 {
+			return &slot, name
+		}
+	}
+	return nil, ""
 }
 
 func parseDetailComments(doc *xhtml.Node) []GalleryComment {

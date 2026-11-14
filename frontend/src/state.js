@@ -726,7 +726,11 @@ function route(v, pushHistory = true) {
     state.exploreSubRoute = null;
   }
   if (v === "dashboard") loadStatus();
-  if (v === "explore") loadHome();
+  if (v === "explore") {
+    loadHome();
+    loadArchives();
+    loadCategories();
+  }
   if (v === "config") loadConfig();
   if (v === "archive") {
     loadArchives();
@@ -754,7 +758,10 @@ async function login(username, password) {
     state.status = r.data;
     state.loginError = "";
     if (state.page === "config") loadConfig();
-    if (state.page === "explore" || state.page === "home") loadHome();
+    if (state.page === "explore" || state.page === "home") {
+      loadHome();
+      loadArchives();
+    }
     if (state.page === "archive") {
       loadArchives();
       loadCategories();
@@ -788,6 +795,8 @@ function init() {
   applyTheme();
   media.addEventListener?.("change", applyTheme);
   loadStatus();
+  loadArchives();
+  loadCategories();
   if (typeof window !== "undefined") {
     const rawHash = window.location.hash.replace(/^#\/?/, "");
     const parts = rawHash.split("/");

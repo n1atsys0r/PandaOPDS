@@ -463,12 +463,22 @@ def _parse_detail_metadata(doc: Any, site_host: str) -> dict:
             cover_url = f"https://{site_host}{cover_url}"
     language = _detail_language_key(gdd.get("Language", ""))
     language = map_language(language) or ""
+    rating = _parse_list_rating(doc)
+    rating_label_text = _text(_first(doc, "#rating_label")) or _text(_first(doc, "#gdr"))
+    m_rating = re.search(r"Average:\s*(\d+(?:\.\d+)?)", rating_label_text)
+    if m_rating:
+        try:
+            rating = float(m_rating.group(1))
+        except ValueError:
+            pass
+    elif "not yet rated" in rating_label_text.lower():
+        rating = 0.0
     return {
         "title": _text(_first(doc, "#gn")),
         "title_jpn": _text(_first(doc, "#gj")),
         "category": _text(_first(doc, "#gdc > .cs")) or _text(_first(doc, "#gdc .cs")),
         "cover_url": cover_url,
-        "rating": _parse_list_rating(doc),  # #rating_image.ir shares the sprite
+        "rating": rating,
         "uploader": _text(_first(doc, "#gdn > a")),
         "publish_time": gdd.get("Posted", ""),
         "language": language,

@@ -46,7 +46,7 @@ import {
   Maximize2Icon as Maximize2,
   Minimize2Icon as Minimize2,
   XIcon as X,
-  InfoIcon as Info,
+  Loader2Icon as Loader2,
   MessageSquareIcon as MessageSquare,
   GridIcon as Grid,
 } from "@lucide/vue";
@@ -202,6 +202,192 @@ const archivesMap = computed(() => {
   }
   return map;
 });
+
+const currentArchiveItem = computed(() => {
+  if (!selectedPub.value) return null;
+  const gid = selectedPub.value.gid;
+  const token = selectedPub.value.token;
+  if (!gid || !token) return selectedPub.value.archiveItem || null;
+  return archivesMap.value.get(`${gid}:${token}`) || selectedPub.value.archiveItem || null;
+});
+
+const currentArchiveBadge = computed(() => {
+  const item = currentArchiveItem.value;
+  const rawMeta = selectedPub.value?.raw?.metadata || {};
+  const isFavoritedFromMeta = Boolean(
+    rawMeta.belongsTo?.collection ||
+    rawMeta["x:favorite"] ||
+    rawMeta["x:is_favorited"]
+  );
+  if (item) {
+    const isFavorited = Boolean(item.is_favorited || item.status === "unarchived" || isFavoritedFromMeta);
+    if (item.status === "ready") {
+      return { label: "已归档", variant: "default", isReady: true, isFavorited };
+    } else if (item.status === "downloading" || item.status === "staging") {
+      return { label: "下载中", variant: "secondary", isDownloading: true, isFavorited };
+    } else if (item.status === "failed") {
+      return { label: "归档失败", variant: "destructive", isFailed: true, isFavorited };
+    } else if (isFavorited) {
+      return { label: "收藏", variant: "outline", isFavorited: true };
+    }
+  }
+  if (isFavoritedFromMeta) {
+    return { label: "已收藏", variant: "outline", isFavorited: true };
+  }
+  return selectedPub.value?.archiveBadge || null;
+});
+
+function formatFileSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const k = 1024;
+  const sizes = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(k)), sizes.length - 1);
+  const val = (n / Math.pow(k, i)).toFixed(2);
+  return `${val} ${sizes[i]}`;
+}
+
+function formatDisplayDate(dateStr) {
+  if (!dateStr) return "";
+  const cleaned = String(dateStr).replace("T", " ").replace("Z", "");
+  return cleaned.length > 16 ? cleaned.slice(0, 16) : cleaned;
+}
+
+const currentFileSize = computed(() => {
+  const meta = selectedPub.value?.raw?.metadata || {};
+  const item = currentArchiveItem.value;
+  const bytes =
+    selectedPub.value?.sizeBytes ||
+    meta["x:sizeBytes"] ||
+    meta.filesize ||
+    item?.archive_size ||
+    item?.metadata?.filesize ||
+    item?.filesize ||
+    0;
+  return formatFileSize(bytes);
+});
+
+const currentRating = computed(() => {
+  const pub = selectedPub.value;
+  if (!pub) return 0;
+  const meta = pub.raw?.metadata || {};
+  const item = currentArchiveItem.value;
+  const itemRating = Number(item?.metadata?.rating || item?.rating);
+  if (Number.isFinite(itemRating) && itemRating > 0 && itemRating !== Math.floor(itemRating * 2) / 2) {
+    return itemRating;
+  }
+  const rawRating = Number(meta["x:rating"] || pub.rating);
+  if (Number.isFinite(rawRating) && rawRating > 0) {
+    return rawRating;
+  }
+  if (Number.isFinite(itemRating) && itemRating > 0) {
+    return itemRating;
+  }
+  return 0;
+});
+
+const FAVCAT_PALETTE = [
+  { bg: "rgba(158, 158, 158, 0.22)", border: "rgba(158, 158, 158, 0.45)", text: "#e5e5e5" }, // 0: 灰
+  { bg: "rgba(239, 68, 68, 0.22)", border: "rgba(239, 68, 68, 0.45)", text: "#fca5a5" },     // 1: 红
+  { bg: "rgba(249, 115, 22, 0.22)", border: "rgba(249, 115, 22, 0.45)", text: "#fdba74" },   // 2: 橙
+  { bg: "rgba(234, 179, 8, 0.22)", border: "rgba(234, 179, 8, 0.45)", text: "#fde047" },     // 3: 黄
+  { bg: "rgba(34, 197, 94, 0.22)", border: "rgba(34, 197, 94, 0.45)", text: "#86efac" },     // 4: 绿
+  { bg: "rgba(132, 204, 22, 0.22)", border: "rgba(132, 204, 22, 0.45)", text: "#bef264" },   // 5: 黄绿
+  { bg: "rgba(6, 182, 212, 0.22)", border: "rgba(6, 182, 212, 0.45)", text: "#67e8f9" },     // 6: 青
+  { bg: "rgba(59, 130, 246, 0.22)", border: "rgba(59, 130, 246, 0.45)", text: "#93c5fd" },   // 7: 蓝
+  { bg: "rgba(168, 85, 247, 0.22)", border: "rgba(168, 85, 247, 0.45)", text: "#d8b4fe" },   // 8: 紫
+  { bg: "rgba(236, 72, 153, 0.22)", border: "rgba(236, 72, 153, 0.45)", text: "#f472b6" },   // 9: 粉
+];
+
+const currentFavcatInfo = computed(() => {
+  const meta = selectedPub.value?.raw?.metadata || {};
+  const belongs = meta.belongsTo;
+  let coll = belongs?.collection;
+  if (Array.isArray(coll)) {
+    coll = coll[0];
+  }
+
+  let name = "";
+  let href = "";
+  let favcatId = null;
+
+  if (coll && typeof coll === "object") {
+    name = String(coll.name || "").trim();
+    const rawLink = Array.isArray(coll.links) ? coll.links[0]?.href : coll.href;
+    if (rawLink) {
+      href = localApiUrl(rawLink, selectedPub.value?.feedHref) || rawLink;
+      const m = String(rawLink).match(/[?&]favcat=(\d+)/) || String(href).match(/[?&]favcat=(\d+)/);
+      if (m) favcatId = parseInt(m[1], 10);
+    }
+  } else if (typeof coll === "string" && coll.trim()) {
+    name = coll.trim();
+  }
+
+  if (favcatId == null && meta["x:favcat"] != null) {
+    favcatId = Number(meta["x:favcat"]);
+  }
+
+  // Fallback to local archive item's favorite category
+  const item = currentArchiveItem.value;
+  if (item && item.is_favorited) {
+    if (!name && item.favcat_name) {
+      name = String(item.favcat_name).trim();
+    }
+    if (favcatId == null && item.favcat != null) {
+      favcatId = Number(item.favcat);
+    }
+    if (!name && favcatId != null) {
+      const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
+      name = found?.name || `收藏夹 ${favcatId}`;
+    }
+    if (!href && favcatId != null) {
+      href = `/opds/v2.0/gallery?favcat=${favcatId}&query=favorites`;
+    }
+  }
+
+  // If we have a name but no favcatId yet, try to match by name from s.favcats
+  if (favcatId == null && name) {
+    const found = (s.favcats.value || []).find((c) => c.name && c.name.trim() === name);
+    if (found && found.id != null) {
+      favcatId = Number(found.id);
+    }
+  }
+
+  // If we have favcatId but empty or generic name, resolve name from s.favcats
+  if (favcatId != null && (!name || name === `收藏夹 ${favcatId}` || name === `Favorites ${favcatId}`)) {
+    const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
+    if (found?.name) {
+      name = found.name;
+    }
+  }
+
+  if (!name) return null;
+
+  return {
+    name,
+    href,
+    favcatId: favcatId != null && favcatId >= 0 && favcatId <= 9 ? favcatId : 0,
+  };
+});
+
+const currentFavcatStyle = computed(() => {
+  const id = currentFavcatInfo.value?.favcatId ?? 0;
+  return FAVCAT_PALETTE[id] || FAVCAT_PALETTE[0];
+});
+
+function handleFavcatClick() {
+  if (!currentFavcatInfo.value) return;
+  if (currentFavcatInfo.value.href) {
+    detailOpen.value = false;
+    s.enterExploreSubRoute(
+      {
+        title: `收藏夹: ${currentFavcatInfo.value.name}`,
+        href: currentFavcatInfo.value.href,
+      },
+      true,
+    );
+  }
+}
 
 const LANGUAGE_DISPLAY_NAMES = {
   // Japanese
@@ -393,21 +579,33 @@ function normalizePublication(pub, feedHref = window.location.href) {
   // Check archive & favorite status
   const key = `${gid}:${token}`;
   const archiveItem = archivesMap.value.get(key);
+  const isFavoritedFromMeta = Boolean(
+    meta.belongsTo?.collection ||
+    meta["x:favorite"] ||
+    meta["x:is_favorited"]
+  );
 
   let archiveBadge = null;
+  const isFavorited = Boolean(
+    isFavoritedFromMeta ||
+    archiveItem?.is_favorited ||
+    archiveItem?.status === "unarchived"
+  );
   if (archiveItem) {
     if (archiveItem.status === "ready") {
-      archiveBadge = { label: "已归档", variant: "default", isReady: true };
+      archiveBadge = { label: "已归档", variant: "default", isReady: true, isFavorited };
     } else if (
       archiveItem.status === "downloading" ||
       archiveItem.status === "staging"
     ) {
-      archiveBadge = { label: "下载中", variant: "secondary", isDownloading: true };
+      archiveBadge = { label: "下载中", variant: "secondary", isDownloading: true, isFavorited };
     } else if (archiveItem.status === "failed") {
-      archiveBadge = { label: "归档失败", variant: "destructive", isFailed: true };
-    } else if (archiveItem.is_favorited || archiveItem.status === "unarchived") {
+      archiveBadge = { label: "归档失败", variant: "destructive", isFailed: true, isFavorited };
+    } else if (isFavorited) {
       archiveBadge = { label: "收藏", variant: "outline", isFavorited: true };
     }
+  } else if (isFavoritedFromMeta) {
+    archiveBadge = { label: "已收藏", variant: "outline", isFavorited: true };
   }
 
   const category =
@@ -423,6 +621,15 @@ function normalizePublication(pub, feedHref = window.location.href) {
 
   const reviews = Array.isArray(meta["x:reviews"]) ? meta["x:reviews"] : [];
 
+  const sizeBytes = Number(
+    meta["x:sizeBytes"] ||
+    meta.filesize ||
+    archiveItem?.archive_size ||
+    archiveItem?.metadata?.filesize ||
+    archiveItem?.filesize ||
+    0,
+  );
+
   return {
     gid,
     token,
@@ -431,6 +638,7 @@ function normalizePublication(pub, feedHref = window.location.href) {
     category,
     rating: Number(meta["x:rating"] || 0),
     pageCount: Number(meta.numberOfPages || meta["x:page_count"] || 0),
+    sizeBytes,
     uploader: meta["x:uploader"] || "",
     publishTime: meta.published || "",
     language,
@@ -469,7 +677,10 @@ function ensurePublicationDetails(pub) {
   let task = detailRequests.get(href);
   if (!task) {
     task = s.api(href, {
-      headers: { Accept: "application/divina+json, application/opds+json" },
+      headers: {
+        Accept: "application/divina+json, application/opds+json",
+        "Cache-Control": "no-cache",
+      },
     })
       .then(({ data }) => data)
       .finally(() => detailRequests.delete(href));
@@ -523,7 +734,17 @@ function ensurePublicationDetails(pub) {
       detailLoaded: true,
       readingOrder: validPages ? pages : [],
       pageCount: validPages ? pages.length : (normalized.pageCount || pub.pageCount),
+      rating: (normalized.rating && normalized.rating > 0) ? normalized.rating : (pub.rating || 0),
     });
+    if (normalized.rating && normalized.rating > 0) {
+      pub.rating = normalized.rating;
+    }
+    if (selectedPub.value && (selectedPub.value === pub || (selectedPub.value.gid === pub.gid && selectedPub.value.token === pub.token))) {
+      Object.assign(selectedPub.value, pub);
+      if (normalized.rating && normalized.rating > 0) {
+        selectedPub.value.rating = normalized.rating;
+      }
+    }
     return pub;
   }).catch(() => {
       return pub;
@@ -531,7 +752,10 @@ function ensurePublicationDetails(pub) {
 }
 
 watch([selectedPub, detailOpen], ([pub, open]) => {
-  if (pub && open) ensurePublicationDetails(pub);
+  if (pub && open) {
+    ensurePublicationDetails(pub);
+    s.loadArchives();
+  }
   if (!open) detailSubView.value = "main";
 });
 
@@ -1286,6 +1510,7 @@ watch(editorOpen, (open, oldOpen) => {
 });
 
 onMounted(() => {
+  s.loadArchives();
   loadCatalog();
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("scroll", handleWindowScroll, { passive: true });
@@ -1715,6 +1940,7 @@ onUnmounted(() => {
         :show-close-button="false"
         class="w-full max-w-[calc(100%-1.5rem)] sm:max-w-3xl md:max-w-4xl h-[88vh] max-h-[90vh] p-0 rounded-2xl sm:rounded-3xl border border-border/50 shadow-2xl overflow-hidden bg-background flex flex-col"
         @escape-key-down="(e) => { if (detailSubView !== 'main') { e.preventDefault(); detailSubView = 'main'; } }"
+        @open-auto-focus="(e) => e.preventDefault()"
       >
         <!-- BASE VIEW: Main Gallery Details (always mounted, preserving scroll position) -->
         <div
@@ -1723,7 +1949,7 @@ onUnmounted(() => {
         >
           <!-- 1. HERO HEADER (Apple Books Dark Slate Banner) -->
           <div
-            class="relative bg-gradient-to-b from-[#3a3b40] via-[#2c2e35] to-[#202227] text-white p-5 sm:p-7 shrink-0 overflow-hidden"
+            class="relative bg-gradient-to-b from-[#3a3b40] via-[#2c2e35] to-[#202227] text-white py-8 sm:py-10 px-5 sm:px-7 shrink-0 overflow-hidden"
           >
             <!-- Ambient Category Glow -->
             <div
@@ -1733,68 +1959,19 @@ onUnmounted(() => {
               }"
             />
 
-            <!-- Top Navigation & Actions Bar -->
-            <div class="flex items-center justify-between relative z-10 mb-4 sm:mb-6">
-              <!-- Left: Frosted Circular Close Button -->
-              <DialogClose as-child>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="size-8 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white border border-white/10 transition-colors"
-                  title="关闭 (Esc)"
-                >
-                  <X class="size-4" />
-                </Button>
-              </DialogClose>
+            <!-- Close Button: Equal top and right margins -->
+            <DialogClose as-child>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="absolute top-5 right-5 sm:top-6 sm:right-6 z-20 size-8 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white border border-white/10 transition-colors focus-visible:ring-0 focus-visible:outline-none focus:outline-none active:scale-95"
+                title="关闭 (Esc)"
+              >
+                <X class="size-4" />
+              </Button>
+            </DialogClose>
 
-              <!-- Right: Quick Action Pill Buttons -->
-              <div class="flex items-center gap-1.5 sm:gap-2">
-                <!-- Add to Favorite -->
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="size-8 rounded-full bg-black/35 hover:bg-black/55 text-white/90 hover:text-white border border-white/10 transition-colors"
-                  :title="selectedPub?.archiveBadge?.isFavorited ? '已收藏' : '加入收藏'"
-                  @click="handleFavorite(selectedPub)"
-                >
-                  <Bookmark
-                    class="size-4"
-                    :class="selectedPub?.archiveBadge?.isFavorited ? 'fill-amber-400 text-amber-400' : ''"
-                  />
-                </Button>
-
-                <!-- Archive -->
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="size-8 rounded-full bg-black/35 hover:bg-black/55 text-white/90 hover:text-white border border-white/10 transition-colors"
-                  :title="selectedPub?.archiveBadge?.isReady ? '已归档' : '开始归档'"
-                  @click="handleArchive(selectedPub)"
-                >
-                  <Download
-                    class="size-4"
-                    :class="selectedPub?.archiveBadge?.isReady ? 'text-emerald-400' : ''"
-                  />
-                </Button>
-
-                <!-- Upstream Link -->
-                <Button
-                  v-if="selectedPub?.upstreamUrl"
-                  variant="ghost"
-                  size="icon-sm"
-                  as="a"
-                  :href="selectedPub.upstreamUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="size-8 rounded-full bg-black/35 hover:bg-black/55 text-white/90 hover:text-white border border-white/10 transition-colors"
-                  title="在 E-Hentai 原站打开"
-                >
-                  <ExternalLink class="size-4" />
-                </Button>
-              </div>
-            </div>
-
-            <!-- Hero Main Info: Cover + Typography + Capsule -->
+            <!-- Hero Main Info: Cover + Typography + Actions -->
             <div class="flex flex-col sm:flex-row gap-5 sm:gap-7 items-start relative z-10">
               <!-- Left: Prominent Book Cover -->
               <div
@@ -1804,11 +1981,12 @@ onUnmounted(() => {
                 <CoverImage :src="selectedPub.coverUrl" :alt="selectedPub.title" />
               </div>
 
-              <!-- Right: Metadata & Action Capsule -->
-              <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch space-y-3.5 sm:space-y-4">
-                <div class="space-y-1.5 text-center sm:text-left">
+              <!-- Right: Metadata & Action Buttons -->
+              <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch space-y-4 sm:space-y-5">
+                <!-- Upper: Category, Title, Rating & Favcat -->
+                <div class="space-y-2 sm:space-y-2.5 text-center sm:text-left sm:pr-10">
                   <!-- Category Link with Chevron -->
-                  <div class="flex items-center justify-center sm:justify-start gap-2">
+                  <div class="flex items-center justify-center sm:justify-start">
                     <span
                       v-if="selectedPub?.category"
                       class="inline-flex items-center gap-0.5 text-xs font-semibold tracking-wide text-white/80 hover:text-white transition-colors cursor-pointer"
@@ -1818,169 +1996,233 @@ onUnmounted(() => {
                       <span>{{ selectedPub.category }}</span>
                       <ChevronRight class="size-3 opacity-60" />
                     </span>
-                    <Badge
-                      v-if="selectedPub?.archiveBadge"
-                      :variant="selectedPub.archiveBadge.variant"
-                      class="text-[10px] px-1.5 py-0 h-4 border-white/20 bg-white/15 text-white"
-                    >
-                      {{ selectedPub.archiveBadge.label }}
-                    </Badge>
                   </div>
 
                   <!-- Title -->
-                  <DialogTitle class="text-lg sm:text-2xl font-bold text-white leading-snug line-clamp-2 break-words">
+                  <DialogTitle class="text-lg sm:text-2xl font-bold text-white leading-snug line-clamp-2 break-words max-w-[360px] sm:max-w-none mx-auto sm:mx-0 text-balance">
                     {{ selectedPub?.title }}
                   </DialogTitle>
 
-                  <!-- Rating & Stats Row -->
-                  <div class="flex items-center justify-center sm:justify-start gap-2 text-xs text-white/70 pt-0.5">
-                    <div class="flex items-center gap-1 font-semibold text-amber-300">
+                  <!-- Rating & Favcat Row -->
+                  <div class="flex items-center justify-center sm:justify-start gap-2 text-xs pt-0.5 min-h-[1.5rem]">
+                    <div class="flex items-center gap-1 text-amber-300 font-semibold">
                       <Star class="size-3.5 fill-amber-300 text-amber-300" />
-                      <span>{{ selectedPub?.rating.toFixed(2) }}</span>
+                      <span class="transition-opacity duration-300">{{ currentRating.toFixed(2) }}</span>
                     </div>
-                    <span class="opacity-40">·</span>
-                    <span>{{ selectedPub?.language || "多语言" }}</span>
-                    <span class="opacity-40">·</span>
-                    <span>{{ selectedPub?.pageCount || 0 }} 页</span>
+
+                    <Transition
+                      enter-active-class="transition-all duration-300 ease-out"
+                      enter-from-class="opacity-0 scale-95"
+                      enter-to-class="opacity-100 scale-100"
+                      leave-active-class="transition-all duration-200 ease-in"
+                      leave-from-class="opacity-100 scale-100"
+                      leave-to-class="opacity-0 scale-95"
+                    >
+                      <div
+                        v-if="currentFavcatInfo?.name"
+                        class="inline-flex items-center gap-2"
+                      >
+                        <span class="opacity-30 text-white/70 select-none">·</span>
+                        <span
+                          class="inline-flex items-center text-[10px] sm:text-[11px] font-medium px-2 py-0.5 rounded-full border shadow-2xs transition-all select-none"
+                          :style="{
+                            backgroundColor: currentFavcatStyle.bg,
+                            borderColor: currentFavcatStyle.border,
+                            color: currentFavcatStyle.text,
+                          }"
+                          :class="currentFavcatInfo.href ? 'cursor-pointer hover:brightness-125 active:scale-95' : ''"
+                          :title="'收藏夹: ' + currentFavcatInfo.name + (currentFavcatInfo.href ? ' (点击按此收藏夹筛选)' : '')"
+                          @click="handleFavcatClick"
+                        >
+                          {{ currentFavcatInfo.name }}
+                        </span>
+                      </div>
+                    </Transition>
                   </div>
                 </div>
 
-                <!-- Apple Books Action Capsule -->
-                <div
-                  v-if="selectedPub"
-                  class="bg-white/10 dark:bg-white/5 backdrop-blur-md border border-white/15 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg"
-                >
-                  <div class="text-center sm:text-left text-xs text-white/70 w-full sm:w-auto">
-                    <div class="flex items-center justify-center sm:justify-start gap-1.5 font-semibold text-white/95">
-                      <span>画廊</span>
-                      <Info class="size-3 opacity-60" />
-                    </div>
-                    <div class="text-[11px] text-white/60 pt-0.5">
-                      {{ selectedPub.publishTime ? selectedPub.publishTime.slice(0, 10) : "日期未知" }} · {{ selectedPub.pageCount || 0 }} 页
-                    </div>
+                <!-- Lower: Metadata Form Grid + Action Buttons -->
+                <div class="space-y-3.5 sm:space-y-4">
+                  <!-- Metadata Form Grid (One per row: Key: Value) -->
+                  <div class="grid grid-cols-[auto_1fr] items-center gap-x-6 sm:gap-x-7 gap-y-1.5 sm:gap-y-2 text-xs text-left w-fit mx-auto sm:mx-0">
+                    <span class="text-white/50 select-none">页数:</span>
+                    <span class="text-white/95 font-medium truncate inline-flex items-center">
+                      <span>{{ selectedPub?.pageCount ? `${selectedPub.pageCount} 页` : "未知" }}</span>
+                      <Transition
+                        enter-active-class="transition-opacity duration-300 ease-out"
+                        enter-from-class="opacity-0"
+                        enter-to-class="opacity-100"
+                        leave-active-class="transition-opacity duration-200 ease-in"
+                        leave-from-class="opacity-100"
+                        leave-to-class="opacity-0"
+                      >
+                        <span
+                          v-if="currentFileSize"
+                          class="font-mono text-[11.5px] text-white/80 inline-block align-baseline"
+                        >（{{ currentFileSize }}）</span>
+                      </Transition>
+                    </span>
+
+                    <template v-if="selectedPub?.publishTime">
+                      <span class="text-white/50 select-none">发布时间:</span>
+                      <span class="text-white/95 font-medium font-mono text-[11.5px] truncate">{{ formatDisplayDate(selectedPub.publishTime) }}</span>
+                    </template>
+
+                    <template v-if="selectedPub?.uploader">
+                      <span class="text-white/50 select-none">上传者:</span>
+                      <span
+                        class="text-white/95 font-medium hover:text-white underline decoration-white/30 underline-offset-2 cursor-pointer transition-colors truncate"
+                        :title="`搜索上传者: ${selectedPub.uploader}`"
+                        @click="handleUploaderClick(selectedPub.uploader)"
+                      >
+                        {{ selectedPub.uploader }}
+                      </span>
+                    </template>
                   </div>
 
-                  <div class="flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end">
-                    <!-- Secondary Button: Favorite or Archive -->
-                    <Button
-                      variant="ghost"
-                      class="rounded-full bg-white/15 hover:bg-white/25 text-white border border-white/20 text-xs px-3.5 py-1.5 h-8 gap-1.5 font-medium transition-all"
-                      @click="handleFavorite(selectedPub)"
-                    >
-                      <Bookmark class="size-3.5" :class="selectedPub.archiveBadge?.isFavorited ? 'fill-amber-400 text-amber-400' : ''" />
-                      <span>{{ selectedPub.archiveBadge?.isFavorited ? "已收藏" : "收藏" }}</span>
-                    </Button>
+                  <!-- Action Buttons -->
+                  <div
+                    v-if="selectedPub"
+                    class="flex items-center gap-2.5 w-full sm:w-auto justify-center sm:justify-start mx-auto"
+                  >
+                  <!-- Primary Button: Read Online (Widened on desktop, neat pill on mobile) -->
+                  <Button
+                    class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-bold text-xs sm:text-sm h-9 px-6 sm:px-8 flex-initial w-auto min-w-36 max-w-[180px] sm:max-w-none sm:min-w-44 gap-2 shadow-md transition-all active:scale-95"
+                    @click="handleRead(selectedPub)"
+                  >
+                    <BookOpen class="size-4" />
+                    <span>在线阅读</span>
+                  </Button>
 
-                    <!-- Primary Button: Read Online -->
-                    <Button
-                      class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-bold text-xs sm:text-sm px-5 py-1.5 h-8 gap-1.5 shadow-md transition-all active:scale-95"
-                      @click="handleRead(selectedPub)"
-                    >
-                      <BookOpen class="size-4" />
-                      <span>在线阅读</span>
-                    </Button>
-                  </div>
+                  <!-- Secondary Icon Button: Favorite (SF Symbol fill boolean style) -->
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                    :class="currentArchiveBadge?.isFavorited
+                      ? 'bg-amber-400/15 hover:bg-amber-400/25 border-amber-400/35 text-amber-400'
+                      : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'"
+                    :title="currentArchiveBadge?.isFavorited ? '已收藏 (点击取消)' : '加入收藏'"
+                    @click="handleFavorite(selectedPub)"
+                  >
+                    <Bookmark
+                      class="size-4 transition-transform"
+                      :class="currentArchiveBadge?.isFavorited ? 'fill-amber-400 text-amber-400' : ''"
+                    />
+                  </Button>
+
+                  <!-- Secondary Icon Button: Archive (State-aware icon variant) -->
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                    :class="currentArchiveBadge?.isReady
+                      ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/35 text-emerald-400'
+                      : currentArchiveBadge?.isDownloading
+                      ? 'bg-white/20 border-white/30 text-white cursor-wait'
+                      : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'"
+                    :title="currentArchiveBadge?.isReady ? '已归档' : currentArchiveBadge?.isDownloading ? '正在下载归档...' : currentArchiveBadge?.isFailed ? '归档失败 (点击重试)' : '开始归档'"
+                    @click="handleArchive(selectedPub)"
+                  >
+                    <Loader2
+                      v-if="currentArchiveBadge?.isDownloading"
+                      class="size-4 animate-spin text-white"
+                    />
+                    <Check
+                      v-else-if="currentArchiveBadge?.isReady"
+                      class="size-4 text-emerald-400 stroke-[2.5]"
+                    />
+                    <Download
+                      v-else
+                      class="size-4"
+                      :class="currentArchiveBadge?.isFailed ? 'text-rose-400' : ''"
+                    />
+                  </Button>
+
+                  <!-- Tertiary Icon Button: Upstream External Link -->
+                  <Button
+                    v-if="selectedPub?.upstreamUrl"
+                    variant="ghost"
+                    size="icon"
+                    as="a"
+                    :href="selectedPub.upstreamUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="size-9 rounded-full border border-white/20 bg-white/15 hover:bg-white/25 text-white transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                    title="在 E-Hentai 原站打开"
+                  >
+                    <ExternalLink class="size-4" />
+                  </Button>
                 </div>
               </div>
             </div>
           </div>
+        </div>
 
           <!-- 2. BODY CONTENT (White/Dark Theme Adaptable) -->
           <div class="p-5 sm:p-7 space-y-6 flex-1 bg-background text-foreground">
-            <!-- Section A: Gallery Metadata Details -->
-            <div class="space-y-2.5">
-              <div class="text-sm font-bold text-foreground">
-                画廊详情
-              </div>
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-                <div
-                  v-if="selectedPub?.uploader"
-                  class="p-2.5 rounded-lg border bg-muted/30 cursor-pointer hover:bg-muted/60 transition-colors"
-                  :title="`搜索上传者: ${selectedPub.uploader}`"
-                  @click="handleUploaderClick(selectedPub.uploader)"
-                >
-                  <div class="text-muted-foreground text-[11px]">上传者</div>
-                  <div class="font-semibold text-foreground truncate mt-0.5">
-                    {{ selectedPub.uploader }}
-                  </div>
-                </div>
-                <div class="p-2.5 rounded-lg border bg-muted/30">
-                  <div class="text-muted-foreground text-[11px]">发布时间</div>
-                  <div class="font-semibold text-foreground truncate mt-0.5">
-                    {{ selectedPub?.publishTime ? selectedPub.publishTime.slice(0, 10) : "未知" }}
-                  </div>
-                </div>
-                <div class="p-2.5 rounded-lg border bg-muted/30">
-                  <div class="text-muted-foreground text-[11px]">页数</div>
-                  <div class="font-semibold text-foreground truncate mt-0.5">
-                    {{ selectedPub?.pageCount ? `${selectedPub.pageCount} 页` : "未知" }}
-                  </div>
-                </div>
-                <div class="p-2.5 rounded-lg border bg-muted/30">
-                  <div class="text-muted-foreground text-[11px]">归档状态</div>
-                  <div class="font-semibold text-foreground truncate mt-0.5">
-                    {{ selectedPub?.archiveBadge?.label || "未归档" }}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Section B: Namespace Tag Groups (NO local scrollview, flows naturally) -->
-            <div
-              v-if="groupedTags.length > 0"
-              :key="selectedPub?.gid + ':' + selectedPub?.token"
-              class="space-y-2.5 pt-1"
+            <!-- Section A: Namespace Tag Groups (NO local scrollview, flows naturally) -->
+            <Transition
+              enter-active-class="transition-opacity duration-300 ease-out"
+              enter-from-class="opacity-0"
+              enter-to-class="opacity-100"
             >
-              <div class="text-sm font-bold text-foreground">
-                分类标签
-              </div>
-
-              <!-- Tags Layout: left-aligned, no quote mark, no indent -->
-              <TransitionGroup
-                name="tag-group"
-                tag="div"
-                class="space-y-2"
+              <div
+                v-if="groupedTags.length > 0"
+                :key="selectedPub?.gid + ':' + selectedPub?.token"
+                class="space-y-2.5 pt-1"
               >
-                <div
-                  v-for="grp in groupedTags"
-                  :key="grp.namespace"
-                  class="flex items-start gap-2 sm:gap-2.5 py-0.5"
-                >
-                  <!-- Namespace label: flushed with left edge, text-left -->
-                  <div
-                    class="shrink-0 text-left text-xs font-semibold text-muted-foreground/90 pt-0.5 select-none font-mono min-w-12 sm:min-w-14"
-                  >
-                    {{ grp.namespace }}:
-                  </div>
-
-                  <!-- Tags container with TransitionGroup for silky-smooth tag addition/rearrangement -->
-                  <TransitionGroup
-                    name="tag-pill"
-                    tag="div"
-                    class="flex flex-wrap gap-1.5 flex-1 min-w-0"
-                  >
-                    <span
-                      v-for="t in grp.tags"
-                      :key="grp.namespace + ':' + t.rawName"
-                      :style="t.tagStyle"
-                      :class="[
-                        'text-[11px] sm:text-xs font-normal px-2.5 py-0.5 rounded-md cursor-pointer select-none transition-all duration-150 inline-flex items-center gap-1 active:scale-95',
-                        t.isWeak ? 'border border-dashed' : 'border border-solid',
-                        t.hasCustomStyle
-                          ? 'shadow-2xs hover:brightness-110 hover:shadow-xs'
-                          : t.isWeak
-                            ? 'border-border/70 text-foreground/80 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
-                            : 'border-border text-foreground/90 bg-muted/30 hover:bg-primary hover:text-primary-foreground hover:border-primary',
-                      ]"
-                      :title="`点击搜索标签: ${t.searchName}`"
-                      @click="handleTagClick(t.searchName)"
-                    >
-                      {{ t.displayName }}
-                    </span>
-                  </TransitionGroup>
+                <div class="text-sm font-bold text-foreground">
+                  标签
                 </div>
-              </TransitionGroup>
-            </div>
+
+                <!-- Tags Layout: left-aligned, no quote mark, no indent -->
+                <TransitionGroup
+                  name="tag-group"
+                  tag="div"
+                  class="space-y-2"
+                >
+                  <div
+                    v-for="grp in groupedTags"
+                    :key="grp.namespace"
+                    class="flex items-start gap-2 sm:gap-2.5 py-0.5"
+                  >
+                    <!-- Namespace label: flushed with left edge, text-left -->
+                    <div
+                      class="shrink-0 text-left text-xs font-semibold text-muted-foreground/90 pt-0.5 select-none font-mono min-w-12 sm:min-w-14"
+                    >
+                      {{ grp.namespace }}:
+                    </div>
+
+                    <!-- Tags container with TransitionGroup for silky-smooth tag addition/rearrangement -->
+                    <TransitionGroup
+                      name="tag-pill"
+                      tag="div"
+                      class="flex flex-wrap gap-1.5 flex-1 min-w-0"
+                    >
+                      <span
+                        v-for="t in grp.tags"
+                        :key="grp.namespace + ':' + t.rawName"
+                        :style="t.tagStyle"
+                        :class="[
+                          'text-[11px] sm:text-xs font-normal px-2.5 py-0.5 rounded-md cursor-pointer select-none transition-all duration-150 inline-flex items-center gap-1 active:scale-95',
+                          t.isWeak ? 'border border-dashed' : 'border border-solid',
+                          t.hasCustomStyle
+                            ? 'shadow-2xs hover:brightness-110 hover:shadow-xs'
+                            : t.isWeak
+                              ? 'border-border/70 text-foreground/80 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
+                              : 'border-border text-foreground/90 bg-muted/30 hover:bg-primary hover:text-primary-foreground hover:border-primary',
+                        ]"
+                        :title="`点击搜索标签: ${t.searchName}`"
+                        @click="handleTagClick(t.searchName)"
+                      >
+                        {{ t.displayName }}
+                      </span>
+                    </TransitionGroup>
+                  </div>
+                </TransitionGroup>
+              </div>
+            </Transition>
 
             <!-- Section C: Thumbnails Preview (页面预览) -->
             <div
@@ -1996,7 +2238,7 @@ onUnmounted(() => {
                   <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
                 </span>
                 <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
-                  共 {{ selectedPub.pageCount || selectedPub.readingOrder.length }} 页 · 查看全部
+                  共 {{ selectedPub.pageCount || selectedPub.readingOrder.length }} 页
                 </span>
               </div>
 
@@ -2047,7 +2289,7 @@ onUnmounted(() => {
                   <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
                 </span>
                 <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
-                  共 {{ selectedPub.reviews.length }} 条 · 查看全部
+                  共 {{ selectedPub.reviews.length }} 条
                 </span>
               </div>
 

@@ -131,6 +131,7 @@ func (s *Server) builder() feed.Builder {
 	}
 	return feed.Builder{Settings: s.Settings, Translator: translator}
 }
+
 func (s *Server) redirectOPDS(target string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		location := s.builder().Href(target)
@@ -713,7 +714,7 @@ func (s *Server) detail20(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	pub, e := s.detailPublication(r, gid, token)
+	pub, _, e := s.detailPublication(r, gid, token)
 	if e != nil {
 		writeError(w, e)
 		return
@@ -729,7 +730,7 @@ func (s *Server) publication20(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	pub, e := s.detailPublication(r, gid, token)
+	pub, _, e := s.detailPublication(r, gid, token)
 	if e != nil {
 		writeError(w, e)
 		return
@@ -743,7 +744,7 @@ func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	pub, e := s.detailPublication(r, gid, token)
+	pub, detail, e := s.detailPublication(r, gid, token)
 	if e != nil {
 		writeError(w, e)
 		return
@@ -757,13 +758,28 @@ func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 	pub["@context"] = feed.RWPMContext
 	metadata := pub["metadata"].(map[string]any)
 	metadata["conformsTo"] = []string{feed.DivinaProfile}
+	if detail.Favcat != nil && *detail.Favcat >= 0 && *detail.Favcat <= 9 {
+		name := strings.TrimSpace(detail.FavcatName)
+		if name == "" {
+			name = favoriteFacetTitle(nil, *detail.Favcat)
+		}
+		metadata["belongsTo"] = map[string]any{
+			"collection": map[string]any{
+				"name": name,
+				"links": []map[string]string{{
+					"href": s.builder().Href(favoriteFacetPath("/opds/v2.0/gallery", strconv.Itoa(*detail.Favcat))),
+					"type": feed.MIMEPublication,
+				}},
+			},
+		}
+	}
 	writeBytes(w, http.StatusOK, feed.MIMEDivina, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
 }
 
-func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[string]any, error) {
+func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[string]any, eh.DetailPageInfo, error) {
 	d, e := s.Service.GetDetail(r.Context(), gid, token)
 	if e != nil {
-		return nil, e
+		return nil, eh.DetailPageInfo{}, e
 	}
 	title, authors := feed.ParseDetailTitle(d.Title, d.TitleJPN)
 	count := d.ImageCount
@@ -844,7 +860,7 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 		}
 		metadata["x:reviews"] = reviews
 	}
-	return pub, nil
+	return pub, d, nil
 }
 
 func newerVersionsNote(versions []eh.GalleryVersion, href func(string) string) string {

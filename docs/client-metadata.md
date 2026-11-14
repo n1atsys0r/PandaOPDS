@@ -73,7 +73,10 @@ Facet 栏目的 `type` 和 `query` 必须与顶层出版物栏目一致。每个
 | `published` | string | = `modified`（上传时间） | 恒有 |
 | `description` | string | **当前不输出**（预留字段；客户端如需描述，可自行拼接 `language`/`numberOfPages`/`authors`/`x:rating`/`x:sizeBytes`） | — |
 | `subject` | [ {`name`, `x:style`?} ] | RWPM collection：标签为 `ns:key`，图库分类默认为 `category:<分类名>`；启用翻译时分类使用固定 namespace `分类`，仅分类名通过 EhTagTranslation `reclass` 查译（无译名则保留原分类名）。详情文档分类排第一；列表文档分类位于所有带 `x:style` 的条目之后、未着色标签之前；标签原有顺序不变 | 有标签或分类时 |
+| `belongsTo.collection` | {`name`, `links`} | Divina manifest 中已确认收藏时指向其 E-Hentai 收藏夹分区；`name` 为详情页分区名（缺失时为 `Favorites N`），`links[]` 指向 `/opds/v2.0/gallery?favcat=N&query=favorites`，类型为 `application/opds+json`。链接遵循 `PUBLIC_BASE_URL` 的相对/绝对 URL 规则 | 仅 Divina manifest；详情页能确认分区时 |
 | `numberOfPages` | int | 页数（= `filecount`） | >0 时 |
+
+收藏归属只输出在 Divina manifest，不输出在 OPDS 目录、详情 acquisition 或独立 OPDS publication 文档中。状态来自当前详情 HTML 的 `#gdf`：`Add to Favorites` 表示未收藏；其他文本作为分区名称，并须能从 `fav.png` sprite 位置解析出有效分区（0–9）才会输出。无法确认分区时省略 `belongsTo`。详情页使用现有缓存，状态可能滞后到详情缓存过期后刷新。`collection` 使用 Readium collection 对象；其 `links` 是 OPDS 2.0 为 collection 元数据允许的链接扩展，指向 PandaOPDS 对应 favcat feed，不附加合成 identifier。
 
 ### 3.2 扩展层 `x:*` 字段（拍平进 `metadata`，全部 EH 专属）
 

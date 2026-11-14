@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,45 @@ import (
 	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
+	"pandaopds/internal/favorites"
 )
+
+type favoriteListFixtureTransport string
+
+func (f favoriteListFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(string(f))), Request: r}, nil
+}
+
+func TestGalleryFeedOmitsStaleFavoriteSnapshot(t *testing.T) {
+	temp := t.TempDir()
+	settings := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, PageURLTTLSeconds: 60, ListCacheTTLSeconds: 60, CacheDir: filepath.Join(temp, "cache")}
+	service := eh.NewService(settings, favoriteListFixtureTransport(`<html><body><div class="gl1e"><a href="/g/123/abc/"><div class="glink">Fixture Gallery</div></a><div class="cn">Doujinshi</div><img src="/cover.jpg">12 pages</div></body></html>`))
+	defer service.Close()
+	favoriteState := favorites.NewState(filepath.Join(temp, "favorites.json"))
+	if err := favoriteState.Update(nil, nil, nil, map[string]int{"123:abc": 2}, map[int]string{2: "Stale Folder"}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Settings: settings, Service: service, Favorites: &favorites.Syncer{State: favoriteState}}
+	response := httptest.NewRecorder()
+	s.gallery20(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery?query=fixture", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("gallery status=%d body=%s", response.Code, response.Body.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	publications := doc["publications"].([]any)
+	metadata := publications[0].(map[string]any)["metadata"].(map[string]any)
+	assertNoFavoriteCollection(t, metadata)
+}
+
+func assertNoFavoriteCollection(t *testing.T, metadata map[string]any) {
+	t.Helper()
+	if _, ok := metadata["belongsTo"]; ok {
+		t.Fatal("favorite collection must not be emitted outside the Divina manifest")
+	}
+}
 
 func TestCommentHTMLRewritesGalleryAndAllowedInlineImages(t *testing.T) {
 	s := &Server{Settings: config.Settings{PublicBaseURL: "https://reader.example", ImageProxyHosts: []string{"ehgt.org", "s.exhentai.org"}}}
@@ -50,6 +89,8 @@ func (newerVersionFixtureTransport) RoundTrip(r *http.Request) (*http.Response, 
 	body := `<html>ok</html>`
 	if r.URL.Host == "e-hentai.org" && r.URL.Path == "/g/123/abc/" {
 		body = `<!doctype html><html><body><div id="gn">Original</div>
+		<div id="gdf">CurrentFolder<div style="background:url(https://ehgt.org/fav.png);background-position:0px -59px"></div></div>
+		<p class="gpc">Showing 1 - 1 of 1 images</p>
 		<div id="gdt"><div class="gdtm"><a href="/s/img/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
 		<div id="gnd"><a href="/g/10/aaaa/">Older</a> Added on 2024-01-02 12:00
 		<a href="/g/20/bbbb/">New &amp; Best</a> Added on 2025-02-03 09:30</div>
@@ -68,8 +109,12 @@ func TestDetailPublicationEmitsLocalNewerVersionNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.AttachArchive(store)
-	s := &Server{Settings: settings, Service: service, Store: store}
-	pub, err := s.detailPublication(httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery/123/abc/publication", nil), 123, "abc")
+	favoriteState := favorites.NewState(filepath.Join(temp, "favorites.json"))
+	if err := favoriteState.Update(nil, nil, nil, map[string]int{"123:abc": 2}, map[int]string{2: "Doujinshi"}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Settings: settings, Service: service, Store: store, Favorites: &favorites.Syncer{State: favoriteState}}
+	pub, detail, err := s.detailPublication(httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery/123/abc/publication", nil), 123, "abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +122,70 @@ func TestDetailPublicationEmitsLocalNewerVersionNote(t *testing.T) {
 	want := `There are newer versions of this gallery available:<br><a href="https://reader.example/opds/v2.0/gallery/20/bbbb">New &amp; Best</a>`
 	if got := metadata["x:note"]; got != want {
 		t.Fatalf("publication x:note=%q, want %q", got, want)
+	}
+	assertNoFavoriteCollection(t, metadata)
+	if detail.Favcat == nil || *detail.Favcat != 3 || detail.FavcatName != "CurrentFolder" {
+		t.Fatalf("detail favorite category=%v/%q, want 3/CurrentFolder", detail.Favcat, detail.FavcatName)
+	}
+
+	requestWithPath := func(path string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.SetPathValue("gid", "123")
+		r.SetPathValue("token", "abc")
+		return r
+	}
+	acquisitionResponse := httptest.NewRecorder()
+	s.detail20(acquisitionResponse, requestWithPath("/opds/v2.0/gallery/123/abc"))
+	var acquisition map[string]any
+	if err := json.Unmarshal(acquisitionResponse.Body.Bytes(), &acquisition); err != nil {
+		t.Fatal(err)
+	}
+	acquisitionMetadata := acquisition["publications"].([]any)[0].(map[string]any)["metadata"].(map[string]any)
+	assertNoFavoriteCollection(t, acquisitionMetadata)
+
+	publicationResponse := httptest.NewRecorder()
+	s.publication20(publicationResponse, requestWithPath("/opds/v2.0/gallery/123/abc/publication"))
+	var publication map[string]any
+	if err := json.Unmarshal(publicationResponse.Body.Bytes(), &publication); err != nil {
+		t.Fatal(err)
+	}
+	assertNoFavoriteCollection(t, publication["metadata"].(map[string]any))
+
+	manifestResponse := httptest.NewRecorder()
+	s.manifest20(manifestResponse, requestWithPath("/opds/v2.0/gallery/123/abc/manifest"))
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestResponse.Body.Bytes(), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifestMetadata := manifest["metadata"].(map[string]any)
+	collection := manifestMetadata["belongsTo"].(map[string]any)["collection"].(map[string]any)
+	if got := collection["name"]; got != "CurrentFolder" {
+		t.Fatalf("manifest collection name=%v, want CurrentFolder", got)
+	}
+	links := collection["links"].([]any)
+	link := links[0].(map[string]any)
+	if got, want := link["href"], "https://reader.example/opds/v2.0/gallery?favcat=3&query=favorites"; got != want {
+		t.Fatalf("manifest collection href=%v, want %q", got, want)
+	}
+	if got, want := link["type"], "application/opds+json"; got != want {
+		t.Fatalf("manifest collection link type=%v, want %q", got, want)
+	}
+	if _, ok := collection["identifier"]; ok {
+		t.Fatal("manifest collection unexpectedly has a synthetic identifier")
+	}
+
+	s.Settings.PublicBaseURL = ""
+	relativeResponse := httptest.NewRecorder()
+	s.manifest20(relativeResponse, requestWithPath("/opds/v2.0/gallery/123/abc/manifest"))
+	var relativeManifest map[string]any
+	if err := json.Unmarshal(relativeResponse.Body.Bytes(), &relativeManifest); err != nil {
+		t.Fatal(err)
+	}
+	relativeMetadata := relativeManifest["metadata"].(map[string]any)
+	relativeCollection := relativeMetadata["belongsTo"].(map[string]any)["collection"].(map[string]any)
+	relativeLink := relativeCollection["links"].([]any)[0].(map[string]any)
+	if got, want := relativeLink["href"], "/opds/v2.0/gallery?favcat=3&query=favorites"; got != want {
+		t.Fatalf("relative manifest collection href=%v, want %q", got, want)
 	}
 }
 
