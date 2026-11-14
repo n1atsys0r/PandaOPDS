@@ -690,7 +690,7 @@ function cardActionLabel(a) {
                   type="button"
                   @click="s.route('explore')"
                 >
-                  主页
+                  探索
                 </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
@@ -707,7 +707,7 @@ function cardActionLabel(a) {
                     s.page.value === "dashboard"
                       ? "概览"
                       : s.page.value === "explore"
-                        ? "主页"
+                        ? "探索"
                         : s.page.value === "config"
                           ? "设置"
                           : "归档"

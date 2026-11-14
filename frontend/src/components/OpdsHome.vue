@@ -77,6 +77,88 @@ const error = ref("");
 const catalog = ref(null);
 const shelfRefs = {};
 
+// Search state & OpenSearch logic
+const searchInput = ref("");
+
+function getOpenSearchUrl(query) {
+  const q = (query || "").trim();
+  if (!q) return "";
+
+  // 1. Discover search template from catalog or current routeFeed links
+  const allLinks = [
+    ...(catalog.value?.links || []),
+    ...(routeFeed.value?.links || []),
+  ];
+  const searchLink = allLinks.find((l) => l.rel === "search");
+
+  if (searchLink?.href) {
+    if (searchLink.href.includes("{searchTerms}")) {
+      return searchLink.href.replace("{searchTerms}", encodeURIComponent(q));
+    }
+    const sep = searchLink.href.includes("?") ? "&" : "?";
+    return `${searchLink.href}${sep}query=${encodeURIComponent(q)}`;
+  }
+
+  // 2. Fallback to standard OPDS v2 gallery search endpoint
+  return `/opds/v2.0/gallery?query=${encodeURIComponent(q)}`;
+}
+
+function formatTagForSearch(tag) {
+  if (!tag) return "";
+  const t = tag.trim();
+  if (t.startsWith('"') && t.endsWith('"')) return t;
+
+  const colonIdx = t.indexOf(":");
+  if (colonIdx !== -1) {
+    const prefix = t.slice(0, colonIdx).trim();
+    const val = t.slice(colonIdx + 1).trim();
+    if (val.includes(" ") && !val.startsWith('"')) {
+      return `${prefix}:"${val}$"`;
+    }
+  } else if (t.includes(" ") && !t.startsWith('"')) {
+    return `"${t}$"`;
+  }
+  return t;
+}
+
+function executeSearch(query, displayTitle) {
+  const q = (query || "").trim();
+  if (!q) return;
+
+  const targetUrl = getOpenSearchUrl(q);
+  routePageStack.value = [];
+  detailOpen.value = false;
+
+  const title = displayTitle || `搜索: ${q}`;
+  s.enterExploreSubRoute(
+    {
+      title,
+      href: targetUrl,
+    },
+    true,
+  );
+
+  // If navigating to the same URL, explicitly reload
+  if (activeRoute.value?.href === targetUrl) {
+    loadRouteFeed(targetUrl);
+  }
+}
+
+function handleSearchSubmit() {
+  if (!searchInput.value.trim()) return;
+  executeSearch(searchInput.value.trim());
+}
+
+function clearSearch() {
+  searchInput.value = "";
+}
+
+function handleTagClick(tagName) {
+  if (!tagName) return;
+  const query = formatTagForSearch(tagName);
+  executeSearch(query, `标签: ${tagName}`);
+}
+
 // Drill-down route state
 const activeRoute = computed(() => s.exploreSubRoute.value);
 const routeFeed = ref(null);
@@ -550,6 +632,33 @@ watch(
   { immediate: true },
 );
 
+// Sync search input with active search route
+watch(
+  () => s.exploreSubRoute.value,
+  (subRoute) => {
+    if (!subRoute) {
+      searchInput.value = "";
+      return;
+    }
+    try {
+      const u = new URL(subRoute.href, "http://localhost");
+      const q = u.searchParams.get("query");
+      if (
+        q &&
+        q !== "popular" &&
+        q !== "watched" &&
+        q !== "favorites" &&
+        !q.startsWith("favorites:")
+      ) {
+        searchInput.value = q;
+      }
+    } catch {
+      // ignore
+    }
+  },
+  { immediate: true },
+);
+
 // Gallery Actions
 function openGallery(pub) {
   selectedPub.value = pub;
@@ -598,44 +707,79 @@ onMounted(() => {
 <template>
   <div class="space-y-6">
     <!-- Top Action Bar -->
-    <div class="flex items-center justify-between">
-      <div v-if="activeRoute" class="flex items-center gap-2">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <!-- Title & Back Button -->
+      <div class="flex items-center gap-2 min-w-0">
         <Button
+          v-if="activeRoute"
           variant="ghost"
           size="icon"
-          class="size-8 text-muted-foreground hover:text-foreground"
-          title="返回主页"
+          class="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          title="返回探索"
           @click="exitDrillDown"
         >
           <ArrowLeft class="size-4" />
         </Button>
-        <h2 class="text-xl font-bold tracking-tight text-foreground">{{ activeRoute.title }}</h2>
-      </div>
-      <div v-else>
-        <h2 class="text-xl font-bold tracking-tight text-foreground">主页</h2>
+        <h2 class="text-xl font-bold tracking-tight text-foreground truncate">
+          {{ activeRoute ? activeRoute.title : "探索" }}
+        </h2>
       </div>
 
-      <div class="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-8 gap-1.5"
-          :disabled="loading || routeLoading"
-          @click="activeRoute ? loadRouteFeed(activeRoute.href) : loadCatalog()"
-        >
-          <RefreshCw
-            :class="['size-3.5', (loading || routeLoading) && 'animate-spin']"
+      <!-- Search Bar & Actions -->
+      <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
+        <!-- Search Input with OpenSearch trigger -->
+        <div class="relative flex items-center w-full sm:w-60 md:w-72">
+          <Search class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            v-model="searchInput"
+            placeholder="搜索画廊、标签或关键词..."
+            class="h-8 pl-8 pr-7 text-xs bg-card/60 border-border/80 focus-visible:bg-background"
+            @keydown.enter="handleSearchSubmit"
           />
-          刷新
-        </Button>
+          <button
+            v-if="searchInput"
+            type="button"
+            class="absolute right-2 p-0.5 text-muted-foreground hover:text-foreground cursor-pointer rounded-full hover:bg-muted"
+            @click="clearSearch"
+            title="清空搜索"
+          >
+            <X class="size-3" />
+          </button>
+        </div>
         <Button
-          variant="secondary"
+          variant="default"
           size="sm"
-          class="h-8 gap-1.5"
-          @click="editorOpen = true"
+          class="h-8 px-3 text-xs font-medium shrink-0"
+          :disabled="!searchInput.trim()"
+          @click="handleSearchSubmit"
         >
-          <PanelsTopLeft class="size-3.5" /> 编排主页
+          搜索
         </Button>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 gap-1.5"
+            :disabled="loading || routeLoading"
+            @click="activeRoute ? loadRouteFeed(activeRoute.href) : loadCatalog()"
+          >
+            <RefreshCw
+              :class="['size-3.5', (loading || routeLoading) && 'animate-spin']"
+            />
+            <span class="hidden sm:inline">刷新</span>
+          </Button>
+          <Button
+            v-if="!activeRoute"
+            variant="secondary"
+            size="sm"
+            class="h-8 gap-1.5"
+            @click="editorOpen = true"
+          >
+            <PanelsTopLeft class="size-3.5" />
+            <span class="hidden sm:inline">编排主页</span>
+          </Button>
+        </div>
       </div>
     </div>
 
@@ -674,7 +818,7 @@ onMounted(() => {
       <nav
         v-if="navigationItems.length"
         class="flex flex-wrap items-center gap-2.5 pt-0.5"
-        aria-label="主页导航"
+        aria-label="探索导航"
       >
         <button
           v-for="nav in navigationItems"
@@ -834,9 +978,13 @@ onMounted(() => {
 
       <div
         v-else-if="drillDownPublications.length === 0"
-        class="py-12 text-center text-sm text-muted-foreground"
+        class="py-16 text-center text-muted-foreground space-y-2"
       >
-        该分类下暂无画廊或数据为空。
+        <Search class="size-8 mx-auto text-muted-foreground/40" />
+        <p class="text-sm font-medium">未找到相关画廊或数据为空。</p>
+        <p v-if="activeRoute" class="text-xs text-muted-foreground/70">
+          可尝试更换关键词或检查筛选标签重新搜索。
+        </p>
       </div>
 
       <div
@@ -1033,15 +1181,21 @@ onMounted(() => {
           v-if="selectedPub?.subjects && selectedPub.subjects.length > 0"
           class="space-y-1.5"
         >
-          <span class="text-xs font-semibold text-muted-foreground">标签</span>
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-muted-foreground">标签</span>
+            <span class="text-[10px] text-muted-foreground/70">点击标签可快速检索</span>
+          </div>
           <div class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
             <Badge
               v-for="sub in selectedPub.subjects"
               :key="sub.name"
               variant="secondary"
-              class="text-[11px] font-normal"
+              class="text-[11px] font-normal cursor-pointer hover:bg-primary hover:text-primary-foreground transition-all duration-150 select-none active:scale-95 inline-flex items-center gap-1 group/tag"
+              :title="`点击搜索标签：${sub.name}`"
+              @click="handleTagClick(sub.name)"
             >
-              {{ sub.name }}
+              <Tag class="size-2.5 opacity-60 group-hover/tag:opacity-100 transition-opacity" />
+              <span>{{ sub.name }}</span>
             </Badge>
           </div>
         </div>

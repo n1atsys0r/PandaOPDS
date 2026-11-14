@@ -44,10 +44,10 @@ function navigate(page) {
           <SidebarMenuItem>
             <SidebarMenuButton
               :is-active="props.page === 'explore'"
-              tooltip="主页"
+              tooltip="探索"
               @click="navigate('explore')"
             >
-              <Compass /><span class="group-data-[collapsible=icon]:hidden">主页</span>
+              <Compass /><span class="group-data-[collapsible=icon]:hidden">探索</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
