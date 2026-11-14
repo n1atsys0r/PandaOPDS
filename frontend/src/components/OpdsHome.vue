@@ -31,6 +31,7 @@ import {
   SearchIcon as Search,
   LayersIcon as Layers,
   EyeIcon as Eye,
+  HatGlassesIcon as HatGlasses,
   TrophyIcon as Trophy,
   HeartIcon as Heart,
   SparklesIcon as Sparkles,
@@ -39,6 +40,7 @@ import {
   Loader2Icon as Loader2,
   MessageSquareIcon as MessageSquare,
   GridIcon as Grid,
+  RotateCcwIcon as RotateCcw,
 } from "@lucide/vue";
 
 const emit = defineEmits([
@@ -769,6 +771,9 @@ watch([selectedPub, detailOpen], ([pub, open]) => {
   if (pub && open) {
     ensurePublicationDetails(pub);
     s.loadArchives();
+    if (pub.gid && pub.token) {
+      s.getProgression(pub.gid, pub.token);
+    }
   }
   if (!open) detailSubView.value = "main";
 });
@@ -1480,7 +1485,7 @@ function openGallery(pub, list = null) {
   scrollModalToTop();
 }
 
-async function handleRead(pub, startPage = null) {
+async function handleRead(pub, startPage = null, options = {}) {
   const selectedAtClick = pub;
   const detailedPub = await ensurePublicationDetails(pub);
   if (!detailedPub?.pageCount || !detailOpen.value || selectedPub.value !== selectedAtClick) return;
@@ -1491,12 +1496,56 @@ async function handleRead(pub, startPage = null) {
     title: detailedPub.title,
     page_count: detailedPub.pageCount || 0,
     reading_order: detailedPub.readingOrder || [],
+    incognito: Boolean(options.incognito),
   };
   if (typeof startPage === "number" && startPage >= 0) {
     payload.start_page = startPage;
     payload.initial_page_index = startPage;
   }
   emit("read-gallery", payload);
+}
+
+const currentProgress = computed(() => {
+  const pub = selectedPub.value;
+  if (!pub?.gid || !pub?.token) return null;
+  const pageCount = Number(pub.pageCount || pub.readingOrder?.length || 0);
+  if (pageCount <= 0) return null;
+  return s.getGalleryProgress(pub.gid, pub.token, pageCount);
+});
+
+const primaryReadButtonLabel = computed(() => {
+  const p = currentProgress.value;
+  if (!p) return t("common.read_online");
+  if (p.isCompleted) return t("reader.read_again");
+  if (p.pageIndex > 0) {
+    return t("reader.continue_at", {
+      page: p.pageIndex + 1,
+      total: p.pageCount,
+    });
+  }
+  return t("common.read_online");
+});
+
+function handlePrimaryRead() {
+  if (!selectedPub.value) return;
+  if (currentProgress.value?.isCompleted) {
+    handleRead(selectedPub.value, 0);
+  } else if (currentProgress.value && currentProgress.value.pageIndex > 0) {
+    handleRead(selectedPub.value, currentProgress.value.pageIndex);
+  } else {
+    handleRead(selectedPub.value);
+  }
+}
+
+function handleIncognitoRead() {
+  if (!selectedPub.value) return;
+  const startPage =
+    currentProgress.value &&
+    !currentProgress.value.isCompleted &&
+    currentProgress.value.pageIndex > 0
+      ? currentProgress.value.pageIndex
+      : 0;
+  handleRead(selectedPub.value, startPage, { incognito: true });
 }
 
 function handleArchive(pub) {
@@ -2081,14 +2130,24 @@ onUnmounted(() => {
                     v-if="selectedPub"
                     class="flex items-center gap-2.5 w-full sm:w-auto justify-center sm:justify-start mx-auto"
                   >
-                  <!-- Primary Button: Read Online (Widened on desktop, neat pill on mobile) -->
-                  <Button
-                    class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-bold text-xs sm:text-sm h-9 px-6 sm:px-8 flex-initial w-auto min-w-36 max-w-[180px] sm:max-w-none sm:min-w-44 gap-2 shadow-md transition-all active:scale-95"
-                    @click="handleRead(selectedPub)"
-                  >
-                    <BookOpen class="size-4" />
-                    <span>{{ t("common.read_online") }}</span>
-                  </Button>
+                    <!-- Primary Button: Read Now / Continue Reading / Read Again (Text only) -->
+                    <Button
+                      class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-medium text-xs sm:text-sm h-9 px-6 sm:px-8 flex-initial w-auto min-w-36 max-w-[220px] sm:max-w-none sm:min-w-44 shadow-md transition-all active:scale-95"
+                      @click="handlePrimaryRead"
+                    >
+                      <span>{{ primaryReadButtonLabel }}</span>
+                    </Button>
+
+                    <!-- Secondary Icon Button: Incognito Read -->
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="size-9 rounded-full border border-white/20 bg-white/15 hover:bg-white/25 text-white transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                      :title="t('explore.incognito_read')"
+                      @click="handleIncognitoRead"
+                    >
+                      <HatGlasses class="size-4" />
+                    </Button>
 
                   <!-- Secondary Icon Button: Favorite (SF Symbol fill boolean style) -->
                   <Button

@@ -14,14 +14,22 @@ import {
   X,
   RotateCcw,
   Loader2,
+  HatGlasses,
 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/state.js";
 import { t } from "@/i18n.js";
+import {
+  READER_PAGE_KEY_PREFIX,
+  parseSavedProgress,
+  getReadingThreshold,
+  shouldRecordProgress,
+} from "@/progression-helper.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   archive: { type: Object, default: null },
+  incognito: { type: Boolean, default: false },
   psePageBase: { type: Number, default: 1 },
   theme: { type: String, default: "system" },
 });
@@ -29,6 +37,10 @@ const props = defineProps({
 const emit = defineEmits(["update:open"]);
 
 const s = useApp();
+
+const isIncognito = computed(() =>
+  Boolean(props.incognito || props.archive?.incognito),
+);
 
 const READER_MODE_KEY = "pandaopds_reader_mode";
 const MAX_CONCURRENT_FETCHES = 2;
@@ -99,27 +111,101 @@ const pageIndices = computed(() =>
 );
 
 function positionStorageKey() {
-  return galleryKey.value ? `pandaopds_reader_page:${galleryKey.value}` : "";
+  return galleryKey.value ? `${READER_PAGE_KEY_PREFIX}${galleryKey.value}` : "";
+}
+
+function readSavedProgress() {
+  const key = positionStorageKey();
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    return parseSavedProgress(raw);
+  } catch {
+    return null;
+  }
 }
 
 function readSavedPageIndex() {
-  const key = positionStorageKey();
-  if (!key) return 0;
-  const raw = Number(localStorage.getItem(key));
-  if (!Number.isFinite(raw) || raw < 0) return 0;
-  return Math.min(Math.max(0, Math.floor(raw)), Math.max(0, pageCount.value - 1));
+  const saved = readSavedProgress();
+  if (!saved) return 0;
+  return Math.min(Math.max(0, saved.page), Math.max(0, pageCount.value - 1));
 }
 
-function savePageIndex(idx) {
+let remoteSyncTimer = null;
+let pendingSyncIndex = null;
+let sessionStartPage = 0;
+let userHasNavigated = false;
+let singlePageTimer = null;
+
+function flushRemoteSync() {
+  if (remoteSyncTimer) {
+    clearTimeout(remoteSyncTimer);
+    remoteSyncTimer = null;
+  }
+  if (isIncognito.value) {
+    pendingSyncIndex = null;
+    return;
+  }
+  if (pendingSyncIndex !== null && props.archive && pageCount.value > 0) {
+    const idx = pendingSyncIndex;
+    pendingSyncIndex = null;
+    const gid = props.archive.active_gid || props.archive.gid;
+    const token = props.archive.active_token || props.archive.token;
+    s.putProgression(gid, token, {
+      pageIndex: idx,
+      pageCount: pageCount.value,
+    }).catch(() => {});
+  }
+}
+
+function scheduleRemoteSync(idx) {
+  if (isIncognito.value) return;
+  pendingSyncIndex = idx;
+  if (remoteSyncTimer) clearTimeout(remoteSyncTimer);
+  remoteSyncTimer = setTimeout(() => {
+    flushRemoteSync();
+  }, 1500);
+}
+
+function savePageIndex(
+  idx,
+  { skipRemote = false, modified = null, force = false } = {},
+) {
   const clamped = Math.min(Math.max(0, idx), Math.max(0, pageCount.value - 1));
   currentPageIndex.value = clamped;
+  if (isIncognito.value) {
+    return;
+  }
+  if (
+    !force &&
+    !shouldRecordProgress({
+      isIncognito: isIncognito.value,
+      hasNavigated: userHasNavigated,
+      pageIndex: clamped,
+      pageCount: pageCount.value,
+    })
+  ) {
+    return;
+  }
   const key = positionStorageKey();
+  const modIso = modified || new Date().toISOString();
   if (key) {
     try {
-      localStorage.setItem(key, String(clamped));
+      localStorage.setItem(
+        key,
+        JSON.stringify({ page: clamped, modified: modIso }),
+      );
     } catch {
       // ignore storage quota errors
     }
+  }
+  const gid = props.archive?.active_gid || props.archive?.gid;
+  const token = props.archive?.active_token || props.archive?.token;
+  if (gid && token && pageCount.value > 0) {
+    s.updateLocalProgress(gid, token, clamped, pageCount.value, modIso);
+  }
+  if (!skipRemote) {
+    scheduleRemoteSync(clamped);
   }
 }
 
@@ -338,6 +424,13 @@ function revokeMapUrls(map) {
 }
 
 function cleanupSessionResources() {
+  flushRemoteSync();
+  if (singlePageTimer) {
+    clearTimeout(singlePageTimer);
+    singlePageTimer = null;
+  }
+  userHasNavigated = false;
+  sessionStartPage = 0;
   sessionSeq += 1;
   disconnectPageListThumbObserver();
   clearPendingFetchQueue();
@@ -426,6 +519,9 @@ function mountComimi(startIndex) {
     },
     events: {
       pageChange: ({ pageIndex }) => {
+        if (pageIndex !== sessionStartPage) {
+          userHasNavigated = true;
+        }
         savePageIndex(pageIndex);
       },
       panelChange: ({ panel }) => {
@@ -521,6 +617,9 @@ async function setupWebtoon(startIndex) {
         }
       }
       if (topMost !== null) {
+        if (topMost !== sessionStartPage) {
+          userHasNavigated = true;
+        }
         savePageIndex(topMost);
       }
     },
@@ -544,8 +643,11 @@ async function setupWebtoon(startIndex) {
   }
 }
 
-function jumpToWebtoonPage(idx) {
+function jumpToWebtoonPage(idx, { fromUser = true } = {}) {
   const clamped = Math.min(Math.max(0, idx), Math.max(0, pageCount.value - 1));
+  if (fromUser && clamped !== sessionStartPage) {
+    userHasNavigated = true;
+  }
   savePageIndex(clamped);
   loadWebtoonPage(clamped, PRIORITY_CURRENT);
   const el = webtoonPageRefs.get(clamped);
@@ -557,13 +659,13 @@ async function switchMode(nextMode) {
   let resumeIdx = currentPageIndex.value;
   if (readerMode.value === "paged" && viewer) {
     resumeIdx = viewer.getCurrentPageIndex();
-    savePageIndex(resumeIdx);
     disconnectPageListThumbObserver();
     viewer.destroy();
     viewer = null;
   } else if (readerMode.value === "webtoon") {
     disconnectWebtoonObservers();
   }
+  sessionStartPage = resumeIdx;
   readerMode.value = nextMode;
   try {
     localStorage.setItem(READER_MODE_KEY, nextMode);
@@ -612,26 +714,82 @@ async function startSession() {
   cleanupSessionResources();
   if (!props.open || !props.archive || pageCount.value <= 0) return;
   abortController = new AbortController();
-  let startIdx = readSavedPageIndex();
+  const gid = props.archive.active_gid || props.archive.gid;
+  const token = props.archive.active_token || props.archive.token;
+
+  let startIdx = 0;
+  let hasExplicitStart = false;
+
   if (Number.isFinite(props.archive?.start_page)) {
     startIdx = Math.min(
       Math.max(0, Math.floor(props.archive.start_page)),
       Math.max(0, pageCount.value - 1),
     );
-    savePageIndex(startIdx);
+    hasExplicitStart = true;
   } else if (Number.isFinite(props.archive?.initial_page_index)) {
     startIdx = Math.min(
       Math.max(0, Math.floor(props.archive.initial_page_index)),
       Math.max(0, pageCount.value - 1),
     );
-    savePageIndex(startIdx);
+    hasExplicitStart = true;
+  } else {
+    const localSaved = readSavedProgress();
+    if (localSaved) {
+      startIdx = Math.min(Math.max(0, localSaved.page), Math.max(0, pageCount.value - 1));
+    }
   }
+
   currentPageIndex.value = startIdx;
+  sessionStartPage = startIdx;
+  userHasNavigated = false;
+
+  // Single-page chapter auto-mark after ~2 seconds (if not incognito)
+  if (pageCount.value === 1 && !isIncognito.value) {
+    singlePageTimer = setTimeout(() => {
+      if (props.open && !isIncognito.value && pageCount.value === 1) {
+        userHasNavigated = true;
+        savePageIndex(0, { force: true });
+      }
+    }, 2000);
+  }
+
   await nextTick();
   if (readerMode.value === "paged") {
     mountComimi(startIdx);
   } else {
     await setupWebtoon(startIdx);
+  }
+
+  // Reconcile with server progression asynchronously if user did not provide an explicit starting page and not incognito
+  if (!hasExplicitStart && gid && token && !isIncognito.value) {
+    const sessionCapture = sessionSeq;
+    const localSaved = readSavedProgress();
+    const localMod = localSaved?.modified || 0;
+
+    s.getProgression(gid, token).then((remoteDoc) => {
+      if (sessionCapture !== sessionSeq || !props.open || !remoteDoc) return;
+      const remoteMod = remoteDoc.modified ? new Date(remoteDoc.modified).getTime() : 0;
+      if (typeof remoteDoc.progression === "number" && remoteMod > localMod) {
+        const remoteIdx = pageCount.value > 1
+          ? Math.min(Math.max(0, Math.round(remoteDoc.progression * (pageCount.value - 1))), pageCount.value - 1)
+          : 0;
+        if (remoteIdx !== currentPageIndex.value) {
+          sessionStartPage = remoteIdx;
+          currentPageIndex.value = remoteIdx;
+          savePageIndex(remoteIdx, { skipRemote: true, modified: remoteDoc.modified, force: true });
+          if (readerMode.value === "paged" && viewer) {
+            viewer.goToPage(remoteIdx);
+          } else if (readerMode.value === "webtoon") {
+            jumpToWebtoonPage(remoteIdx, { fromUser: false });
+          }
+        }
+      } else if (localSaved && localMod > remoteMod && userHasNavigated) {
+        s.putProgression(gid, token, {
+          pageIndex: localSaved.page,
+          pageCount: pageCount.value,
+        }).catch(() => {});
+      }
+    }).catch(() => {});
   }
 }
 
@@ -663,10 +821,12 @@ watch(isDark, (dark) => {
 });
 
 onMounted(() => {
+  window.addEventListener("beforeunload", flushRemoteSync);
   window.addEventListener("keydown", onKeydown, { capture: false });
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", flushRemoteSync);
   window.removeEventListener("keydown", onKeydown, { capture: false });
   lockBodyScroll(false);
   cleanupSessionResources();
@@ -687,6 +847,14 @@ onBeforeUnmount(() => {
         v-if="readerMode === 'paged'"
         class="fixed top-4 right-4 sm:top-6 sm:right-6 z-[1010] flex items-center gap-1.5 rounded-[14px] border border-border bg-card p-1.5 text-card-foreground shadow-md"
       >
+        <div
+          v-if="isIncognito"
+          class="inline-flex items-center gap-1 rounded-[10px] bg-muted/80 px-2 py-1 text-xs font-medium text-muted-foreground"
+          :title="t('reader.incognito_notice')"
+        >
+          <HatGlasses class="size-3.5 text-muted-foreground" />
+          <span class="hidden sm:inline">{{ t("reader.incognito_badge") }}</span>
+        </div>
         <div
           class="inline-flex items-center rounded-[10px] bg-muted p-0.5 text-xs text-muted-foreground"
         >
@@ -746,6 +914,14 @@ onBeforeUnmount(() => {
               class="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground"
             >
               {{ currentPageIndex + 1 }} / {{ pageCount }}
+            </span>
+            <span
+              v-if="isIncognito"
+              class="inline-flex shrink-0 items-center gap-1 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground"
+              :title="t('reader.incognito_notice')"
+            >
+              <HatGlasses class="size-3 text-muted-foreground" />
+              <span class="hidden sm:inline">{{ t("reader.incognito_badge") }}</span>
             </span>
           </div>
           <div class="flex shrink-0 items-center gap-1.5">

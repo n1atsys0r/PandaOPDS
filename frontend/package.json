@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/home-layout.test.js src/i18n.test.js",
+    "test": "node --test src/home-layout.test.js src/i18n.test.js src/progression-helper.test.js",
     "test:home-layout": "node --test src/home-layout.test.js",
     "test:i18n": "node --test src/i18n.test.js",
     "format": "prettier --write src"

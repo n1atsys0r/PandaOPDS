@@ -8,6 +8,7 @@ test("i18n resolves keys in default zh locale", () => {
   assert.equal(t("nav.dashboard"), "概览");
   assert.equal(t("nav.settings"), "设置");
   assert.equal(t("dashboard.status_ok"), "服务运行正常");
+  assert.equal(t("common.read_online"), "立即阅读");
 });
 
 test("i18n switches to en and resolves english translations", () => {
@@ -16,6 +17,7 @@ test("i18n switches to en and resolves english translations", () => {
   assert.equal(t("nav.dashboard"), "Dashboard");
   assert.equal(t("nav.settings"), "Settings");
   assert.equal(t("dashboard.status_ok"), "Service Healthy");
+  assert.equal(t("common.read_online"), "Read Now");
 });
 
 test("i18n interpolates variables properly", () => {

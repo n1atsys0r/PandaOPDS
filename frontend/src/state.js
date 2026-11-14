@@ -1,6 +1,12 @@
 import { reactive, toRefs } from "vue";
 import { canUseFacets, chooseInitialHomeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
 import { t } from "./i18n.js";
+import {
+  READER_PAGE_KEY_PREFIX,
+  parseSavedProgress,
+  buildProgressionPayload,
+  resolveLatestProgress,
+} from "./progression-helper.js";
 const state = reactive({
   page: "dashboard",
   exploreSubRoute: null,
@@ -181,6 +187,67 @@ async function api(path, opts = {}) {
     );
   return { data, headers: r.headers };
 }
+
+const progressionCache = reactive(new Map());
+
+async function getProgression(gid, token) {
+  if (!gid || !token) return null;
+  const key = `${gid}:${token}`;
+  try {
+    const res = await api(`/opds/progression/${gid}/${token}`);
+    if (res && res.data && typeof res.data.progression === "number") {
+      progressionCache.set(key, res.data);
+      return res.data;
+    }
+  } catch {
+    // 404 / 401 / network errors: return null silently
+  }
+  return null;
+}
+
+async function putProgression(gid, token, { pageIndex, pageCount }) {
+  if (!gid || !token || !Number.isFinite(pageCount) || pageCount <= 0) return null;
+  const payload = buildProgressionPayload(pageIndex, pageCount);
+  const key = `${gid}:${token}`;
+  try {
+    const res = await api(`/opds/progression/${gid}/${token}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    if (res && res.data && typeof res.data.progression === "number") {
+      progressionCache.set(key, res.data);
+      return res.data;
+    }
+  } catch (err) {
+    if (err?.status !== 409) {
+      // ignore conflict or network issues
+    }
+  }
+  return null;
+}
+
+function updateLocalProgress(gid, token, pageIndex, pageCount, modified = new Date().toISOString()) {
+  if (!gid || !token || !Number.isFinite(pageCount) || pageCount <= 0) return;
+  const key = `${gid}:${token}`;
+  const clamped = Math.min(Math.max(0, pageIndex), Math.max(0, pageCount - 1));
+  const payload = buildProgressionPayload(clamped, pageCount);
+  payload.modified = modified;
+  progressionCache.set(key, payload);
+}
+
+function getGalleryProgress(gid, token, pageCount) {
+  if (!gid || !token || !pageCount || pageCount <= 0) return null;
+  const key = `${gid}:${token}`;
+  let localRecord = null;
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      localRecord = parseSavedProgress(localStorage.getItem(`${READER_PAGE_KEY_PREFIX}${key}`));
+    } catch {}
+  }
+  const remoteDoc = progressionCache.get(key);
+  return resolveLatestProgress(localRecord, remoteDoc, pageCount);
+}
+
 async function run(fn) {
   state.busy = true;
   state.error = "";
@@ -893,5 +960,10 @@ export function useApp() {
     fetchAuthedBlobUrl,
     fetchReaderBlobUrl,
     clearCoverCache,
+    getProgression,
+    putProgression,
+    updateLocalProgress,
+    getGalleryProgress,
+    progressionCache,
   };
 }

@@ -2038,30 +2038,30 @@ function cardActionLabel(a) {
                   v-if="a.status === 'ready'"
                   variant="default"
                   size="sm"
-                  class="w-full text-xs"
+                  class="w-full text-xs font-medium"
                   :disabled="archivePageCount(a) <= 0"
                   @click="openReader(a)"
                 >
-                  <BookOpen class="size-3.5" />{{ t("archive.read_btn") }}
+                  {{ t("common.read_online") }}
                 </Button>
                 <Button
                   v-else-if="a.status === 'unarchived'"
                   variant="default"
                   size="sm"
-                  class="w-full text-xs"
+                  class="w-full text-xs font-medium"
                   @click="openReader(a)"
                 >
-                  <BookOpen class="size-3.5" />{{ t("common.read_online") }}
+                  {{ t("common.read_online") }}
                 </Button>
                 <div v-else class="flex items-center gap-1.5 w-full">
                   <Button
                     v-if="archivePageCount(a) > 0"
                     variant="default"
                     size="sm"
-                    class="flex-1 text-xs"
+                    class="flex-1 text-xs font-medium"
                     @click="openReader(a)"
                   >
-                    <BookOpen class="size-3.5" />{{ t("common.read_online") }}
+                    {{ t("common.read_online") }}
                   </Button>
                   <Button
                     variant="outline"
@@ -2363,6 +2363,7 @@ function cardActionLabel(a) {
       <ArchiveReader
         v-model:open="readerOpen"
         :archive="readerArchive"
+        :incognito="Boolean(readerArchive?.incognito)"
         :pse-page-base="psePageBase"
         :theme="s.theme.value"
       />
