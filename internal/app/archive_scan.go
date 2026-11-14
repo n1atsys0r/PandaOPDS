@@ -56,6 +56,7 @@ func (s *Server) startArchiveScan(w http.ResponseWriter, _ *http.Request) {
 		} else {
 			result.Status = "success"
 		}
+		s.refreshProgressionArchiveIndex()
 		s.archiveScanMu.Lock()
 		s.archiveScan = result
 		s.archiveScanCancel = nil

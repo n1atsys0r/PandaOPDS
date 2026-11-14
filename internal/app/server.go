@@ -22,6 +22,7 @@ import (
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
 	"pandaopds/internal/favorites"
+	"pandaopds/internal/progression"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -32,6 +33,7 @@ type Server struct {
 	Store        *archive.Store
 	Archives     *archive.Manager
 	Favorites    *favorites.Syncer
+	Progression  *progression.Store
 	Logger       *log.Logger
 	mux          *http.ServeMux
 	configOK     bool
@@ -40,14 +42,15 @@ type Server struct {
 	editMu       sync.Mutex
 	editKey      []byte
 
-	stopArchiveUpdates context.CancelFunc
-	archiveUpdatesDone chan struct{}
-	archiveScanMu     sync.RWMutex
-	archiveScan       ArchiveScanJob
-	archiveScanDone   chan struct{}
-	archiveScanCancel context.CancelFunc
-	archiveScanNextID uint64
-	coverFlight       singleflight.Group
+	stopArchiveUpdates   context.CancelFunc
+	archiveUpdatesDone   chan struct{}
+	archiveScanMu        sync.RWMutex
+	archiveScan          ArchiveScanJob
+	archiveScanDone      chan struct{}
+	archiveScanCancel    context.CancelFunc
+	archiveScanNextID    uint64
+	progressionArchiveMu sync.Mutex
+	coverFlight          singleflight.Group
 }
 
 func New(settings config.Settings, logger *log.Logger) (*Server, error) {
@@ -71,12 +74,20 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 		return nil, fmt.Errorf("open archive store: %w", err)
 	}
 	s.Store = store
+	progressStore, err := progression.Open(settings.ArchiveStateDir)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("open progression store: %w", err)
+	}
+	s.Progression = progressStore
 	service.AttachArchive(store)
 	s.Archives = archive.NewManager(settings, service.Client, service, store)
+	s.Archives.SetAvailabilityHook(s.refreshProgressionArchiveIndex)
 	rolled := s.Archives.RecoverInterruptedUpgrades()
 	if rolled > 0 && logger != nil {
 		logger.Printf("archive startup: rolled back %d interrupted tier upgrade(s)", rolled)
 	}
+	s.refreshProgressionArchiveIndex()
 	state := favorites.NewState(settings.FavoritesSyncState)
 	s.Favorites = favorites.NewSyncer(settings, service, s.Archives, state)
 	s.Favorites.Start()
@@ -97,14 +108,21 @@ func (s *Server) Close() error {
 	scanDone := s.archiveScanDone
 	scanCancel := s.archiveScanCancel
 	s.archiveScanMu.RUnlock()
-	if scanCancel != nil { scanCancel() }
-	if scanDone != nil { <-scanDone }
+	if scanCancel != nil {
+		scanCancel()
+	}
+	if scanDone != nil {
+		<-scanDone
+	}
 	if s.Archives != nil {
 		s.Archives.Close()
 	}
 	var closeErr error
 	if s.Store != nil {
 		closeErr = s.Store.Close()
+	}
+	if s.Progression != nil {
+		closeErr = errors.Join(closeErr, s.Progression.Close())
 	}
 	if s.Service != nil {
 		closeErr = errors.Join(closeErr, s.Service.Close())
@@ -117,6 +135,8 @@ func (s *Server) register() {
 	api.Register(m)
 	m.HandleFunc("GET /health", s.health)
 	m.HandleFunc("GET /opds/v1.2/{$}", s.redirectOPDS("/opds/v1.2"))
+	m.HandleFunc("/opds/progression/{gid}/{token}", s.progressionHandler)
+	m.HandleFunc("GET /opds/authentication.json", s.progressionAuthentication)
 	m.HandleFunc("GET /opds/v1.2", s.rootV12)
 	m.HandleFunc("GET /opds/v1.2/search.xml", s.searchXML12)
 	m.HandleFunc("GET /opds/v1.2/gallery", s.gallery12)
@@ -174,7 +194,7 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 		cfg := s.Settings
 		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit"
 		isWebUI := r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/webui-assets/") || r.URL.Path == "/favicon.ico"
-		if !cfg.AuthEnabled() || (!editRoute && (r.URL.Path == "/health" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path))) {
+		if !cfg.AuthEnabled() || (!editRoute && (r.URL.Path == "/health" || r.URL.Path == "/opds/authentication.json" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path))) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -183,8 +203,12 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("X-Requested-With") != "XMLHttpRequest" && !strings.HasPrefix(r.URL.Path, "/api/") {
+		if strings.HasPrefix(r.URL.Path, "/opds/progression/") || (r.Header.Get("X-Requested-With") != "XMLHttpRequest" && !strings.HasPrefix(r.URL.Path, "/api/")) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="PandaOPDS"`)
+		}
+		if strings.HasPrefix(r.URL.Path, "/opds/progression/") {
+			writeBytes(w, http.StatusUnauthorized, "application/opds-authentication+json", nil, s.progressionAuthDocument())
+			return
 		}
 		writeJSON(w, 401, map[string]any{"error": "unauthorized", "detail": "valid PandaOPDS credentials required"})
 	})

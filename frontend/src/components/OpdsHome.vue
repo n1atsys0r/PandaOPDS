@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useApp } from "@/state.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,14 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from "@/components/ui/dialog";
 import CoverImage from "@/components/CoverImage.vue";
 import HomeEditor from "@/components/HomeEditor.vue";
 import {
@@ -37,6 +45,7 @@ import {
   Maximize2Icon as Maximize2,
   Minimize2Icon as Minimize2,
   XIcon as X,
+  InfoIcon as Info,
 } from "@lucide/vue";
 
 const props = defineProps({
@@ -659,10 +668,173 @@ watch(
   { immediate: true },
 );
 
-// Gallery Actions
-function openGallery(pub) {
+// Active list tracking for adjacent navigation & recommendations
+const currentPubList = ref([]);
+const currentIndex = computed(() => {
+  if (!selectedPub.value || !currentPubList.value.length) return -1;
+  return currentPubList.value.findIndex(
+    (p) => p.gid === selectedPub.value.gid && p.token === selectedPub.value.token,
+  );
+});
+
+const hasPrev = computed(() => currentIndex.value > 0);
+const hasNext = computed(
+  () =>
+    currentIndex.value >= 0 &&
+    currentIndex.value < currentPubList.value.length - 1,
+);
+
+const modalScrollRef = ref(null);
+function scrollModalToTop() {
+  if (modalScrollRef.value) {
+    modalScrollRef.value.scrollTop = 0;
+  }
+}
+
+function prevGallery() {
+  if (hasPrev.value) {
+    selectedPub.value = currentPubList.value[currentIndex.value - 1];
+    scrollModalToTop();
+  }
+}
+
+function nextGallery() {
+  if (hasNext.value) {
+    selectedPub.value = currentPubList.value[currentIndex.value + 1];
+    scrollModalToTop();
+  }
+}
+
+function selectPublication(pub) {
   selectedPub.value = pub;
+  scrollModalToTop();
+}
+
+// Namespace tag grouping logic (no local scrollview, flows naturally)
+const NAMESPACE_ORDER = [
+  "parody",
+  "character",
+  "group",
+  "artist",
+  "cosplayer",
+  "female",
+  "male",
+  "mixed",
+  "language",
+  "other",
+  "temp",
+  "misc",
+];
+
+const groupedTags = computed(() => {
+  if (!selectedPub.value?.subjects || !selectedPub.value.subjects.length) {
+    return [];
+  }
+
+  const map = new Map();
+
+  for (const item of selectedPub.value.subjects) {
+    const rawName = typeof item === "string" ? item : item?.name || "";
+    if (!rawName) continue;
+
+    let ns = "other";
+    let key = rawName;
+    const colonIdx = rawName.indexOf(":");
+    if (colonIdx > 0) {
+      ns = rawName.slice(0, colonIdx).trim().toLowerCase();
+      key = rawName.slice(colonIdx + 1).trim();
+    }
+
+    const styleStr =
+      typeof item === "object" ? String(item["x:style"] || "") : "";
+    const isWeak =
+      styleStr.includes("weak") ||
+      styleStr.includes("secondary") ||
+      styleStr.includes("dash");
+
+    if (!map.has(ns)) {
+      map.set(ns, []);
+    }
+    map.get(ns).push({
+      rawName,
+      namespace: ns,
+      key,
+      displayName: key,
+      searchName: rawName,
+      isWeak,
+    });
+  }
+
+  const result = [];
+  for (const ns of NAMESPACE_ORDER) {
+    if (map.has(ns)) {
+      result.push({
+        namespace: ns,
+        tags: map.get(ns),
+      });
+      map.delete(ns);
+    }
+  }
+
+  for (const [ns, tags] of map.entries()) {
+    result.push({
+      namespace: ns,
+      tags,
+    });
+  }
+
+  return result;
+});
+
+const relatedPublications = computed(() => {
+  if (!currentPubList.value.length || !selectedPub.value) return [];
+  return currentPubList.value.filter(
+    (p) => p.gid !== selectedPub.value.gid || p.token !== selectedPub.value.token,
+  );
+});
+
+function handleCategoryClick(category) {
+  if (!category) return;
+  detailOpen.value = false;
+  executeSearch(category, `分类: ${category}`);
+}
+
+function handleAuthorClick(author) {
+  if (!author) return;
+  detailOpen.value = false;
+  const q = author.includes(" ") ? `artist:"${author}$"` : `artist:${author}$`;
+  executeSearch(q, `作者: ${author}`);
+}
+
+function handleUploaderClick(uploader) {
+  if (!uploader) return;
+  detailOpen.value = false;
+  executeSearch(`uploader:${uploader}`, `上传者: ${uploader}`);
+}
+
+function handleKeyDown(e) {
+  if (!detailOpen.value) return;
+  if (
+    e.target &&
+    (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
+  ) {
+    return;
+  }
+  if (e.key === "ArrowLeft") {
+    prevGallery();
+  } else if (e.key === "ArrowRight") {
+    nextGallery();
+  }
+}
+
+// Gallery Actions
+function openGallery(pub, list = null) {
+  selectedPub.value = pub;
+  if (list && Array.isArray(list)) {
+    currentPubList.value = list;
+  }
   detailOpen.value = true;
+  scrollModalToTop();
 }
 
 function handleRead(pub) {
@@ -701,6 +873,11 @@ watch(editorOpen, (open, oldOpen) => {
 
 onMounted(() => {
   loadCatalog();
+  window.addEventListener("keydown", handleKeyDown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleKeyDown);
 });
 </script>
 
@@ -898,7 +1075,7 @@ onMounted(() => {
             v-for="pub in group.publications"
             :key="pub.gid + ':' + pub.token"
             class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-            @click="openGallery(pub)"
+            @click="openGallery(pub, group.publications)"
           >
             <!-- Card Cover -->
             <div
@@ -995,7 +1172,7 @@ onMounted(() => {
           v-for="pub in drillDownPublications"
           :key="pub.gid + ':' + pub.token"
           class="group relative flex flex-col cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-          @click="openGallery(pub)"
+          @click="openGallery(pub, drillDownPublications)"
         >
           <!-- Cover -->
           <div
@@ -1091,161 +1268,338 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- ================= GALLERY DETAILS & ACTION SHEET ================= -->
-    <Sheet v-model:open="detailOpen">
-      <SheetContent
-        side="right"
-        class="w-full sm:max-w-md overflow-y-auto space-y-5 p-6"
+    <!-- ================= APPLE BOOKS STYLE GALLERY DETAIL DIALOG ================= -->
+    <Dialog v-model:open="detailOpen">
+      <!-- Flanking Prev/Next Navigation Arrows (Floating beside the modal card) -->
+      <div
+        v-if="detailOpen"
+        class="fixed inset-0 pointer-events-none z-50 flex items-center justify-between p-2 sm:p-5"
       >
-        <SheetHeader class="space-y-1 text-left">
-          <div class="flex items-center gap-2">
-            <span
-              v-if="selectedPub?.category"
-              class="px-2 py-0.5 text-xs font-bold rounded text-white"
-              :style="{
-                backgroundColor: getCategoryColor(selectedPub.category),
-              }"
-            >
-              {{ selectedPub.category }}
-            </span>
-            <Badge
-              v-if="selectedPub?.archiveBadge"
-              :variant="selectedPub.archiveBadge.variant"
-              class="text-xs"
-            >
-              {{ selectedPub.archiveBadge.label }}
-            </Badge>
-          </div>
-          <SheetTitle class="text-base font-bold leading-tight">
-            {{ selectedPub?.title }}
-          </SheetTitle>
-          <SheetDescription v-if="selectedPub?.authors" class="text-xs">
-            作者：{{ selectedPub.authors }}
-          </SheetDescription>
-        </SheetHeader>
-
-        <!-- Preview Cover -->
-        <div
-          v-if="selectedPub"
-          class="relative aspect-[1/1.414] w-48 mx-auto overflow-hidden rounded-lg border bg-muted shadow-sm"
+        <Button
+          v-if="hasPrev"
+          variant="ghost"
+          size="icon"
+          class="pointer-events-auto size-10 sm:size-12 rounded-full bg-black/60 hover:bg-black/80 text-white shadow-xl backdrop-blur-md transition-all active:scale-95 border border-white/10"
+          title="上一部画廊 (←)"
+          @click.stop="prevGallery"
         >
-          <CoverImage :src="selectedPub.coverUrl" :alt="selectedPub.title" />
-        </div>
+          <ChevronLeft class="size-6" />
+        </Button>
+        <div v-else class="w-10 sm:w-12 pointer-events-none" />
 
-        <!-- Metadata Information -->
-        <div v-if="selectedPub" class="space-y-2 text-xs text-muted-foreground">
-          <div class="flex items-center justify-between py-1 border-b">
-            <span>评分</span>
-            <div class="flex items-center gap-1 font-semibold text-foreground">
-              <Star class="size-3.5 fill-amber-400 text-amber-400" />
-              <span>{{ selectedPub.rating.toFixed(2) }}</span>
+        <Button
+          v-if="hasNext"
+          variant="ghost"
+          size="icon"
+          class="pointer-events-auto size-10 sm:size-12 rounded-full bg-black/60 hover:bg-black/80 text-white shadow-xl backdrop-blur-md transition-all active:scale-95 border border-white/10"
+          title="下一部画廊 (→)"
+          @click.stop="nextGallery"
+        >
+          <ChevronRight class="size-6" />
+        </Button>
+        <div v-else class="w-10 sm:w-12 pointer-events-none" />
+      </div>
+
+      <DialogContent
+        :show-close-button="false"
+        class="w-full max-w-[calc(100%-1.5rem)] sm:max-w-3xl md:max-w-4xl max-h-[90vh] p-0 rounded-2xl sm:rounded-3xl border border-border/50 shadow-2xl overflow-hidden bg-background flex flex-col"
+      >
+        <!-- Modal Scrollable Content Container -->
+        <div
+          ref="modalScrollRef"
+          class="overflow-y-auto max-h-[90vh] flex flex-col select-text"
+        >
+          <!-- 1. HERO HEADER (Apple Books Dark Slate Banner) -->
+          <div
+            class="relative bg-gradient-to-b from-[#3a3b40] via-[#2c2e35] to-[#202227] text-white p-5 sm:p-7 shrink-0 overflow-hidden"
+          >
+            <!-- Ambient Category Glow -->
+            <div
+              class="absolute -top-24 -left-24 size-96 rounded-full blur-3xl opacity-25 pointer-events-none transition-colors duration-500"
+              :style="{
+                backgroundColor: getCategoryColor(selectedPub?.category) || '#6366f1',
+              }"
+            />
+
+            <!-- Top Navigation & Actions Bar -->
+            <div class="flex items-center justify-between relative z-10 mb-4 sm:mb-6">
+              <!-- Left: Frosted Circular Close Button -->
+              <DialogClose as-child>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="size-8 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white border border-white/10 transition-colors"
+                  title="关闭 (Esc)"
+                >
+                  <X class="size-4" />
+                </Button>
+              </DialogClose>
+
+              <!-- Right: Quick Action Pill Buttons -->
+              <div class="flex items-center gap-1.5 sm:gap-2">
+                <!-- Add to Favorite -->
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="size-8 rounded-full bg-black/35 hover:bg-black/55 text-white/90 hover:text-white border border-white/10 transition-colors"
+                  :title="selectedPub?.archiveBadge?.isFavorited ? '已收藏' : '加入收藏'"
+                  @click="handleFavorite(selectedPub)"
+                >
+                  <Bookmark
+                    class="size-4"
+                    :class="selectedPub?.archiveBadge?.isFavorited ? 'fill-amber-400 text-amber-400' : ''"
+                  />
+                </Button>
+
+                <!-- Archive -->
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="size-8 rounded-full bg-black/35 hover:bg-black/55 text-white/90 hover:text-white border border-white/10 transition-colors"
+                  :title="selectedPub?.archiveBadge?.isReady ? '已归档' : '开始归档'"
+                  @click="handleArchive(selectedPub)"
+                >
+                  <Download
+                    class="size-4"
+                    :class="selectedPub?.archiveBadge?.isReady ? 'text-emerald-400' : ''"
+                  />
+                </Button>
+
+                <!-- Upstream Link -->
+                <Button
+                  v-if="selectedPub?.upstreamUrl"
+                  variant="ghost"
+                  size="icon-sm"
+                  as="a"
+                  :href="selectedPub.upstreamUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="size-8 rounded-full bg-black/35 hover:bg-black/55 text-white/90 hover:text-white border border-white/10 transition-colors"
+                  title="在 E-Hentai 原站打开"
+                >
+                  <ExternalLink class="size-4" />
+                </Button>
+              </div>
+            </div>
+
+            <!-- Hero Main Info: Cover + Typography + Capsule -->
+            <div class="flex flex-col sm:flex-row gap-5 sm:gap-7 items-start relative z-10">
+              <!-- Left: Prominent Book Cover -->
+              <div
+                v-if="selectedPub"
+                class="relative aspect-[1/1.414] w-36 sm:w-44 md:w-48 shrink-0 mx-auto sm:mx-0 overflow-hidden rounded-xl border border-white/20 shadow-2xl shadow-black/70 bg-black/40 group"
+              >
+                <CoverImage :src="selectedPub.coverUrl" :alt="selectedPub.title" />
+              </div>
+
+              <!-- Right: Metadata & Action Capsule -->
+              <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch space-y-3.5 sm:space-y-4">
+                <div class="space-y-1.5 text-center sm:text-left">
+                  <!-- Category Link with Chevron -->
+                  <div class="flex items-center justify-center sm:justify-start gap-2">
+                    <span
+                      v-if="selectedPub?.category"
+                      class="inline-flex items-center gap-0.5 text-xs font-semibold tracking-wide text-white/80 hover:text-white transition-colors cursor-pointer"
+                      @click="handleCategoryClick(selectedPub.category)"
+                      :title="`搜索分类: ${selectedPub.category}`"
+                    >
+                      <span>{{ selectedPub.category }}</span>
+                      <ChevronRight class="size-3 opacity-60" />
+                    </span>
+                    <Badge
+                      v-if="selectedPub?.archiveBadge"
+                      :variant="selectedPub.archiveBadge.variant"
+                      class="text-[10px] px-1.5 py-0 h-4 border-white/20 bg-white/15 text-white"
+                    >
+                      {{ selectedPub.archiveBadge.label }}
+                    </Badge>
+                  </div>
+
+                  <!-- Title -->
+                  <DialogTitle class="text-lg sm:text-2xl font-bold text-white leading-snug line-clamp-2 break-words">
+                    {{ selectedPub?.title }}
+                  </DialogTitle>
+
+                  <!-- Author with Chevron -->
+                  <div
+                    v-if="selectedPub?.authors"
+                    class="inline-flex items-center gap-0.5 text-xs sm:text-sm font-medium text-white/85 hover:text-white transition-colors cursor-pointer"
+                    @click="handleAuthorClick(selectedPub.authors)"
+                    :title="`搜索作者: ${selectedPub.authors}`"
+                  >
+                    <span>{{ selectedPub.authors }}</span>
+                    <ChevronRight class="size-3 opacity-60" />
+                  </div>
+
+                  <!-- Rating & Stats Row -->
+                  <div class="flex items-center justify-center sm:justify-start gap-2 text-xs text-white/70 pt-0.5">
+                    <div class="flex items-center gap-1 font-semibold text-amber-300">
+                      <Star class="size-3.5 fill-amber-300 text-amber-300" />
+                      <span>{{ selectedPub?.rating.toFixed(2) }}</span>
+                    </div>
+                    <span class="opacity-40">·</span>
+                    <span>{{ selectedPub?.language || "多语言" }}</span>
+                    <span class="opacity-40">·</span>
+                    <span>{{ selectedPub?.pageCount || 0 }} 页</span>
+                  </div>
+                </div>
+
+                <!-- Apple Books Action Capsule -->
+                <div
+                  v-if="selectedPub"
+                  class="bg-white/10 dark:bg-white/5 backdrop-blur-md border border-white/15 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg"
+                >
+                  <div class="text-center sm:text-left text-xs text-white/70 w-full sm:w-auto">
+                    <div class="flex items-center justify-center sm:justify-start gap-1.5 font-semibold text-white/95">
+                      <span>画廊</span>
+                      <Info class="size-3 opacity-60" />
+                    </div>
+                    <div class="text-[11px] text-white/60 pt-0.5">
+                      {{ selectedPub.publishTime ? selectedPub.publishTime.slice(0, 10) : "日期未知" }} · {{ selectedPub.pageCount || 0 }} 页
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end">
+                    <!-- Secondary Button: Favorite or Archive -->
+                    <Button
+                      variant="ghost"
+                      class="rounded-full bg-white/15 hover:bg-white/25 text-white border border-white/20 text-xs px-3.5 py-1.5 h-8 gap-1.5 font-medium transition-all"
+                      @click="handleFavorite(selectedPub)"
+                    >
+                      <Bookmark class="size-3.5" :class="selectedPub.archiveBadge?.isFavorited ? 'fill-amber-400 text-amber-400' : ''" />
+                      <span>{{ selectedPub.archiveBadge?.isFavorited ? "已收藏" : "收藏" }}</span>
+                    </Button>
+
+                    <!-- Primary Button: Read Online -->
+                    <Button
+                      class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-bold text-xs sm:text-sm px-5 py-1.5 h-8 gap-1.5 shadow-md transition-all active:scale-95"
+                      @click="handleRead(selectedPub)"
+                    >
+                      <BookOpen class="size-4" />
+                      <span>在线阅读</span>
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-          <div
-            v-if="selectedPub.language"
-            class="flex items-center justify-between py-1 border-b"
-          >
-            <span>语言</span>
-            <span class="font-medium text-foreground">
-              {{ selectedPub.language }}
-            </span>
-          </div>
-          <div class="flex items-center justify-between py-1 border-b">
-            <span>页数</span>
-            <span class="font-medium text-foreground">
-              {{ selectedPub.pageCount || "未知" }} 页
-            </span>
-          </div>
-          <div
-            v-if="selectedPub.uploader"
-            class="flex items-center justify-between py-1 border-b"
-          >
-            <span>上传者</span>
-            <span class="font-medium text-foreground">
-              {{ selectedPub.uploader }}
-            </span>
-          </div>
-          <div
-            v-if="selectedPub.publishTime"
-            class="flex items-center justify-between py-1 border-b"
-          >
-            <span>发布日期</span>
-            <span class="font-medium text-foreground">
-              {{ selectedPub.publishTime }}
-            </span>
+
+          <!-- 2. BODY CONTENT (White/Dark Theme Adaptable) -->
+          <div class="p-5 sm:p-7 space-y-6 flex-1 bg-background text-foreground">
+            <!-- Section A: Gallery Metadata Details -->
+            <div class="space-y-2.5">
+              <div class="text-sm font-bold text-foreground">
+                画廊详情
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div
+                  v-if="selectedPub?.uploader"
+                  class="p-2.5 rounded-lg border bg-muted/30 cursor-pointer hover:bg-muted/60 transition-colors"
+                  :title="`搜索上传者: ${selectedPub.uploader}`"
+                  @click="handleUploaderClick(selectedPub.uploader)"
+                >
+                  <div class="text-muted-foreground text-[11px]">上传者</div>
+                  <div class="font-semibold text-foreground truncate mt-0.5">
+                    {{ selectedPub.uploader }}
+                  </div>
+                </div>
+                <div class="p-2.5 rounded-lg border bg-muted/30">
+                  <div class="text-muted-foreground text-[11px]">发布时间</div>
+                  <div class="font-semibold text-foreground truncate mt-0.5">
+                    {{ selectedPub?.publishTime ? selectedPub.publishTime.slice(0, 10) : "未知" }}
+                  </div>
+                </div>
+                <div class="p-2.5 rounded-lg border bg-muted/30">
+                  <div class="text-muted-foreground text-[11px]">页数</div>
+                  <div class="font-semibold text-foreground truncate mt-0.5">
+                    {{ selectedPub?.pageCount ? `${selectedPub.pageCount} 页` : "未知" }}
+                  </div>
+                </div>
+                <div class="p-2.5 rounded-lg border bg-muted/30">
+                  <div class="text-muted-foreground text-[11px]">归档状态</div>
+                  <div class="font-semibold text-foreground truncate mt-0.5">
+                    {{ selectedPub?.archiveBadge?.label || "未归档" }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section B: Namespace Tag Groups (NO local scrollview, flows naturally) -->
+            <div
+              v-if="groupedTags.length > 0"
+              class="space-y-2.5 pt-1"
+            >
+              <div class="flex items-center justify-between pb-1 border-b">
+                <span class="text-sm font-bold text-foreground">分类标签</span>
+                <span class="text-[11px] text-muted-foreground">点击标签可快速检索</span>
+              </div>
+
+              <!-- Tags Layout matching user's image: Left red/accent vertical bar, left namespace labels, wrapped tags -->
+              <div class="border-l-2 border-primary/40 pl-3 sm:pl-4 space-y-2">
+                <div
+                  v-for="grp in groupedTags"
+                  :key="grp.namespace"
+                  class="flex items-start gap-2.5 sm:gap-3 py-0.5"
+                >
+                  <!-- Namespace label (right-aligned, monospace/neat, matching screenshot) -->
+                  <div class="w-18 sm:w-22 shrink-0 text-right text-xs font-semibold text-muted-foreground/90 pt-0.5 select-none font-mono">
+                    {{ grp.namespace }}:
+                  </div>
+                  <!-- Tags container (NO overflow-y-auto, NO max-h) -->
+                  <div class="flex flex-wrap gap-1.5 flex-1 min-w-0">
+                    <span
+                      v-for="t in grp.tags"
+                      :key="t.rawName"
+                      :class="[
+                        'text-[11px] sm:text-xs font-normal px-2.5 py-0.5 rounded-md cursor-pointer select-none transition-all duration-150 inline-flex items-center gap-1 active:scale-95',
+                        t.isWeak
+                          ? 'border border-dashed border-primary/40 text-foreground/85 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
+                          : 'border border-solid border-primary/60 text-foreground bg-muted/40 hover:bg-primary hover:text-primary-foreground hover:border-primary',
+                      ]"
+                      :title="`点击搜索标签: ${t.searchName}`"
+                      @click="handleTagClick(t.searchName)"
+                    >
+                      {{ t.displayName }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section C: More in this list / Series (このシリーズの他のブック) -->
+            <div v-if="relatedPublications.length > 0" class="space-y-3 pt-3 border-t">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-bold text-foreground inline-flex items-center gap-1">
+                  当前列表的其他作品
+                  <ChevronRight class="size-3.5 opacity-60" />
+                </span>
+                <span class="text-[11px] text-muted-foreground">共 {{ relatedPublications.length }} 本</span>
+              </div>
+
+              <!-- Horizontal Shelf Track -->
+              <div class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none">
+                <div
+                  v-for="otherPub in relatedPublications"
+                  :key="otherPub.gid + ':' + otherPub.token"
+                  class="group/item relative w-24 sm:w-28 shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                  @click="selectPublication(otherPub)"
+                >
+                  <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm group-hover/item:shadow-md transition-shadow">
+                    <CoverImage :src="otherPub.coverUrl" :alt="otherPub.title" />
+                  </div>
+                  <p class="text-[11px] font-medium leading-tight line-clamp-1 mt-1.5 text-foreground group-hover/item:text-primary transition-colors">
+                    {{ otherPub.title }}
+                  </p>
+                  <p v-if="otherPub.authors" class="text-[10px] text-muted-foreground line-clamp-1">
+                    {{ otherPub.authors }}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-
-        <!-- Tags List -->
-        <div
-          v-if="selectedPub?.subjects && selectedPub.subjects.length > 0"
-          class="space-y-1.5"
-        >
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-muted-foreground">标签</span>
-            <span class="text-[10px] text-muted-foreground/70">点击标签可快速检索</span>
-          </div>
-          <div class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
-            <Badge
-              v-for="sub in selectedPub.subjects"
-              :key="sub.name"
-              variant="secondary"
-              class="text-[11px] font-normal cursor-pointer hover:bg-primary hover:text-primary-foreground transition-all duration-150 select-none active:scale-95 inline-flex items-center gap-1 group/tag"
-              :title="`点击搜索标签：${sub.name}`"
-              @click="handleTagClick(sub.name)"
-            >
-              <Tag class="size-2.5 opacity-60 group-hover/tag:opacity-100 transition-opacity" />
-              <span>{{ sub.name }}</span>
-            </Badge>
-          </div>
-        </div>
-
-        <!-- Action Buttons -->
-        <div v-if="selectedPub" class="space-y-2 pt-2">
-          <!-- 1. 在线阅读 (Main button) -->
-          <Button
-            class="w-full gap-2 font-medium"
-            @click="handleRead(selectedPub)"
-          >
-            <BookOpen class="size-4" /> 在线阅读
-          </Button>
-
-          <div class="grid grid-cols-2 gap-2">
-            <!-- 2. 加入收藏 -->
-            <Button
-              variant="outline"
-              class="gap-1.5 text-xs"
-              @click="handleFavorite(selectedPub)"
-            >
-              <Bookmark class="size-3.5" /> 加入收藏
-            </Button>
-
-            <!-- 3. 开始归档 -->
-            <Button
-              variant="outline"
-              class="gap-1.5 text-xs"
-              @click="handleArchive(selectedPub)"
-            >
-              <Download class="size-3.5" />
-              {{ selectedPub.archiveBadge?.isReady ? "已归档" : "开始归档" }}
-            </Button>
-          </div>
-
-          <!-- 4. 原站链接 -->
-          <Button
-            v-if="selectedPub.upstreamUrl"
-            variant="ghost"
-            class="w-full gap-1.5 text-xs text-muted-foreground"
-            as="a"
-            :href="selectedPub.upstreamUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ExternalLink class="size-3.5" /> 在 E-Hentai 原站打开
-          </Button>
-        </div>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
 
     <!-- ================= WYSIWYG HOME EDITOR DRAWER ================= -->
     <Sheet v-model:open="editorOpen">

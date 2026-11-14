@@ -15,12 +15,22 @@ import (
 	"pandaopds/internal/eh"
 	"pandaopds/internal/feed"
 	"pandaopds/internal/home"
+	"pandaopds/internal/progression"
 )
 
 var cursorRE = regexp.MustCompile(`^\d+(?:-\d+)*$`)
 var periods = map[string]string{"yesterday": "Yesterday", "month": "Past Month", "year": "Past Year", "alltime": "All Time"}
 
 const homepagePreviewDeadline = 12 * time.Second
+
+func observeProgressionVersions(store *progression.Store, gid int, token string, activeGID int, activeToken string, versions []eh.GalleryVersion) {
+	_ = store.Observe(gid, token, activeGID, activeToken)
+	for _, v := range versions {
+		if v.GID > 0 && v.Token != "" {
+			_ = store.Observe(v.GID, v.Token, activeGID, activeToken)
+		}
+	}
+}
 
 type homePreviewKey struct {
 	typeName string
@@ -271,6 +281,9 @@ func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 		activeGID, activeToken = gid, token
 	}
 	item := eh.GalleryListItem{GID: gid, Token: token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: d.Category, PublishTime: d.PublishTime, PageCount: &d.ImageCount}
+	if s.Progression != nil {
+		observeProgressionVersions(s.Progression, gid, token, activeGID, activeToken, d.NewerVersions)
+	}
 	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomChapterVersion(gid, token, item, title, author)))
 }
 
@@ -733,6 +746,9 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 	activeGID, activeToken := d.ActiveGID, d.ActiveToken
 	if activeGID <= 0 || activeToken == "" {
 		activeGID, activeToken = gid, token
+	}
+	if s.Progression != nil {
+		observeProgressionVersions(s.Progression, gid, token, activeGID, activeToken, d.NewerVersions)
 	}
 	if activeGID == gid && activeToken == token && s.Store.IsReady(gid, token) {
 		if n := s.Store.PageCount(gid, token); n > 0 {

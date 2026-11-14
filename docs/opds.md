@@ -6,6 +6,7 @@
 
 - OPDS 1.2 使用 Atom，入口为 `/opds/v1.2`，含图库采集、Toplist、归档 shelf、章节详情和 OpenSearch 描述文档。
 - OPDS 2.0 使用 JSON，入口为 `/opds/v2.0`，含导航/采集文档、Toplist、归档 shelf、图库详情与 publication 文档。
+- 作品条目和 publication 提供 OPDS Progression 1.0 链接（`rel=http://opds-spec.org/progression`，`application/opds-progression+json`），服务路径为 `/opds/progression/{gid}/{token}`。GET 返回当前进度或空响应；PUT 提交带 `modified`、`device`、`progression` 的 JSON，可选 `title` 和 URI `references`。新记录返回 201，更新或相同重试返回 200，过期或同时间冲突返回 409 Problem Details。Progression 使用独立的 `ARCHIVE_STATE_DIR/opds-progression.db` bbolt 文件，最多保留 10,000 个未归档作品；归档作品不计入该上限。
 - `/stream/{gid}/{token}/page/{page}` 是两种目录共用的逐页图像代理。缩略图代理提供封面、内页预览及评论图片转发。
 - WebUI 与管理 API 另属 `/` 和 `/api/*` 命名空间；完整接口列表见 OpenAPI。
 

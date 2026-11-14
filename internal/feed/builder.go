@@ -29,6 +29,8 @@ const (
 	RelAcquisition  = "http://opds-spec.org/acquisition"
 	RelAlternate    = "alternate"
 	RelSubsection   = "subsection"
+	RelProgression  = "http://opds-spec.org/progression"
+	MIMEProgression = "application/opds-progression+json"
 	RWPMContext     = "https://readium.org/webpub-manifest/context.jsonld"
 	VocabularyIRI   = "https://github.com/n1atsys0r/PandaOPDS/vocab#"
 )
@@ -149,7 +151,7 @@ func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query strin
 		if len(authors) > 0 {
 			entry.Author = &AtomAuthor{Name: strings.Join(authors, ", ")}
 		}
-		links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), Type: "image/jpeg"}, {Rel: RelAcquisition, Href: b.Href(fmt.Sprintf("/opds/v1.2/gallery/%d/%s/chapters", item.GID, item.Token)), Type: MIMEAtomAcq}}
+		links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), Type: "image/jpeg"}, {Rel: RelAcquisition, Href: b.Href(fmt.Sprintf("/opds/v1.2/gallery/%d/%s/chapters", item.GID, item.Token)), Type: MIMEAtomAcq}, {Rel: RelProgression, Href: b.Href(fmt.Sprintf("/opds/progression/%d/%s", activeGID, activeToken)), Type: MIMEProgression}}
 		if item.PageCount != nil && *item.PageCount > 0 {
 			count := *item.PageCount
 			links = append(links, AtomLink{Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken)), Type: MIMEImage, Count: &count})
@@ -175,7 +177,7 @@ func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query strin
 	return b.atomFeed(title, iso(""), entries, more)
 }
 func (b Builder) AtomChapter(gid int, token, title, updated, author, category string, count int) string {
-	links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", gid, token)), Type: "image/jpeg"}, {Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", gid, token)), Type: MIMEImage, Count: &count}, {Rel: RelAlternate, Href: b.Upstream(gid, token), Type: "text/html", Title: b.Settings.SiteHost()}}
+	links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", gid, token)), Type: "image/jpeg"}, {Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", gid, token)), Type: MIMEImage, Count: &count}, {Rel: RelAlternate, Href: b.Upstream(gid, token), Type: "text/html", Title: b.Settings.SiteHost()}, {Rel: RelProgression, Href: b.Href(fmt.Sprintf("/opds/progression/%d/%s", gid, token)), Type: MIMEProgression}}
 	e := AtomEntry{ID: fmt.Sprintf("urn:ehentai:gallery:%d:%s", gid, token), Title: "Chapter 1: " + title, Updated: iso(updated), Links: links}
 	if author != "" {
 		e.Author = &AtomAuthor{Name: author}
@@ -194,7 +196,7 @@ func (b Builder) AtomChapterVersion(gid int, token string, item eh.GalleryListIt
 	if item.PageCount != nil {
 		count = item.PageCount
 	}
-	links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), Type: "image/jpeg"}, {Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken)), Type: MIMEImage, Count: count}, {Rel: RelAlternate, Href: b.Upstream(activeGID, activeToken), Type: "text/html", Title: b.Settings.SiteHost()}}
+	links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), Type: "image/jpeg"}, {Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", activeGID, activeToken)), Type: MIMEImage, Count: count}, {Rel: RelAlternate, Href: b.Upstream(activeGID, activeToken), Type: "text/html", Title: b.Settings.SiteHost()}, {Rel: RelProgression, Href: b.Href(fmt.Sprintf("/opds/progression/%d/%s", activeGID, activeToken)), Type: MIMEProgression}}
 	e := AtomEntry{ID: fmt.Sprintf("urn:ehentai:gallery:%d:%s", gid, token), Title: "Chapter 1: " + title, Updated: iso(item.PublishTime), Links: links}
 	if author != "" {
 		e.Author = &AtomAuthor{Name: author}
@@ -280,7 +282,7 @@ func (b Builder) publicationVersion(gid int, token string, activeGID int, active
 			links = append(links, b.Link(RelStream, stream, MIMEImage, "", props))
 		}
 	}
-	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil))
+	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil), b.progressionLink(activeGID, activeToken))
 	pub := map[string]any{"context": []any{RWPMContext, map[string]string{"x": VocabularyIRI}}, "metadata": md, "links": links, "images": []map[string]string{{"href": b.Href(fmt.Sprintf("/image/%d/%s/thumb", activeGID, activeToken)), "type": "image/jpeg"}}}
 	if detail && count > 0 {
 		reading := []map[string]any{}
@@ -306,6 +308,14 @@ func (b Builder) Link(rel, href, typ, title string, props map[string]any) map[st
 		m["templated"] = true
 	}
 	return m
+}
+func (b Builder) progressionLink(gid int, token string) map[string]any {
+	props := map[string]any(nil)
+	if b.Settings.AuthEnabled() {
+		props = map[string]any{"authenticate": b.Link("", b.Href("/opds/authentication.json"), "application/opds-authentication+json", "", nil)}
+		delete(props["authenticate"].(map[string]any), "rel")
+	}
+	return b.Link(RelProgression, b.Href(fmt.Sprintf("/opds/progression/%d/%s", gid, token)), MIMEProgression, "Progression", props)
 }
 func (b Builder) NavigationDocument(nav []map[string]any, groups []map[string]any) map[string]any {
 	doc := map[string]any{"metadata": map[string]any{"title": "PandaOPDS", "identifier": "urn:ehentai:root", "modified": iso("")}, "links": []map[string]any{b.Link("self", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("start", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("search", b.Href("/opds/v2.0/gallery?query={searchTerms}"), MIMEOPDSAcq, "Search", nil)}}
@@ -457,7 +467,7 @@ func (b Builder) DetailLinksVersion(gid int, token string, activeGID int, active
 	if count > 0 {
 		links = append(links, b.Link(RelAcquisition, stream, MIMEImage, title, props), b.Link(RelStream, stream, MIMEImage, "", props))
 	}
-	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil))
+	links = append(links, b.Link("self", b.Href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/publication", gid, token)), MIMEPublication, title, nil), b.Link(RelAlternate, b.Upstream(activeGID, activeToken), "text/html", b.Settings.SiteHost(), nil), b.progressionLink(activeGID, activeToken))
 	return links
 }
 func (b Builder) ReadingOrder(gid int, token string, count int) []map[string]any {

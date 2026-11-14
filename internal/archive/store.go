@@ -1155,6 +1155,78 @@ func (s *Store) ListReady(page, perPage int) []eh.ArchiveInfo {
 	return all[start:end]
 }
 
+// ProgressionArchiveSnapshot captures each shelf's root, active and known
+// version identities plus which identities currently have a valid ZIP payload.
+func (s *Store) ProgressionArchiveSnapshot() []ProgressionArchiveGroup {
+	type candidate struct {
+		identity [2]string
+		path     string
+		ready    bool
+	}
+	type groupCandidate struct {
+		root, active [2]string
+		identities   [][2]string
+		paths        []candidate
+	}
+	s.mu.RLock()
+	groups := make([]groupCandidate, 0, len(s.roots))
+	for _, rec := range s.roots {
+		if !s.flatOwnedLocked(rec) {
+			continue
+		}
+		rg, rt := s.rootIdentity(rec)
+		ag, at := s.activeIdentity(rec)
+		g := groupCandidate{root: [2]string{strconv.Itoa(rg), rt}, active: [2]string{strconv.Itoa(ag), at}}
+		seen := map[string]bool{}
+		add := func(gid int, token string) {
+			if gid <= 0 || token == "" {
+				return
+			}
+			id := [2]string{strconv.Itoa(gid), token}
+			k := key(gid, token)
+			if seen[k] {
+				return
+			}
+			seen[k] = true
+			g.identities = append(g.identities, id)
+			if p := s.archivePathLocked(rec, gid, token); p != "" {
+				g.paths = append(g.paths, candidate{id, p, s.versionStateLocked(rec, gid, token)["status"] == "ready"})
+			}
+		}
+		add(rg, rt)
+		add(ag, at)
+		for id := range versionRecords(rec.meta) {
+			if gid, token, ok := parseKey(id); ok {
+				add(gid, token)
+			}
+		}
+		groups = append(groups, g)
+	}
+	s.mu.RUnlock()
+	out := make([]ProgressionArchiveGroup, 0, len(groups))
+	for _, g := range groups {
+		available := [][2]string{}
+		for _, c := range g.paths {
+			if !c.ready {
+				continue
+			}
+			st, err := os.Stat(c.path)
+			if err == nil && st.Mode().IsRegular() && st.Size() > 0 {
+				available = append(available, c.identity)
+			}
+		}
+		out = append(out, ProgressionArchiveGroup{Root: g.root, Active: g.active, Identities: g.identities, Available: available})
+	}
+	return out
+}
+
+type ProgressionArchiveGroup struct {
+	Root       [2]string
+	Active     [2]string
+	Identities [][2]string
+	Available  [][2]string
+}
+
 func (s *Store) pageCountLocked(rec *rootRecord, gid int, token string) int {
 	return toInt(s.versionStateLocked(rec, gid, token)["page_count"])
 }

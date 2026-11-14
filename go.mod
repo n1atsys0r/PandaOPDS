@@ -21,6 +21,8 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	go.etcd.io/bbolt v1.5.0
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )

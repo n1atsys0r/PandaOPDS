@@ -4514,6 +4514,9 @@
         "description": "Replaces the entire home layout. Top-level publications and groups cannot coexist; top-level navigation may coexist with either. A valid replacement can repair a decodable legacy layout that violates current rules; the original file is backed up."
       }
     }
+    ,
+    "/opds/progression/{gid}/{token}": {"parameters":[{"name":"gid","in":"path","required":true,"schema":{"type":"integer"}},{"name":"token","in":"path","required":true,"schema":{"type":"string"}}],"get":{"summary":"Get OPDS progression","responses":{"200":{"description":"Progression document or empty body","content":{"application/opds-progression+json":{"schema":{"$ref":"#/components/schemas/Progression"}}}}}},"put":{"summary":"Update OPDS progression","requestBody":{"required":true,"content":{"application/opds-progression+json":{"schema":{"$ref":"#/components/schemas/Progression"}}}},"responses":{"200":{"description":"Progression updated or identical retry"},"201":{"description":"Progression created"},"400":{"description":"Invalid progression document"},"401":{"description":"Authentication required"},"409":{"description":"Older or conflicting progression"},"default":{"description":"Problem details"}}}},
+    "/opds/authentication.json": {"get":{"summary":"OPDS Basic authentication document","responses":{"200":{"description":"OPDS Authentication Document","content":{"application/opds-authentication+json":{"schema":{"type":"object"}}}}}}}
   },
   "components": {
     "schemas": {
@@ -5202,6 +5205,7 @@
         }
       }
     },
+      "Progression": {"type":"object","required":["modified","device","progression"],"properties":{"modified":{"type":"string","format":"date-time"},"device":{"type":"object","required":["id","name"],"properties":{"id":{"type":"string","format":"uri"},"name":{"type":"string","minLength":1}}},"progression":{"type":"number","minimum":0,"maximum":1},"title":{"type":"string"},"references":{"type":"array","items":{"type":"string","format":"uri-reference"}}}},
     "securitySchemes": {
       "basicAuth": {
         "type": "http",

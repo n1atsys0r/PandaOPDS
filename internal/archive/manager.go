@@ -24,20 +24,35 @@ import (
 )
 
 type Manager struct {
-	Settings config.Settings
-	Client   *eh.Client
-	Service  *eh.Service
-	Store    *Store
-	slots    chan struct{}
-	mu       sync.Mutex
-	startMu  sync.Mutex
-	wg       sync.WaitGroup
-	jobs     map[string]context.CancelFunc
-	jobDone  map[string]chan struct{}
-	jobRoots map[string]string
-	progress map[string]int64
-	ctx      context.Context
-	cancel   context.CancelFunc
+	Settings            config.Settings
+	Client              *eh.Client
+	Service             *eh.Service
+	Store               *Store
+	slots               chan struct{}
+	mu                  sync.Mutex
+	startMu             sync.Mutex
+	wg                  sync.WaitGroup
+	jobs                map[string]context.CancelFunc
+	jobDone             map[string]chan struct{}
+	jobRoots            map[string]string
+	progress            map[string]int64
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	availabilityChanged func()
+}
+
+func (m *Manager) SetAvailabilityHook(fn func()) {
+	m.mu.Lock()
+	m.availabilityChanged = fn
+	m.mu.Unlock()
+}
+func (m *Manager) notifyAvailabilityChanged() {
+	m.mu.Lock()
+	fn := m.availabilityChanged
+	m.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 type ArchiverUnavailableError struct{ Detail string }
@@ -801,6 +816,8 @@ func (m *Manager) activateVersionUpdate(ctx context.Context, rootGID int, rootTo
 	}
 	if err = m.Store.ActivateVersion(rootGID, rootToken, gid, token, snapshot, cover, hasCover); err != nil {
 		_, _ = m.Store.Upsert(gid, token, map[string]any{"activation_error": err.Error(), "error": err.Error()})
+	} else {
+		m.notifyAvailabilityChanged()
 	}
 }
 func (m *Manager) awaitReady(ctx context.Context, gid int, token string) error {
@@ -930,6 +947,7 @@ func (m *Manager) finalize(ctx context.Context, gid int, token string) error {
 	_, e = m.Store.Upsert(gid, token, map[string]any{"status": "ready", "page_count": count, "total_bytes": validatedStat.Size(), "error": nil, "upgrade_backup": map[string]any{}})
 	if e == nil {
 		_ = os.Remove(part)
+		m.notifyAvailabilityChanged()
 	}
 	return e
 }
@@ -1131,14 +1149,22 @@ func (m *Manager) Remove(gid int, token string) bool {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	m.stopAndCleanStagingLocked(gid, token)
-	return m.Store.Remove(gid, token)
+	removed := m.Store.Remove(gid, token)
+	if removed {
+		m.notifyAvailabilityChanged()
+	}
+	return removed
 }
 
 func (m *Manager) DemoteToUnarchived(gid int, token string) bool {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	m.stopAndCleanStagingLocked(gid, token)
-	return m.Store.ResetToUnarchived(gid, token)
+	removed := m.Store.ResetToUnarchived(gid, token)
+	if removed {
+		m.notifyAvailabilityChanged()
+	}
+	return removed
 }
 
 func (m *Manager) stopAndCleanStagingLocked(gid int, token string) {
