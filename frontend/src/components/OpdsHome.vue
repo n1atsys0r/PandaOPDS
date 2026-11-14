@@ -1019,6 +1019,11 @@ const groupedTags = computed(() => {
       key = rawName.slice(colonIdx + 1).trim();
     }
 
+    // Hide category namespace in WebUI as category is already featured in the hero header
+    if (ns === "category" || ns === "分类") {
+      continue;
+    }
+
     const rawStyle =
       typeof item === "object" ? (item["x:style"] || item.style || null) : null;
     const tagStyle = parseTagStyle(rawStyle);
