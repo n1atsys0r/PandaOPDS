@@ -121,3 +121,56 @@ test("page navigation items serialize and validate cleanly", () => {
   assert.equal(serialized[0].query, "doujin");
   assert.equal(serialized[1].query, "home");
 });
+
+test("navigation items support preset, search, and page types cleanly", () => {
+  const mixedLayout = {
+    navigation: [
+      { title: "同人专区", type: "page", query: "doujin" },
+      { title: "热门排行", type: "preset", query: "popular" },
+      { title: "东方Project", type: "search", query: "touhou" },
+    ],
+    publication: null,
+    facets: [],
+    groups: [
+      {
+        kind: "navigation",
+        group: true,
+        title: "分类导航",
+        items: [
+          { title: "同人", type: "page", query: "doujin" },
+          { title: "日榜", type: "preset", query: "toplist:yesterday" },
+          { title: "搜索汉化", type: "search", query: "language:chinese" },
+        ],
+      },
+    ],
+  };
+
+  const serialized = serializeHomeLayout(mixedLayout, "groups");
+  assert.equal(serialized.length, 4);
+
+  // Top navigation items
+  assert.equal(serialized[0].type, "page");
+  assert.equal(serialized[0].query, "doujin");
+  assert.equal(serialized[1].type, "preset");
+  assert.equal(serialized[1].query, "popular");
+  assert.equal(serialized[2].type, "search");
+  assert.equal(serialized[2].query, "touhou");
+
+  // Group navigation items
+  assert.equal(serialized[3].kind, "navigation");
+  assert.equal(serialized[3].group, true);
+  assert.equal(serialized[3].items.length, 3);
+  assert.equal(serialized[3].items[0].type, "page");
+  assert.equal(serialized[3].items[1].type, "preset");
+  assert.equal(serialized[3].items[1].query, "toplist:yesterday");
+  assert.equal(serialized[3].items[2].type, "search");
+  assert.equal(serialized[3].items[2].query, "language:chinese");
+
+  // Round-trip with splitHomeSections
+  const split = splitHomeSections(serialized);
+  assert.equal(split.navigation.length, 3);
+  assert.equal(split.navigation[1].type, "preset");
+  assert.equal(split.navigation[2].type, "search");
+  assert.equal(split.groups[0].items[1].type, "preset");
+  assert.equal(split.groups[0].items[2].type, "search");
+});

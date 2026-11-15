@@ -1,6 +1,17 @@
+export function isKnownPreset(query) {
+  if (!query) return false;
+  return [
+    "latest", "popular", "watched", "favorites", "archives",
+    "toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime",
+  ].includes(query) || /^favorites:\d+$/.test(query);
+}
+
 export function splitHomeSections(sections = []) {
   return {
-    navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group)),
+    navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group).map((x) => ({
+      ...x,
+      type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : "page"),
+    }))),
     publication: structuredClone(sections.find((x) => x.kind === "publication" && !x.group) || null),
     facets: structuredClone(sections.filter((x) => x.kind === "facets" && !x.group).map(({ title }) => ({ title }))),
     groups: structuredClone(sections.filter((x) => x.group).map((x) => {
@@ -13,6 +24,10 @@ export function splitHomeSections(sections = []) {
             query: x.query || "latest",
           }];
         }
+        items = items.map((it) => ({
+          ...it,
+          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : "page"),
+        }));
         return {
           ...x,
           items,
@@ -149,8 +164,8 @@ export function serializeHomeLayout(layout, mode) {
     kind: "navigation",
     group: false,
     count: null,
-    type: x.type || "page",
-    query: x.query || "home",
+    type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : "page"),
+    query: x.query || (x.type === "preset" ? "latest" : x.type === "search" ? "" : "home"),
   }));
   let content = [];
   if (normalizedMode === "groups") {
@@ -158,8 +173,8 @@ export function serializeHomeLayout(layout, mode) {
       if (x.kind === "navigation") {
         const items = (x.items || []).map((it) => ({
           title: it.title || "",
-          type: it.type || "page",
-          query: it.query || "home",
+          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : "page"),
+          query: it.query || (it.type === "preset" ? "latest" : it.type === "search" ? "" : "home"),
         }));
         const first = items[0] || { type: "page", query: "home" };
         return {

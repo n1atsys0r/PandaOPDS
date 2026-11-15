@@ -126,6 +126,8 @@ export default {
     cache_max: "上限 {max} GB",
     cache_unlimited: "无上限",
     clear_cache: "清理缓存",
+    clear_cache_title: "清理图片缓存",
+    clear_btn: "清理",
     clearing: "清理中...",
     cache_entries: "缓存条目",
     cache_hits: "缓存命中率",

@@ -272,8 +272,24 @@ const homeFacetWarning = computed(() =>
     : "",
 );
 
+function handleNavTypeChange(item) {
+  if (item.type === "page") {
+    if (!item.query || !s.pages.value.some((p) => p.id === item.query)) {
+      item.query = s.pages.value[0]?.id || "home";
+    }
+  } else if (item.type === "preset") {
+    if (!isKnownPreset(item.query)) {
+      item.query = "latest";
+    }
+  } else if (item.type === "search") {
+    if (item.query && (isKnownPreset(item.query) || s.pages.value.some((p) => p.id === item.query))) {
+      item.query = "";
+    }
+  }
+  s.homeDirty.value = true;
+}
+
 function handleNavTargetChange(nav) {
-  nav.type = "page";
   s.homeDirty.value = true;
 }
 
@@ -341,6 +357,24 @@ const PRESET_GROUPS = computed(() => [
 
 function isKnownPreset(q) {
   return PRESET_GROUPS.value.some((g) => g.options.some((o) => o.value === q));
+}
+
+function getNavTargetTitle(nav) {
+  if (!nav) return "";
+  if (nav.type === "page") {
+    return getPageTitle(nav.query);
+  }
+  if (nav.type === "preset") {
+    for (const grp of PRESET_GROUPS.value) {
+      const found = grp.options.find((o) => o.value === nav.query);
+      if (found) return found.label;
+    }
+    return nav.query || "";
+  }
+  if (nav.type === "search") {
+    return nav.query || "";
+  }
+  return getPageTitle(nav.query);
 }
 
 function handleTypeChange(item) {
@@ -643,7 +677,7 @@ function handleGroupKindChange(item) {
                         <span
                           class="font-medium text-sm text-foreground truncate max-w-[200px] sm:max-w-[280px]"
                         >
-                          {{ nav.title || getPageTitle(nav.query) || t("home_editor.unnamed_nav") }}
+                          {{ nav.title || getNavTargetTitle(nav) || t("home_editor.unnamed_nav") }}
                         </span>
                         <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
                           <Badge
@@ -716,14 +750,31 @@ function handleGroupKindChange(item) {
                       class="border-t border-border bg-muted/20 px-4 py-3.5"
                     >
                       <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                        <div class="sm:col-span-6 flex flex-col gap-1.5">
+                        <div class="sm:col-span-3 flex flex-col gap-1.5">
                           <label class="text-xs font-medium text-foreground">
-                            {{ t("home_editor.target_page") }}
+                            {{ t("home_editor.source_type") }}
                           </label>
                           <select
+                            v-model="nav.type"
+                            class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                            @change="handleNavTypeChange(nav)"
+                          >
+                            <option value="page">{{ t("home_editor.target_page") }}</option>
+                            <option value="preset">{{ t("home_editor.type_preset") }}</option>
+                            <option value="search">{{ t("home_editor.type_search") }}</option>
+                          </select>
+                        </div>
+
+                        <div class="sm:col-span-4 flex flex-col gap-1.5">
+                          <label class="text-xs font-medium text-foreground">
+                            {{ nav.type === "page" ? t("home_editor.target_page") : (nav.type === "preset" ? t("home_editor.preset_name") : t("home_editor.search_query")) }}
+                          </label>
+                          <!-- Target: Page -->
+                          <select
+                            v-if="nav.type === 'page'"
                             v-model="nav.query"
                             class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
-                            @change="handleNavTargetChange(nav)"
+                            @change="s.homeDirty.value = true"
                           >
                             <option
                               v-for="p in s.pages.value"
@@ -733,14 +784,55 @@ function handleGroupKindChange(item) {
                               {{ p.title || p.id }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
                             </option>
                           </select>
+
+                          <!-- Target: Preset -->
+                          <select
+                            v-else-if="nav.type === 'preset'"
+                            v-model="nav.query"
+                            class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
+                            @change="s.homeDirty.value = true"
+                          >
+                            <option v-if="!nav.query" value="" disabled>
+                              {{ t("home_editor.select_preset") }}
+                            </option>
+                            <option
+                              v-else-if="!isKnownPreset(nav.query)"
+                              :value="nav.query"
+                            >
+                              {{ t("home_editor.custom_preset", { query: nav.query }) }}
+                            </option>
+                            <optgroup
+                              v-for="grp in PRESET_GROUPS"
+                              :key="grp.label"
+                              :label="grp.label"
+                            >
+                              <option
+                                v-for="opt in grp.options"
+                                :key="opt.value"
+                                :value="opt.value"
+                              >
+                                {{ opt.label }}
+                              </option>
+                            </optgroup>
+                          </select>
+
+                          <!-- Target: Search -->
+                          <Input
+                            v-else
+                            v-model="nav.query"
+                            :placeholder="t('home_editor.search_placeholder')"
+                            class="h-8 text-xs bg-background dark:bg-input/30 font-mono"
+                            @update:model-value="s.homeDirty.value = true"
+                          />
                         </div>
-                        <div class="sm:col-span-6 flex flex-col gap-1.5">
+
+                        <div class="sm:col-span-5 flex flex-col gap-1.5">
                           <label class="text-xs font-medium text-foreground">
                             {{ t("home_editor.nav_title_label") }}
                           </label>
                           <Input
                             v-model="nav.title"
-                            :placeholder="getPageTitle(nav.query) || t('home_editor.nav_title_placeholder')"
+                            :placeholder="getNavTargetTitle(nav) || t('home_editor.nav_title_placeholder')"
                             class="h-8 text-xs bg-background dark:bg-input/30"
                             @update:model-value="s.homeDirty.value = true"
                           />
@@ -1138,12 +1230,27 @@ function handleGroupKindChange(item) {
                                   {{ subIdx + 1 }}
                                 </span>
 
-                                <!-- Target Page Select -->
-                                <div class="w-full sm:w-48 shrink-0">
+                                <!-- Target Type Select -->
+                                <div class="w-full sm:w-28 shrink-0">
                                   <select
+                                    v-model="subItem.type"
+                                    class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                                    @change="handleNavTypeChange(subItem)"
+                                  >
+                                    <option value="page">{{ t("home_editor.target_page") }}</option>
+                                    <option value="preset">{{ t("home_editor.type_preset") }}</option>
+                                    <option value="search">{{ t("home_editor.type_search") }}</option>
+                                  </select>
+                                </div>
+
+                                <!-- Target Value Control -->
+                                <div class="w-full sm:w-44 md:w-52 shrink-0">
+                                  <!-- If page -->
+                                  <select
+                                    v-if="subItem.type === 'page'"
                                     v-model="subItem.query"
                                     class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
-                                    @change="handleNavTargetChange(subItem)"
+                                    @change="s.homeDirty.value = true"
                                   >
                                     <option
                                       v-for="p in s.pages.value"
@@ -1153,13 +1260,53 @@ function handleGroupKindChange(item) {
                                       {{ p.title || p.id }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
                                     </option>
                                   </select>
+
+                                  <!-- If preset -->
+                                  <select
+                                    v-else-if="subItem.type === 'preset'"
+                                    v-model="subItem.query"
+                                    class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
+                                    @change="s.homeDirty.value = true"
+                                  >
+                                    <option v-if="!subItem.query" value="" disabled>
+                                      {{ t("home_editor.select_preset") }}
+                                    </option>
+                                    <option
+                                      v-else-if="!isKnownPreset(subItem.query)"
+                                      :value="subItem.query"
+                                    >
+                                      {{ t("home_editor.custom_preset", { query: subItem.query }) }}
+                                    </option>
+                                    <optgroup
+                                      v-for="grp in PRESET_GROUPS"
+                                      :key="grp.label"
+                                      :label="grp.label"
+                                    >
+                                      <option
+                                        v-for="opt in grp.options"
+                                        :key="opt.value"
+                                        :value="opt.value"
+                                      >
+                                        {{ opt.label }}
+                                      </option>
+                                    </optgroup>
+                                  </select>
+
+                                  <!-- If search -->
+                                  <Input
+                                    v-else
+                                    v-model="subItem.query"
+                                    :placeholder="t('home_editor.search_placeholder')"
+                                    class="h-7 text-xs bg-background dark:bg-input/30 font-mono"
+                                    @update:model-value="s.homeDirty.value = true"
+                                  />
                                 </div>
 
                                 <!-- Navigation Title -->
-                                <div class="flex-1 min-w-[140px]">
+                                <div class="flex-1 min-w-[120px]">
                                   <Input
                                     v-model="subItem.title"
-                                    :placeholder="getPageTitle(subItem.query) || t('home_editor.nav_item_title_placeholder')"
+                                    :placeholder="getNavTargetTitle(subItem) || t('home_editor.nav_item_title_placeholder')"
                                     class="h-7 text-xs bg-background dark:bg-input/30"
                                     @update:model-value="s.homeDirty.value = true"
                                   />

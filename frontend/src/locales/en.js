@@ -126,6 +126,8 @@ export default {
     cache_max: "Max {max} GB",
     cache_unlimited: "Unlimited",
     clear_cache: "Clear Cache",
+    clear_cache_title: "Clear image cache",
+    clear_btn: "Clear",
     clearing: "Clearing...",
     cache_entries: "Cached Entries",
     cache_hits: "Cache Hit Rate",

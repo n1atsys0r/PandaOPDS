@@ -1845,36 +1845,27 @@ onUnmounted(() => {
 
       <!-- 2. Groups (preserving configured order of publication shelves & navigation groups) -->
       <template v-for="group in homeGroups" :key="group.id">
-        <!-- Navigation Group -->
+        <!-- Navigation Group (Subtle Tags) -->
         <div
           v-if="group.type === 'navigation'"
           class="space-y-2.5"
         >
-          <div class="flex items-center gap-2">
-            <h3 class="text-base font-semibold tracking-tight">
-              {{ group.title }}
-            </h3>
-            <span class="text-xs text-muted-foreground">
-              ({{ group.items.length }})
-            </span>
-          </div>
-          <nav class="flex flex-wrap items-center gap-2.5 pt-0.5" :aria-label="group.title">
+          <h3 class="text-base font-semibold tracking-tight text-foreground">
+            {{ group.title }}
+          </h3>
+          <nav class="flex flex-wrap items-center gap-2 pt-0.5" :aria-label="group.title">
             <button
               v-for="nav in group.items"
               :key="nav.href"
               type="button"
-              class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+              class="group inline-flex items-center gap-2 h-8 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/50 bg-muted/40 hover:bg-muted/80 hover:border-border/70 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] cursor-pointer select-none"
               @click="drillDown(nav)"
             >
-              <component
-                :is="nav.icon"
-                class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-              />
-              <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+              <span class="tracking-tight">
                 {{ nav.title }}
               </span>
               <ChevronRight
-                class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+                class="size-3.5 text-muted-foreground/40 transition-transform duration-150 group-hover:text-foreground/70 group-hover:translate-x-0.5"
               />
             </button>
           </nav>
@@ -2072,36 +2063,27 @@ onUnmounted(() => {
 
         <!-- Shelves and Navigation groups -->
         <template v-for="group in routeGroups" :key="group.id">
-          <!-- Navigation Group -->
+          <!-- Navigation Group (Subtle Tags) -->
           <div
             v-if="group.type === 'navigation'"
             class="space-y-2.5"
           >
-            <div class="flex items-center gap-2">
-              <h3 class="text-base font-semibold tracking-tight">
-                {{ group.title }}
-              </h3>
-              <span class="text-xs text-muted-foreground">
-                ({{ group.items.length }})
-              </span>
-            </div>
-            <nav class="flex flex-wrap items-center gap-2.5 pt-0.5" :aria-label="group.title">
+            <h3 class="text-base font-semibold tracking-tight text-foreground">
+              {{ group.title }}
+            </h3>
+            <nav class="flex flex-wrap items-center gap-2 pt-0.5" :aria-label="group.title">
               <button
                 v-for="nav in group.items"
                 :key="nav.href"
                 type="button"
-                class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+                class="group inline-flex items-center gap-2 h-8 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/50 bg-muted/40 hover:bg-muted/80 hover:border-border/70 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] cursor-pointer select-none"
                 @click="drillDown(nav)"
               >
-                <component
-                  :is="nav.icon"
-                  class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-                />
-                <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+                <span class="tracking-tight">
                   {{ nav.title }}
                 </span>
                 <ChevronRight
-                  class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+                  class="size-3.5 text-muted-foreground/40 transition-transform duration-150 group-hover:text-foreground/70 group-hover:translate-x-0.5"
                 />
               </button>
             </nav>
