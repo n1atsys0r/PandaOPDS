@@ -932,7 +932,7 @@ function normalizeNavItems(navs) {
   });
 }
 
-function parseCatalogGroups(doc, feedHref) {
+function parseCatalogGroups(doc, feedHref, allowRootFallback = false) {
   if (!doc) return [];
   const groups = [];
 
@@ -974,20 +974,22 @@ function parseCatalogGroups(doc, feedHref) {
     });
   }
 
-  // Root publications if no publication groups in doc.groups
-  const hasPublicationGroups = groups.some((grp) => grp.type === "publication");
-  if (!hasPublicationGroups && Array.isArray(doc.publications)) {
-    const pubs = doc.publications
-      .map((pub) => normalizePublication(pub, feedHref))
-      .filter(Boolean);
-    if (pubs.length > 0) {
-      groups.push({
-        id: "root-group",
-        type: "publication",
-        title: doc.metadata?.title || t("explore.featured_latest"),
-        publications: pubs,
-        link: null,
-      });
+  // Root publications if no publication groups in doc.groups (ONLY for root catalog fallback)
+  if (allowRootFallback) {
+    const hasPublicationGroups = groups.some((grp) => grp.type === "publication");
+    if (!hasPublicationGroups && Array.isArray(doc.publications)) {
+      const pubs = doc.publications
+        .map((pub) => normalizePublication(pub, feedHref))
+        .filter(Boolean);
+      if (pubs.length > 0) {
+        groups.push({
+          id: "root-group",
+          type: "publication",
+          title: doc.metadata?.title || t("explore.featured_latest"),
+          publications: pubs,
+          link: null,
+        });
+      }
     }
   }
 
@@ -999,8 +1001,8 @@ const navigationItems = computed(() => normalizeNavItems(catalog.value?.navigati
 const routeNavItems = computed(() => normalizeNavItems(routeFeed.value?.navigation));
 
 // Normalized Groups (preserving catalog.groups order)
-const homeGroups = computed(() => parseCatalogGroups(catalog.value, catalogFeedHref));
-const routeGroups = computed(() => parseCatalogGroups(routeFeed.value, routeFeedHref));
+const homeGroups = computed(() => parseCatalogGroups(catalog.value, catalogFeedHref, true));
+const routeGroups = computed(() => parseCatalogGroups(routeFeed.value, routeFeedHref, false));
 
 // Shelf horizontal scrolling & scroll visibility state
 let shelfResizeObserver = null;
@@ -1529,13 +1531,6 @@ const groupedTags = computed(() => {
   return result;
 });
 
-const relatedPublications = computed(() => {
-  if (!currentPubList.value.length || !selectedPub.value) return [];
-  return currentPubList.value.filter(
-    (p) => p.gid !== selectedPub.value.gid || p.token !== selectedPub.value.token,
-  );
-});
-
 function handleCategoryClick(category) {
   if (!category) return;
   detailOpen.value = false;
@@ -1891,26 +1886,22 @@ onUnmounted(() => {
           class="space-y-2.5"
         >
           <!-- Shelf Header -->
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <h3 class="text-base font-semibold tracking-tight">
-                {{ group.title }}
-              </h3>
-              <span class="text-xs text-muted-foreground">
-                ({{ group.publications.length }})
-              </span>
-            </div>
-
-            <Button
-              v-if="group.link && group.link.href"
-              variant="link"
-              size="sm"
-              class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
-              @click="drillDown(group.link)"
-            >
-              <span>{{ t("common.view_all") }}</span>
-              <ChevronRight class="size-3" />
-            </Button>
+          <div
+            class="flex items-center justify-between py-0.5 select-none"
+            :class="group.link && group.link.href ? 'cursor-pointer group/shelf-header focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm' : ''"
+            :role="group.link && group.link.href ? 'button' : undefined"
+            :tabindex="group.link && group.link.href ? 0 : undefined"
+            :aria-label="group.link && group.link.href ? `${group.title} - ${t('common.view_all')}` : undefined"
+            @click="group.link && group.link.href && drillDown(group.link)"
+            @keydown.enter.prevent="group.link && group.link.href && drillDown(group.link)"
+          >
+            <h3 class="text-base font-semibold tracking-tight text-foreground inline-flex items-center gap-1.5 transition-colors group-hover/shelf-header:text-primary">
+              <span>{{ group.title }}</span>
+              <ChevronRight
+                v-if="group.link && group.link.href"
+                class="size-4 text-muted-foreground/60 transition-transform duration-200 group-hover/shelf-header:translate-x-0.5 group-hover/shelf-header:text-primary"
+              />
+            </h3>
           </div>
 
           <!-- Track Wrapper with Floating Navigation Buttons -->
@@ -2122,26 +2113,22 @@ onUnmounted(() => {
             class="space-y-2.5"
           >
             <!-- Shelf Header -->
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <h3 class="text-base font-semibold tracking-tight">
-                  {{ group.title }}
-                </h3>
-                <span class="text-xs text-muted-foreground">
-                  ({{ group.publications.length }})
-                </span>
-              </div>
-
-              <Button
-                v-if="group.link && group.link.href"
-                variant="link"
-                size="sm"
-                class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
-                @click="drillDown(group.link)"
-              >
-                <span>{{ t("common.view_all") }}</span>
-                <ChevronRight class="size-3" />
-              </Button>
+            <div
+              class="flex items-center justify-between py-0.5 select-none"
+              :class="group.link && group.link.href ? 'cursor-pointer group/shelf-header focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm' : ''"
+              :role="group.link && group.link.href ? 'button' : undefined"
+              :tabindex="group.link && group.link.href ? 0 : undefined"
+              :aria-label="group.link && group.link.href ? `${group.title} - ${t('common.view_all')}` : undefined"
+              @click="group.link && group.link.href && drillDown(group.link)"
+              @keydown.enter.prevent="group.link && group.link.href && drillDown(group.link)"
+            >
+              <h3 class="text-base font-semibold tracking-tight text-foreground inline-flex items-center gap-1.5 transition-colors group-hover/shelf-header:text-primary">
+                <span>{{ group.title }}</span>
+                <ChevronRight
+                  v-if="group.link && group.link.href"
+                  class="size-4 text-muted-foreground/60 transition-transform duration-200 group-hover/shelf-header:translate-x-0.5 group-hover/shelf-header:text-primary"
+                />
+              </h3>
             </div>
 
             <!-- Track Wrapper with Floating Navigation Buttons -->
@@ -2746,7 +2733,8 @@ onUnmounted(() => {
             <!-- Section C: Thumbnails Preview (页面预览) -->
             <div
               v-if="selectedPub?.readingOrder?.length > 0"
-              class="space-y-3 pt-3 border-t"
+              class="space-y-3"
+              :class="{ 'pt-5 sm:pt-6 border-t': groupedTags.length > 0 }"
             >
               <div
                 class="flex items-center justify-between cursor-pointer group/sec select-none"
@@ -2797,7 +2785,8 @@ onUnmounted(() => {
             <!-- Section D: Reviews Preview (Apple Books style) -->
             <div
               v-if="selectedPub?.reviews?.length > 0"
-              class="space-y-3 pt-3 border-t"
+              class="space-y-3"
+              :class="{ 'pt-5 sm:pt-6 border-t': groupedTags.length > 0 || (selectedPub?.readingOrder?.length || 0) > 0 }"
             >
               <div
                 class="flex items-center justify-between cursor-pointer group/sec select-none"
@@ -2840,37 +2829,6 @@ onUnmounted(() => {
                   <MessageSquare class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1.5" />
                   <span class="text-xs font-medium text-muted-foreground group-hover/more:text-foreground">{{ t("explore.all_reviews") }}</span>
                   <span class="text-[10px] text-muted-foreground/70 mt-0.5">{{ t("explore.modal_reviews_total", { count: selectedPub.reviews.length }) }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Section E: More in this list / Series (当前列表的其他作品) -->
-            <div v-if="relatedPublications.length > 0" class="space-y-3 pt-3 border-t">
-              <div class="flex items-center justify-between">
-                <span class="text-sm font-bold text-foreground inline-flex items-center gap-1">
-                  {{ t("explore.modal_series") }}
-                  <ChevronRight class="size-3.5 opacity-60" />
-                </span>
-                <span class="text-[11px] text-muted-foreground">{{ t("explore.modal_series_total", { count: relatedPublications.length }) }}</span>
-              </div>
-
-              <!-- Horizontal Shelf Track -->
-              <div class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none">
-                <div
-                  v-for="otherPub in relatedPublications"
-                  :key="otherPub.gid + ':' + otherPub.token"
-                  class="group/item relative w-24 sm:w-28 shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-                  @click="selectPublication(otherPub)"
-                >
-                  <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm group-hover/item:shadow-md transition-shadow">
-                    <CoverImage :src="otherPub.coverUrl" :alt="otherPub.title" />
-                  </div>
-                  <p class="text-[11px] font-medium leading-tight line-clamp-1 mt-1.5 text-foreground group-hover/item:text-primary transition-colors">
-                    {{ otherPub.title }}
-                  </p>
-                  <p v-if="otherPub.authors" class="text-[10px] text-muted-foreground line-clamp-1">
-                    {{ otherPub.authors }}
-                  </p>
                 </div>
               </div>
             </div>
