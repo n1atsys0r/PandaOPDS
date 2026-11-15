@@ -8,6 +8,7 @@ import {
   onBeforeUnmount,
 } from "vue";
 import ReaderPager from "@/components/ReaderPager.vue";
+import ReaderOverlay from "@/components/ReaderOverlay.vue";
 import {
   BookOpen,
   ScrollText,
@@ -53,6 +54,62 @@ const readerMode = ref(
   localStorage.getItem(READER_MODE_KEY) === "webtoon" ? "webtoon" : "paged",
 );
 const currentPageIndex = ref(0);
+const overlayVisible = ref(true);
+const pagerRef = ref(null);
+const pagerMode = ref(
+  localStorage.getItem("pandaopds_reader_layout") || "single",
+);
+const pagerRTL = ref(
+  (localStorage.getItem("pandaopds_reader_direction") ?? "rtl") === "rtl",
+);
+const pagerZoom = ref(1);
+
+function toggleOverlay() {
+  overlayVisible.value = !overlayVisible.value;
+}
+
+let webtoonTapStart = null;
+function onWebtoonPointerDown(e) {
+  if (e.button !== 0 || e.target.closest("button,input,a")) return;
+  webtoonTapStart = {
+    x: e.clientX,
+    y: e.clientY,
+    time: performance.now(),
+  };
+}
+function onWebtoonPointerUp(e) {
+  if (!webtoonTapStart) return;
+  const dx = e.clientX - webtoonTapStart.x;
+  const dy = e.clientY - webtoonTapStart.y;
+  const dt = performance.now() - webtoonTapStart.time;
+  webtoonTapStart = null;
+  // If pointer moved very little and was a quick tap, toggle overlay
+  if (Math.hypot(dx, dy) <= 8 && dt <= 350) {
+    toggleOverlay();
+  }
+}
+
+function onOverlayJumpPage(targetIdx) {
+  if (readerMode.value === "paged") {
+    savePageIndex(targetIdx);
+    pagerRef.value?.commit(targetIdx);
+  } else {
+    jumpToWebtoonPage(targetIdx, { fromUser: true });
+  }
+}
+
+function onOverlayTurn(dir) {
+  if (readerMode.value === "paged") {
+    pagerRef.value?.turn(dir);
+  }
+}
+
+function onOverlayToggleZoom() {
+  if (readerMode.value === "paged") {
+    pagerRef.value?.toggleZoom();
+  }
+}
+
 const webtoonScrollEl = ref(null);
 const webtoonStates = ref({}); // { [idx]: { status: 'idle'|'loading'|'loaded'|'error', src: string } }
 
@@ -379,6 +436,20 @@ function cancelPagerPrefetch(indices) {
   pendingFetchQueue = retained;
   drainFetchQueue();
 }
+
+function cancelThumbnailFetches() {
+  const retained = [];
+  for (const job of pendingFetchQueue) {
+    if (job.priority === PRIORITY_THUMB) {
+      job.reject(new Error("thumbnail drawer closed"));
+    } else {
+      retained.push(job);
+    }
+  }
+  pendingFetchQueue = retained;
+  drainFetchQueue();
+}
+
 function getPagerThumb(idx) {
   if (resolvedThumbUrls.has(idx))
     return Promise.resolve(resolvedThumbUrls.get(idx));
@@ -404,6 +475,7 @@ function cleanupSessionResources() {
   userHasNavigated = false;
   sessionStartPage = 0;
   sessionSeq += 1;
+  cancelThumbnailFetches();
   clearPendingFetchQueue();
   disconnectWebtoonObservers();
   webtoonPageRefs.clear();
@@ -640,7 +712,24 @@ function closeReader() {
 
 function onKeydown(e) {
   if (!props.open) return;
-  if (e.key === "Escape") {
+  if (e.key === "Escape" || e.key === "BrowserBack") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeReader();
+  } else if (e.key === " " || e.key === "f" || e.key === "F") {
+    if (
+      e.target instanceof HTMLElement &&
+      /INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)
+    )
+      return;
+    e.preventDefault();
+    toggleOverlay();
+  }
+}
+
+function onAuxClick(e) {
+  if (!props.open) return;
+  if (e.button === 3) {
     e.preventDefault();
     e.stopPropagation();
     closeReader();
@@ -772,11 +861,13 @@ watch(
 onMounted(() => {
   window.addEventListener("beforeunload", flushRemoteSync);
   window.addEventListener("keydown", onKeydown, { capture: false });
+  window.addEventListener("auxclick", onAuxClick);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", flushRemoteSync);
   window.removeEventListener("keydown", onKeydown, { capture: false });
+  window.removeEventListener("auxclick", onAuxClick);
   lockBodyScroll(false);
   cleanupSessionResources();
 });
@@ -786,78 +877,28 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       v-if="open && archive"
-      class="fixed inset-0 z-[1000] flex flex-col bg-background text-foreground"
+      class="fixed inset-0 z-[1000] bg-background text-foreground overflow-hidden select-none"
       role="dialog"
       aria-modal="true"
       :aria-label="galleryTitle"
     >
-      <!-- Paged mode top-right floating controls -->
-      <div
-        v-if="readerMode === 'paged'"
-        class="fixed top-4 right-4 sm:top-6 sm:right-6 z-[1010] flex items-center gap-1.5 rounded-[14px] border border-border bg-card p-1.5 text-card-foreground shadow-md"
-      >
-        <div
-          v-if="isIncognito"
-          class="inline-flex items-center gap-1 rounded-[10px] bg-muted/80 px-2 py-1 text-xs font-medium text-muted-foreground"
-          :title="t('reader.incognito_notice')"
-        >
-          <HatGlasses class="size-3.5 text-muted-foreground" />
-          <span class="hidden sm:inline">{{
-            t("reader.incognito_badge")
-          }}</span>
-        </div>
-        <div
-          class="inline-flex items-center rounded-[10px] bg-muted p-0.5 text-xs text-muted-foreground"
-        >
-          <button
-            type="button"
-            class="inline-flex items-center gap-1 rounded-[8px] px-2.5 py-1 font-medium transition-colors"
-            :class="
-              readerMode === 'paged'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'hover:text-foreground'
-            "
-            @click="switchMode('paged')"
-          >
-            <BookOpen class="size-3.5" />
-            <span>{{ t("reader.mode_paged") }}</span>
-          </button>
-          <button
-            type="button"
-            class="inline-flex items-center gap-1 rounded-[8px] px-2.5 py-1 font-medium transition-colors"
-            :class="
-              readerMode === 'webtoon'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'hover:text-foreground'
-            "
-            @click="switchMode('webtoon')"
-          >
-            <ScrollText class="size-3.5" />
-            <span>{{ t("reader.mode_webtoon") }}</span>
-          </button>
-        </div>
-        <button
-          type="button"
-          class="inline-flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          :title="t('reader.close_reader')"
-          :aria-label="t('reader.close_reader')"
-          @click="closeReader"
-        >
-          <X class="size-4" />
-        </button>
-      </div>
-
-      <!-- Paged mode -->
+      <!-- Content Layer: Paged Mode (Full Screen) -->
       <ReaderPager
         v-if="readerMode === 'paged'"
+        ref="pagerRef"
         :key="galleryKey"
         v-model="currentPageIndex"
         :page-count="pageCount"
-        :rtl="true"
+        :page-mode="pagerMode"
+        :reading-r-t-l="pagerRTL"
         :dark="isDark"
         :resolve-page="getPagerPage"
         :resolve-thumb="getPagerThumb"
         :cancel-page-prefetch="cancelPagerPrefetch"
+        @update:page-mode="pagerMode = $event"
+        @update:reading-r-t-l="pagerRTL = $event"
+        @update:zoom="pagerZoom = $event"
+        @toggle-overlay="toggleOverlay"
         @navigate="
           (idx) => {
             userHasNavigated = userHasNavigated || idx !== sessionStartPage;
@@ -866,143 +907,83 @@ onBeforeUnmount(() => {
         "
       />
 
-      <!-- Webtoon Mode (Vertical continuous scroll) -->
-      <template v-else>
-        <header
-          class="z-[1010] flex h-13 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-3 sm:px-5 text-card-foreground"
-        >
-          <div class="flex min-w-0 items-center gap-2.5">
-            <span class="truncate text-sm font-medium">{{ galleryTitle }}</span>
-            <span
-              class="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground"
-            >
-              {{ currentPageIndex + 1 }} / {{ pageCount }}
-            </span>
-            <span
-              v-if="isIncognito"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground"
-              :title="t('reader.incognito_notice')"
-            >
-              <HatGlasses class="size-3 text-muted-foreground" />
-              <span class="hidden sm:inline">{{
-                t("reader.incognito_badge")
-              }}</span>
-            </span>
-          </div>
-          <div class="flex shrink-0 items-center gap-1.5">
+      <!-- Content Layer: Webtoon Mode (Full Screen Vertical Continuous Scroll) -->
+      <div
+        v-else
+        ref="webtoonScrollEl"
+        class="absolute inset-0 overflow-y-auto overscroll-contain"
+        @pointerdown="onWebtoonPointerDown"
+        @pointerup="onWebtoonPointerUp"
+        @wheel.passive="onWebtoonScrollIntent"
+        @touchmove.passive="onWebtoonScrollIntent"
+      >
+        <div class="mx-auto flex w-full max-w-3xl flex-col items-center">
+          <div
+            v-for="idx in pageIndices"
+            :key="idx"
+            :ref="(el) => setWebtoonPageRef(idx, el)"
+            :data-page-index="idx"
+            class="relative w-full flex flex-col items-center justify-center"
+            :class="
+              webtoonStates[idx]?.status === 'loaded'
+                ? ''
+                : 'min-h-[320px] border-b border-dashed border-border bg-muted/40'
+            "
+          >
+            <img
+              v-if="webtoonStates[idx]?.status === 'loaded'"
+              :src="webtoonStates[idx].src"
+              :alt="`${t('explore.page_no')} ${idx + 1}`"
+              class="block w-full h-auto select-none"
+              draggable="false"
+              @error="webtoonStates[idx] = { status: 'error', src: '' }"
+            />
             <div
-              class="inline-flex items-center rounded-[10px] bg-muted p-0.5 text-xs text-muted-foreground"
+              v-else-if="webtoonStates[idx]?.status === 'error'"
+              class="flex flex-col items-center gap-2 py-12 text-xs text-muted-foreground"
             >
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-[8px] px-2.5 py-1 font-medium transition-colors"
-                :class="
-                  readerMode === 'paged'
-                    ? 'bg-primary text-primary-foreground shadow-xs'
-                    : 'hover:text-foreground'
-                "
-                @click="switchMode('paged')"
+              <span>{{ t("reader.page_load_failed", { page: idx + 1 }) }}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                @click.stop="loadWebtoonPage(idx, PRIORITY_CURRENT)"
               >
-                <BookOpen class="size-3.5" />
-                <span>{{ t("reader.mode_paged") }}</span>
-              </button>
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-[8px] px-2.5 py-1 font-medium transition-colors"
-                :class="
-                  readerMode === 'webtoon'
-                    ? 'bg-primary text-primary-foreground shadow-xs'
-                    : 'hover:text-foreground'
-                "
-                @click="switchMode('webtoon')"
-              >
-                <ScrollText class="size-3.5" />
-                <span>{{ t("reader.mode_webtoon") }}</span>
-              </button>
+                <RotateCcw class="size-3.5" />
+                {{ t("common.retry") }}
+              </Button>
             </div>
-            <button
-              type="button"
-              class="inline-flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              :title="t('reader.close_reader')"
-              :aria-label="t('reader.close_reader')"
-              @click="closeReader"
-            >
-              <X class="size-4" />
-            </button>
-          </div>
-        </header>
-
-        <div
-          ref="webtoonScrollEl"
-          class="flex-1 overflow-y-auto overscroll-contain"
-          @wheel.passive="onWebtoonScrollIntent"
-          @touchmove.passive="onWebtoonScrollIntent"
-        >
-          <div class="mx-auto flex w-full max-w-3xl flex-col items-center">
             <div
-              v-for="idx in pageIndices"
-              :key="idx"
-              :ref="(el) => setWebtoonPageRef(idx, el)"
-              :data-page-index="idx"
-              class="relative w-full flex flex-col items-center justify-center"
-              :class="
-                webtoonStates[idx]?.status === 'loaded'
-                  ? ''
-                  : 'min-h-[320px] border-b border-dashed border-border bg-muted/40'
-              "
+              v-else
+              class="flex items-center gap-2 py-12 text-xs text-muted-foreground"
             >
-              <img
-                v-if="webtoonStates[idx]?.status === 'loaded'"
-                :src="webtoonStates[idx].src"
-                :alt="`${t('explore.page_no')} ${idx + 1}`"
-                class="block w-full h-auto select-none"
-                draggable="false"
-                @error="webtoonStates[idx] = { status: 'error', src: '' }"
-              />
-              <div
-                v-else-if="webtoonStates[idx]?.status === 'error'"
-                class="flex flex-col items-center gap-2 py-12 text-xs text-muted-foreground"
-              >
-                <span>{{
-                  t("reader.page_load_failed", { page: idx + 1 })
-                }}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  @click="loadWebtoonPage(idx, PRIORITY_CURRENT)"
-                >
-                  <RotateCcw class="size-3.5" />
-                  {{ t("common.retry") }}
-                </Button>
-              </div>
-              <div
-                v-else
-                class="flex items-center gap-2 py-12 text-xs text-muted-foreground"
-              >
-                <Loader2 class="size-4 animate-spin" />
-                <span>{{ t("explore.page_no") }} {{ idx + 1 }}</span>
-              </div>
+              <Loader2 class="size-4 animate-spin" />
+              <span>{{ t("explore.page_no") }} {{ idx + 1 }}</span>
             </div>
           </div>
         </div>
+      </div>
 
-        <footer
-          v-if="pageCount > 1"
-          class="z-[1010] flex h-11 shrink-0 items-center gap-3 border-t border-border bg-card px-4 sm:px-6 text-xs text-muted-foreground"
-        >
-          <span class="shrink-0 tabular-nums">1</span>
-          <input
-            type="range"
-            :min="1"
-            :max="pageCount"
-            :value="currentPageIndex + 1"
-            class="w-full accent-primary cursor-pointer"
-            :aria-label="t('reader.jump_to_page')"
-            @input="jumpToWebtoonPage(Number($event.target.value) - 1)"
-          />
-          <span class="shrink-0 tabular-nums">{{ pageCount }}</span>
-        </footer>
-      </template>
+      <!-- Unified Overlay Layer (Floating above content, toggled by center click) -->
+      <ReaderOverlay
+        :open="overlayVisible"
+        :title="galleryTitle"
+        :page-index="currentPageIndex"
+        :page-count="pageCount"
+        :reader-mode="readerMode"
+        :is-incognito="isIncognito"
+        :page-mode="pagerMode"
+        :reading-r-t-l="pagerRTL"
+        :zoom="pagerZoom"
+        :resolve-thumb="getPagerThumb"
+        @update:reader-mode="switchMode"
+        @update:page-index="onOverlayJumpPage"
+        @update:page-mode="pagerMode = $event"
+        @update:reading-r-t-l="pagerRTL = $event"
+        @turn="onOverlayTurn"
+        @toggle-zoom="onOverlayToggleZoom"
+        @cancel-thumbs="cancelThumbnailFetches"
+        @close="closeReader"
+      />
     </div>
   </Teleport>
 </template>

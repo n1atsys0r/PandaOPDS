@@ -143,11 +143,24 @@ onMounted(() => {
   s.init();
   document.addEventListener("click", handleDocumentClick);
   document.addEventListener("keydown", handleDocumentKeydown);
+  if (typeof window !== "undefined") {
+    if (!readerArchive.value && window.history.state?.reader) {
+      window.history.replaceState(
+        { ...window.history.state, reader: false },
+        "",
+        window.location.href,
+      );
+    }
+    window.addEventListener("popstate", onReaderPopState);
+  }
 });
 onBeforeUnmount(() => {
   s.destroy();
   document.removeEventListener("click", handleDocumentClick);
   document.removeEventListener("keydown", handleDocumentKeydown);
+  if (typeof window !== "undefined") {
+    window.removeEventListener("popstate", onReaderPopState);
+  }
 });
 
 function cycleTheme() {
@@ -299,12 +312,38 @@ const EH_CATEGORIES = [
 
 const createArchiveDialogOpen = ref(false);
 const readerArchive = ref(null);
+const lastReaderArchive = ref(null);
+
+function closeReader(fromHistory = false) {
+  if (!readerArchive.value) return;
+  readerArchive.value = null;
+  if (
+    !fromHistory &&
+    typeof window !== "undefined" &&
+    window.history.state?.reader
+  ) {
+    window.history.back();
+  }
+}
+
 const readerOpen = computed({
   get: () => Boolean(readerArchive.value),
   set: (v) => {
-    if (!v) readerArchive.value = null;
+    if (!v) closeReader();
   },
 });
+
+function onReaderPopState(e) {
+  if (readerArchive.value && !e.state?.reader) {
+    closeReader(true);
+  } else if (
+    !readerArchive.value &&
+    e.state?.reader &&
+    lastReaderArchive.value
+  ) {
+    readerArchive.value = lastReaderArchive.value;
+  }
+}
 const psePageBase = computed(() => {
   const base = Number(s.status.value?.site?.pse_page_base);
   return Number.isFinite(base) ? base : 1;
@@ -331,7 +370,15 @@ function canReadOnline(a) {
 
 function openReader(a) {
   if (!canReadOnline(a)) return;
+  lastReaderArchive.value = a;
   readerArchive.value = a;
+  if (typeof window !== "undefined") {
+    window.history.pushState(
+      { ...window.history.state, reader: true },
+      "",
+      window.location.href,
+    );
+  }
 }
 
 async function handleExploreArchive(pub) {

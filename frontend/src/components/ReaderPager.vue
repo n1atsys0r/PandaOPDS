@@ -7,14 +7,7 @@ import {
   onMounted,
   onBeforeUnmount,
 } from "vue";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-  RotateCcw,
-  ZoomIn,
-  ZoomOut,
-} from "@lucide/vue";
+import { Loader2, RotateCcw } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n.js";
 import {
@@ -32,11 +25,20 @@ const props = defineProps({
   modelValue: Number,
   rtl: { type: Boolean, default: true },
   dark: Boolean,
+  pageMode: { type: String, default: "single" },
+  readingRTL: { type: Boolean, default: true },
   resolvePage: Function,
   resolveThumb: Function,
   cancelPagePrefetch: Function,
 });
-const emit = defineEmits(["update:modelValue", "navigate"]);
+const emit = defineEmits([
+  "update:modelValue",
+  "navigate",
+  "update:pageMode",
+  "update:readingRTL",
+  "update:zoom",
+  "toggle-overlay",
+]);
 const displayIndex = ref(props.modelValue || 0);
 const stageEl = ref(null);
 const trackEl = ref(null);
@@ -48,14 +50,20 @@ function savedPreference(key, fallback) {
   }
 }
 const readingRTL = ref(
-  savedPreference("pandaopds_reader_direction", props.rtl ? "rtl" : "ltr") ===
-    "rtl",
+  props.readingRTL !== undefined
+    ? props.readingRTL
+    : savedPreference(
+        "pandaopds_reader_direction",
+        props.rtl ? "rtl" : "ltr",
+      ) === "rtl",
 );
 const status = ref("loading");
 const src = ref("");
 const pageUrls = ref({});
 const pageErrors = ref({});
-const pageMode = ref(savedPreference("pandaopds_reader_layout", "single"));
+const pageMode = ref(
+  props.pageMode || savedPreference("pandaopds_reader_layout", "single"),
+);
 const thumbUrls = ref({});
 const offset = ref(0);
 const animate = ref(true);
@@ -65,7 +73,26 @@ const zoomTransform = ref({ s: 1, tx: 0, ty: 0 });
 const zoomController = new PinchZoomController((value) => {
   zoomTransform.value = value;
   zoom.value = value.s;
+  emit("update:zoom", value.s);
 });
+
+watch(
+  () => props.pageMode,
+  (mode) => {
+    if (mode && mode !== pageMode.value) {
+      changePageMode(mode);
+    }
+  },
+);
+
+watch(
+  () => props.readingRTL,
+  (val) => {
+    if (val !== undefined && val !== readingRTL.value) {
+      readingRTL.value = val;
+    }
+  },
+);
 const zoomPointers = new Set();
 let gesture = null;
 let requestId = 0;
@@ -488,6 +515,9 @@ function onStageClick(e) {
   if (x < rect.width * 0.25) turn(readingRTL.value ? "forward" : "backward");
   else if (x > rect.width * 0.75)
     turn(readingRTL.value ? "backward" : "forward");
+  else {
+    emit("toggle-overlay");
+  }
 }
 function changePageMode(mode) {
   cancelPendingTurn();
@@ -496,6 +526,7 @@ function changePageMode(mode) {
   try {
     localStorage.setItem("pandaopds_reader_layout", mode);
   } catch {}
+  emit("update:pageMode", mode);
   loadCurrent();
 }
 function changeDirection() {
@@ -508,6 +539,7 @@ function changeDirection() {
       readingRTL.value ? "rtl" : "ltr",
     );
   } catch {}
+  emit("update:readingRTL", readingRTL.value);
 }
 function pointerDown(e) {
   if (turnInProgress || e.button !== 0 || e.target.closest("button,input"))
@@ -670,6 +702,7 @@ function pointerCancel(e) {
   animate.value = true;
 }
 function onKey(e) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     if (
       e.target instanceof HTMLElement &&
@@ -748,16 +781,23 @@ onBeforeUnmount(() => {
   preloadedUrls.clear();
   pageImages.clear();
 });
+
+defineExpose({
+  turn,
+  toggleZoom,
+  commit,
+  displayIndex,
+});
 </script>
 
 <template>
   <main
-    class="reader-pager relative flex min-h-0 flex-1 flex-col overflow-hidden"
-    :class="dark ? 'bg-black' : 'bg-white'"
+    class="reader-pager absolute inset-0 flex items-center justify-center overflow-hidden"
+    :class="dark ? 'bg-black' : 'bg-background'"
   >
     <section
       ref="stageEl"
-      class="relative flex min-h-0 flex-1 touch-pan-y items-center justify-center overflow-hidden"
+      class="relative h-full w-full touch-pan-y flex items-center justify-center overflow-hidden"
       @click="onStageClick"
       @pointerdown="pointerDown"
       @pointermove="pointerMove"
@@ -845,10 +885,10 @@ onBeforeUnmount(() => {
       >
         <span>{{
           t("reader.page_load_failed", { page: displayIndex + 1 })
-        }}</span
-        ><Button variant="outline" size="sm" @click="retryCurrentPage"
-          ><RotateCcw class="size-3.5" /> {{ t("common.retry") }}</Button
-        >
+        }}</span>
+        <Button variant="outline" size="sm" @click="retryCurrentPage">
+          <RotateCcw class="size-3.5" /> {{ t("common.retry") }}
+        </Button>
       </div>
       <div
         v-else-if="status === 'loading' && !src"
@@ -863,130 +903,7 @@ onBeforeUnmount(() => {
       >
         <Loader2 class="size-4 animate-spin" />
       </div>
-      <Button
-        variant="secondary"
-        size="icon"
-        class="absolute bottom-5 left-4 z-10 opacity-85"
-        :aria-label="
-          readingRTL ? t('reader.next_page') : t('reader.previous_page')
-        "
-        :title="readingRTL ? t('reader.next_page') : t('reader.previous_page')"
-        @click="turn(readingRTL ? 'forward' : 'backward')"
-        ><ChevronLeft
-      /></Button>
-      <Button
-        variant="secondary"
-        size="icon"
-        class="absolute bottom-5 right-4 z-10 opacity-85"
-        :aria-label="
-          readingRTL ? t('reader.previous_page') : t('reader.next_page')
-        "
-        :title="readingRTL ? t('reader.previous_page') : t('reader.next_page')"
-        @click="turn(readingRTL ? 'backward' : 'forward')"
-        ><ChevronRight
-      /></Button>
-      <Button
-        variant="secondary"
-        size="icon"
-        class="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 opacity-85"
-        :aria-label="zoom > 1 ? t('reader.reset_zoom') : t('reader.zoom_in')"
-        :title="zoom > 1 ? t('reader.reset_zoom') : t('reader.zoom_in')"
-        @click="toggleZoom"
-      >
-        <ZoomOut v-if="zoom > 1" />
-        <ZoomIn v-else />
-      </Button>
     </section>
-    <footer
-      class="z-10 flex h-11 shrink-0 items-center gap-3 border-t border-border bg-card px-4 text-xs text-muted-foreground"
-    >
-      <button
-        class="shrink-0 tabular-nums"
-        @click="pageListOpen = !pageListOpen"
-      >
-        {{ displayIndex + 1 }} / {{ pageCount }}
-      </button>
-      <button
-        class="shrink-0 rounded px-2 py-1"
-        :title="t('reader.single_page')"
-        :aria-label="t('reader.single_page')"
-        :class="
-          pageMode === 'single'
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-muted'
-        "
-        @click="changePageMode('single')"
-      >
-        1p
-      </button>
-      <button
-        class="shrink-0 rounded px-2 py-1"
-        :title="t('reader.double_page')"
-        :aria-label="t('reader.double_page')"
-        :class="
-          pageMode === 'double'
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-muted'
-        "
-        @click="changePageMode('double')"
-      >
-        2p
-      </button>
-      <button
-        class="shrink-0 rounded px-2 py-1"
-        :aria-label="
-          readingRTL ? t('reader.direction_rtl') : t('reader.direction_ltr')
-        "
-        :title="
-          readingRTL ? t('reader.direction_rtl') : t('reader.direction_ltr')
-        "
-        @click="changeDirection"
-      >
-        {{ readingRTL ? "RTL" : "LTR" }}
-      </button>
-      <input
-        type="range"
-        min="1"
-        :max="pageCount"
-        :value="displayIndex + 1"
-        class="w-full accent-primary"
-        :aria-label="t('reader.jump_to_page')"
-        @input="commit(Number($event.target.value) - 1)"
-      />
-      <button
-        class="shrink-0"
-        :aria-label="t('reader.page_thumbnails')"
-        :title="t('reader.page_thumbnails')"
-        @click="pageListOpen = !pageListOpen"
-      >
-        ☷
-      </button>
-    </footer>
-    <div
-      v-if="pageListOpen"
-      class="reader-pager-thumb-grid absolute inset-x-3 bottom-14 z-20 grid max-h-[55%] grid-cols-5 gap-2 overflow-auto rounded-xl border border-border bg-card p-3 sm:grid-cols-8"
-    >
-      <button
-        v-for="idx in pageCount"
-        :key="idx"
-        class="flex aspect-[2/3] items-center justify-center overflow-hidden rounded border"
-        :class="
-          displayIndex === idx - 1
-            ? 'border-primary ring-2 ring-primary'
-            : 'border-border'
-        "
-        @click="openThumb(idx - 1)"
-      >
-        <img
-          v-if="thumbUrls[idx - 1]"
-          :src="thumbUrls[idx - 1]"
-          class="h-full w-full object-contain"
-        />
-        <span v-else :ref="(el) => setThumbRef(idx - 1, el)" class="text-xs">{{
-          idx
-        }}</span>
-      </button>
-    </div>
   </main>
 </template>
 
