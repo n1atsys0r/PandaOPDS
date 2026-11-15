@@ -180,7 +180,7 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	case "popular":
 		info, e = s.Service.Popular(ctx, next)
 	case "watched":
-		info, e = s.Service.Watched(ctx, next)
+		info, e = s.Service.Watched(ctx, next, nil)
 	case "favorites":
 		info, e = s.Service.Favorites(ctx, next, favcat)
 	default:
@@ -314,7 +314,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	case query == "popular":
 		info, e = s.Service.Popular(ctx, next)
 	case query == "watched":
-		info, e = s.Service.Watched(ctx, next)
+		info, e = s.Service.Watched(ctx, next, extra)
 	case query == "favorites" || strings.HasPrefix(query, "favorites:"):
 		cat := favcat
 		if strings.HasPrefix(query, "favorites:") {
@@ -465,25 +465,62 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
+	category := r.URL.Query().Get("category")
 	items := s.Service.ArchivedGalleries(page)
+	if category != "" {
+		filtered := make([]eh.GalleryListItem, 0, len(items))
+		for _, item := range items {
+			if strings.EqualFold(item.Category, category) {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
 	pubs := []map[string]any{}
 	for _, item := range items {
 		pubs = append(pubs, s.builder().Publication(item, false))
 	}
 	next := ""
 	if page*100 < s.Store.ReadyCount() {
-		next = s.builder().Href(fmt.Sprintf("/opds/v2.0/archives?page=%d", page+1))
+		nextURL := fmt.Sprintf("/opds/v2.0/archives?page=%d", page+1)
+		if category != "" {
+			nextURL += "&category=" + url.QueryEscape(category)
+		}
+		next = s.builder().Href(nextURL)
 	}
-	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, nil)
+	facets := s.builder().CategoryFacets()
+	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, facets)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
+func (s *Server) pageV20(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" || id == "home" {
+		s.rootV20(w, r)
+		return
+	}
+	cfg, err := home.Load(s.Settings.HomeConfigPath)
+	if err != nil && s.Logger != nil {
+		s.Logger.Printf("home config load failed, using defaults: %v", err)
+	}
+	page, ok := cfg.FindPage(id)
+	if !ok {
+		writeJSON(w, 404, map[string]any{"detail": "page not found"})
+		return
+	}
+	s.renderPageV20(w, r, page, false)
+}
+
 func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 	cfg, e := home.Load(s.Settings.HomeConfigPath)
 	if e != nil && s.Logger != nil {
 		s.Logger.Printf("home config load failed, using defaults: %v", e)
 	}
+	s.renderPageV20(w, r, cfg.HomePage(), true)
+}
+
+func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, p home.Page, isRoot bool) {
 	sections := []home.Section{}
-	for _, sec := range cfg.Sections {
+	for _, sec := range p.Sections {
 		if sec.Kind == "navigation" && sec.Group && len(sec.Items) > 0 {
 			sections = append(sections, sec)
 			continue
@@ -556,7 +593,7 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 				if !ok {
 					err = context.DeadlineExceeded
 				}
-				s.Logger.Printf("home section %q: %v", title, err)
+				s.Logger.Printf("page section %q: %v", title, err)
 			}
 			continue
 		}
@@ -593,11 +630,30 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(rootNav) == 0 && len(outGroups) == 0 && len(rootPubs) == 0 {
+	if isRoot && len(rootNav) == 0 && len(outGroups) == 0 && len(rootPubs) == 0 {
 		rootNav = append(rootNav, map[string]any{"title": "Latest", "href": s.builder().Href(home.BuildHref("preset", "latest")), "rel": "subsection", "type": feed.MIMEOPDSAcq})
 	}
 
 	doc := s.builder().NavigationDocument(rootNav, outGroups)
+	if !isRoot {
+		selfHref := s.builder().Href(home.BuildHref("page", p.ID))
+		pageTitle := firstNonEmpty(p.Title, p.ID)
+		if meta, ok := doc["metadata"].(map[string]any); ok {
+			meta["title"] = pageTitle
+		}
+		newLinks := []map[string]any{
+			{"rel": "self", "href": selfHref, "type": feed.MIMEOPDSNav},
+			{"rel": "start", "href": s.builder().Href("/opds/v2.0"), "type": feed.MIMEOPDSNav, "title": "Home"},
+		}
+		if origLinks, ok := doc["links"].([]map[string]any); ok {
+			for _, l := range origLinks {
+				if l["rel"] != "self" && l["rel"] != "start" {
+					newLinks = append(newLinks, l)
+				}
+			}
+		}
+		doc["links"] = newLinks
+	}
 	if len(rootPubs) > 0 {
 		doc["publications"] = rootPubs
 	}
@@ -615,15 +671,21 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 func (s *Server) homeFacetLinks(sec home.Section, info eh.GalleryPageInfo) []map[string]any {
 	builder := s.builder()
 	const galleryRoute = "/opds/v2.0/gallery"
-	if sec.Type == "search" || sec.Query == "latest" {
+	if sec.Type == "search" || sec.Query == "latest" || sec.Query == "watched" || sec.Query == "archives" {
 		base := home.BuildHref(sec.Type, sec.Query)
+		targetRoute := galleryRoute
+		if sec.Query == "archives" {
+			targetRoute = "/opds/v2.0/archives"
+		}
 		links := []map[string]any{builder.Link("self", builder.Href(base), feed.MIMEOPDSAcq, "All", nil)}
 		for _, category := range s.Settings.Facets {
 			params := url.Values{"category": {category.Name}}
 			if sec.Type == "search" {
 				params.Set("query", sec.Query)
+			} else if sec.Query == "watched" {
+				params.Set("query", "watched")
 			}
-			links = append(links, map[string]any{"href": builder.Href(galleryRoute + "?" + params.Encode()), "type": feed.MIMEOPDSAcq, "title": category.Name})
+			links = append(links, map[string]any{"href": builder.Href(targetRoute + "?" + params.Encode()), "type": feed.MIMEOPDSAcq, "title": category.Name})
 		}
 		return links
 	}
@@ -731,7 +793,7 @@ func (s *Server) fetchHomeSection(ctx context.Context, sec home.Section) (eh.Gal
 	case "popular":
 		return s.Service.Popular(ctx, "")
 	case "watched":
-		return s.Service.Watched(ctx, "")
+		return s.Service.Watched(ctx, "", nil)
 	case "favorites":
 		return s.Service.Favorites(ctx, "", arg)
 	case "archives":

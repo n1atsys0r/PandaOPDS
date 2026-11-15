@@ -15,7 +15,7 @@
 
 OPDS 1.2 的 OPDS-PSE 链接提供 PSE stream 关系、`image/jpeg` 类型、页数以及含 `{pageNumber}` 的模板地址。默认页码从 1 开始，`PSE_PAGE_BASE=0` 可切换为从 0 开始。OPDS 2.0 客户端直接读取清单中的逐页 URL。两版共用图片代理，服务端不进行双页拆分。
 
-v1.2 根导航固定由服务端提供，不读取 `HOME_CONFIG`。v2.0 根导航可由 `HOME_CONFIG` 指向的 TOML 调整分组与区块；文件缺失时用内置默认布局，配置解析失败时回退默认值。Watched/Favorites 入口依赖成对配置的登录 cookie。两版的 Archives shelf 均只列出本地 ready 归档，按页浏览，不请求上游；没有 ready 条目时根导航中的入口隐藏。归档 shelf 的列表元数据来自本地归档信息/快照，阅读仍可使用本地 zip。
+v1.2 根导航固定由服务端提供，不读取 `HOME_CONFIG`。v2.0 根目录与自定义页面由 `HOME_CONFIG` 指向的 TOML 编排布局（主页为 `/opds/v2.0`，自定义页面为 `/opds/v2.0/page/{id}`）。各页面均支持独立配置出版物流模式（publications）与分组栏目模式（sections/groups），并通过导航项（`type="page"`，目标指向页面 ID）相互跳转。文件缺失时用内置默认布局，配置解析失败时回退默认值。Watched/Favorites 入口依赖成对配置的登录 cookie。两版的 Archives shelf 均只列出本地 ready 归档，按页浏览，不请求上游；没有 ready 条目时根导航中的入口隐藏。归档 shelf 的列表元数据来自本地归档信息/快照，阅读仍可使用本地 zip。
 
 Favorites 列表在 OPDS 1.2 与 2.0 中提供 Favorite category facets：All 不带 `favcat`，`favcat=0`–`9` 对应账户自定义收藏夹，显示名称取自上游收藏夹目录。v2.0 也继续接受旧式 `query=favorites:N`，新 facet 链接使用 `query=favorites&favcat=N`。
 

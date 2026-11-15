@@ -47,7 +47,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       v-bind="{ ...$attrs, ...forwarded }"
       :class="
         cn(
-          'bg-popover text-popover-foreground ring-foreground/10 z-50 grid w-full gap-4 rounded-xl p-6 shadow-2xl ring-1 outline-none max-w-[calc(100%-2rem)] sm:max-w-lg',
+          'bg-popover text-popover-foreground ring-foreground/10 z-50 grid w-full gap-4 rounded-2xl p-6 shadow-2xl ring-1 outline-none max-w-[calc(100%-2rem)] sm:max-w-lg',
           props.class,
           'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2',
         )

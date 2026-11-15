@@ -62,10 +62,9 @@ func (s *Server) currentHome() (home.Config, bool, any) {
 	}
 	return cfg, false, nil
 }
-func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
-	cfg, using, err := s.currentHome()
+func formatSectionMaps(secs []home.Section) []map[string]any {
 	sections := []map[string]any{}
-	for _, sec := range cfg.Sections {
+	for _, sec := range secs {
 		count := 0
 		if sec.Count != nil {
 			count = *sec.Count
@@ -94,7 +93,28 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 		}
 		sections = append(sections, secMap)
 	}
-	writeJSON(w, 200, map[string]any{"path": s.Settings.HomeConfigPath, "using_file": using, "error": err, "sections": sections})
+	return sections
+}
+
+func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
+	cfg, using, err := s.currentHome()
+	pages := []map[string]any{}
+	for _, p := range cfg.Pages {
+		pages = append(pages, map[string]any{
+			"id":       p.ID,
+			"title":    p.Title,
+			"mode":     p.Mode,
+			"sections": formatSectionMaps(p.Sections),
+		})
+	}
+	writeJSON(w, 200, map[string]any{
+		"path":       s.Settings.HomeConfigPath,
+		"using_file": using,
+		"error":      err,
+		"mode":       cfg.HomePage().Mode,
+		"sections":   formatSectionMaps(cfg.HomePage().Sections),
+		"pages":      pages,
+	})
 }
 func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.Settings

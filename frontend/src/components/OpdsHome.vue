@@ -41,6 +41,7 @@ import {
   MessageSquareIcon as MessageSquare,
   GridIcon as Grid,
   RotateCcwIcon as RotateCcw,
+  PanelsTopLeftIcon as PanelsTopLeft,
 } from "@lucide/vue";
 
 const emit = defineEmits([
@@ -904,10 +905,9 @@ function handleQuickJump() {
   });
 }
 
-// Normalized Navigation Pills
-const navigationItems = computed(() => {
-  if (!catalog.value || !Array.isArray(catalog.value.navigation)) return [];
-  return catalog.value.navigation.map((nav) => {
+function normalizeNavItems(navs) {
+  if (!Array.isArray(navs)) return [];
+  return navs.map((nav) => {
     let icon = Compass;
     const hrefLower = (nav.href || "").toLowerCase();
     const titleLower = (nav.title || "").toLowerCase();
@@ -920,6 +920,7 @@ const navigationItems = computed(() => {
     else if (hrefLower.includes("query=") || hrefLower.includes("search")) icon = Search;
     else if (hrefLower.includes("tag=") || titleLower.includes("tag") || titleLower.includes(":")) icon = Tag;
     else if (titleLower.includes("category") || titleLower.includes("分类")) icon = Layers;
+    else if (hrefLower.includes("/page/")) icon = PanelsTopLeft;
 
     return {
       title: nav.title,
@@ -927,38 +928,17 @@ const navigationItems = computed(() => {
       icon,
     };
   });
-});
+}
 
-// Normalized Home Groups (preserving catalog.groups order)
-const homeGroups = computed(() => {
-  if (!catalog.value) return [];
+function parseCatalogGroups(doc, feedHref) {
+  if (!doc) return [];
   const groups = [];
 
-  // 1. Grouped sections from catalog.groups in original order
-  if (Array.isArray(catalog.value.groups)) {
-    catalog.value.groups.forEach((g, index) => {
+  if (Array.isArray(doc.groups)) {
+    doc.groups.forEach((g, index) => {
       // Navigation group
       if (Array.isArray(g.navigation) && g.navigation.length > 0) {
-        const items = g.navigation.map((nav) => {
-          let icon = Compass;
-          const hrefLower = (nav.href || "").toLowerCase();
-          const titleLower = (nav.title || "").toLowerCase();
-
-          if (hrefLower.includes("watched") || titleLower.includes("watch")) icon = Eye;
-          else if (hrefLower.includes("favorites") || titleLower.includes("fav")) icon = Heart;
-          else if (hrefLower.includes("archives") || titleLower.includes("arch")) icon = Package2;
-          else if (hrefLower.includes("top") || titleLower.includes("rank") || hrefLower.includes("toplist")) icon = Trophy;
-          else if (hrefLower.includes("popular") || titleLower.includes("pop")) icon = Sparkles;
-          else if (hrefLower.includes("query=") || hrefLower.includes("search")) icon = Search;
-          else if (hrefLower.includes("tag=") || titleLower.includes("tag") || titleLower.includes(":")) icon = Tag;
-          else if (titleLower.includes("category") || titleLower.includes("分类")) icon = Layers;
-
-          return {
-            title: nav.title,
-            href: nav.href,
-            icon,
-          };
-        });
+        const items = normalizeNavItems(g.navigation);
         groups.push({
           id: `group-nav-${index}`,
           type: "navigation",
@@ -970,7 +950,7 @@ const homeGroups = computed(() => {
 
       // Publication group
       if (Array.isArray(g.publications)) {
-        const pubs = g.publications.map((pub) => normalizePublication(pub, catalogFeedHref)).filter(Boolean);
+        const pubs = g.publications.map((pub) => normalizePublication(pub, feedHref)).filter(Boolean);
         if (pubs.length === 0) return;
 
         const selfLink = (g.links || []).find(
@@ -992,17 +972,17 @@ const homeGroups = computed(() => {
     });
   }
 
-  // 2. Root publications if no publication groups in catalog.groups
+  // Root publications if no publication groups in doc.groups
   const hasPublicationGroups = groups.some((grp) => grp.type === "publication");
-  if (!hasPublicationGroups && Array.isArray(catalog.value.publications)) {
-    const pubs = catalog.value.publications
-      .map((pub) => normalizePublication(pub, catalogFeedHref))
+  if (!hasPublicationGroups && Array.isArray(doc.publications)) {
+    const pubs = doc.publications
+      .map((pub) => normalizePublication(pub, feedHref))
       .filter(Boolean);
     if (pubs.length > 0) {
       groups.push({
         id: "root-group",
         type: "publication",
-        title: catalog.value.metadata?.title || t("explore.featured_latest"),
+        title: doc.metadata?.title || t("explore.featured_latest"),
         publications: pubs,
         link: null,
       });
@@ -1010,7 +990,15 @@ const homeGroups = computed(() => {
   }
 
   return groups;
-});
+}
+
+// Normalized Navigation Pills
+const navigationItems = computed(() => normalizeNavItems(catalog.value?.navigation));
+const routeNavItems = computed(() => normalizeNavItems(routeFeed.value?.navigation));
+
+// Normalized Groups (preserving catalog.groups order)
+const homeGroups = computed(() => parseCatalogGroups(catalog.value, catalogFeedHref));
+const routeGroups = computed(() => parseCatalogGroups(routeFeed.value, routeFeedHref));
 
 // Shelf horizontal scrolling
 function setShelfRef(id, el) {
@@ -1953,146 +1941,370 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <!-- ================= DRILL-DOWN LIST VIEW ================= -->
+    <!-- ================= DRILL-DOWN VIEW ================= -->
     <div v-else class="space-y-6">
       <div v-if="routeLoading" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse">
         <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
       </div>
 
-      <div
-        v-else-if="drillDownPublications.length === 0"
-        class="py-16 text-center text-muted-foreground space-y-2"
-      >
-        <Search class="size-8 mx-auto text-muted-foreground/40" />
-        <p class="text-sm font-medium">{{ t("explore.empty_explore") }}</p>
-        <p v-if="activeRoute" class="text-xs text-muted-foreground/70">
-          {{ t("explore.empty_explore_hint") }}
-        </p>
-      </div>
-
-      <div
-        v-else
-        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-      >
-        <div
-          v-for="pub in drillDownPublications"
-          :key="pub.gid + ':' + pub.token"
-          class="group relative flex flex-col cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-          @click="openGallery(pub, drillDownPublications)"
+      <!-- A: Custom Page with Groups -->
+      <template v-else-if="routeGroups.length > 0">
+        <!-- Top Navigation Capsules for Route Feed if present -->
+        <nav
+          v-if="routeNavItems.length"
+          class="flex flex-wrap items-center gap-2.5 pt-0.5"
+          :aria-label="t('explore.nav_label')"
         >
-          <!-- Cover -->
-          <div
-            class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+          <button
+            v-for="nav in routeNavItems"
+            :key="nav.href"
+            type="button"
+            class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+            @click="drillDown(nav)"
           >
-            <CoverImage :src="pub.coverUrl" :alt="pub.title" />
-
-            <!-- Overlay Gradient (only covering bottom 1/2) -->
-            <div
-              class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+            <component
+              :is="nav.icon"
+              class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
             />
+            <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+              {{ nav.title }}
+            </span>
+            <ChevronRight
+              class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+            />
+          </button>
+        </nav>
 
-            <!-- Category -->
-            <div
-              v-if="pub.category"
-              class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
-              :style="{ backgroundColor: getCategoryColor(pub.category) }"
-            >
-              {{ pub.category }}
-            </div>
-
-            <!-- Archive Badge -->
-            <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
-              <Badge
-                :variant="pub.archiveBadge.variant"
-                class="text-[10px] px-1.5 py-0 font-medium"
-              >
-                {{ pub.archiveBadge.label }}
-              </Badge>
-            </div>
-
-            <!-- Bottom info -->
-            <div
-              class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
-            >
-              <div class="flex items-center gap-0.5 shrink-0">
-                <Star class="size-3 fill-amber-400 text-amber-400" />
-                <span>{{ pub.rating.toFixed(1) }}</span>
-              </div>
-              <span
-                v-if="pub.language || pub.pageCount > 0"
-                class="truncate ml-1.5 text-right drop-shadow-xs"
-                :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
-              >
-                <template v-if="pub.language && pub.pageCount > 0">
-                  <span>{{ pub.language }}</span>
-                  <span class="mx-1 opacity-70">·</span>
-                  <span class="font-mono">{{ pub.pageCount }}P</span>
-                </template>
-                <template v-else-if="pub.pageCount > 0">
-                  <span class="font-mono">{{ pub.pageCount }}P</span>
-                </template>
-                <template v-else>
-                  <span>{{ pub.language }}</span>
-                </template>
+        <!-- Shelves and Navigation groups -->
+        <template v-for="group in routeGroups" :key="group.id">
+          <!-- Navigation Group -->
+          <div
+            v-if="group.type === 'navigation'"
+            class="space-y-2.5"
+          >
+            <div class="flex items-center gap-2">
+              <h3 class="text-base font-semibold tracking-tight">
+                {{ group.title }}
+              </h3>
+              <span class="text-xs text-muted-foreground">
+                ({{ group.items.length }})
               </span>
             </div>
+            <nav class="flex flex-wrap items-center gap-2.5 pt-0.5" :aria-label="group.title">
+              <button
+                v-for="nav in group.items"
+                :key="nav.href"
+                type="button"
+                class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+                @click="drillDown(nav)"
+              >
+                <component
+                  :is="nav.icon"
+                  class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
+                />
+                <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+                  {{ nav.title }}
+                </span>
+                <ChevronRight
+                  class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+                />
+              </button>
+            </nav>
           </div>
 
-          <!-- Title -->
+          <!-- Publication Shelf -->
           <div
-            class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
-            :title="pub.title"
+            v-else-if="group.type === 'publication'"
+            class="space-y-2.5"
           >
-            {{ pub.title }}
+            <!-- Shelf Header -->
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <h3 class="text-base font-semibold tracking-tight">
+                  {{ group.title }}
+                </h3>
+                <span class="text-xs text-muted-foreground">
+                  ({{ group.publications.length }})
+                </span>
+              </div>
+
+              <div class="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-7 rounded-full"
+                  :title="t('explore.scroll_left')"
+                  @click="scrollShelf(group.id, -1)"
+                >
+                  <ChevronLeft class="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-7 rounded-full"
+                  :title="t('explore.scroll_right')"
+                  @click="scrollShelf(group.id, 1)"
+                >
+                  <ChevronRight class="size-4" />
+                </Button>
+                <Button
+                  v-if="group.link && group.link.href"
+                  variant="link"
+                  size="sm"
+                  class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
+                  @click="drillDown(group.link)"
+                >
+                  <span>{{ t("common.view_all") }}</span>
+                  <ChevronRight class="size-3" />
+                </Button>
+              </div>
+            </div>
+
+            <!-- Horizontal Shelf Track -->
+            <div
+              :ref="(el) => setShelfRef(group.id, el)"
+              class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+            >
+              <div
+                v-for="pub in group.publications"
+                :key="pub.gid + ':' + pub.token"
+                class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                @click="openGallery(pub, group.publications)"
+              >
+                <!-- Card Cover -->
+                <div
+                  class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+                >
+                  <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+
+                  <!-- Overlay Gradient (only covering bottom 1/2) -->
+                  <div
+                    class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+                  />
+
+                  <!-- Top Left: Category Badge -->
+                  <div
+                    v-if="pub.category"
+                    class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
+                    :style="{ backgroundColor: getCategoryColor(pub.category) }"
+                  >
+                    {{ pub.category }}
+                  </div>
+
+                  <!-- Top Right: Archive / Favorite Badge -->
+                  <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+                    <Badge
+                      :variant="pub.archiveBadge.variant"
+                      class="text-[10px] px-1.5 py-0 font-medium"
+                    >
+                      {{ pub.archiveBadge.label }}
+                    </Badge>
+                  </div>
+
+                  <!-- Bottom info -->
+                  <div
+                    class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
+                  >
+                    <div class="flex items-center gap-0.5 shrink-0">
+                      <Star class="size-3 fill-amber-400 text-amber-400" />
+                      <span>{{ pub.rating.toFixed(1) }}</span>
+                    </div>
+                    <span
+                      v-if="pub.language || pub.pageCount > 0"
+                      class="truncate ml-1.5 text-right drop-shadow-xs"
+                      :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                    >
+                      <template v-if="pub.language && pub.pageCount > 0">
+                        <span>{{ pub.language }}</span>
+                        <span class="mx-1 opacity-70">·</span>
+                        <span class="font-mono">{{ pub.pageCount }}P</span>
+                      </template>
+                      <template v-else-if="pub.pageCount > 0">
+                        <span class="font-mono">{{ pub.pageCount }}P</span>
+                      </template>
+                      <template v-else>
+                        <span>{{ pub.language }}</span>
+                      </template>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Title -->
+                <div
+                  class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
+                  :title="pub.title"
+                >
+                  {{ pub.title }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <!-- B: Publications Stream Mode or Regular Feed -->
+      <template v-else>
+        <!-- Top Navigation Capsules if page has navigation -->
+        <nav
+          v-if="routeNavItems.length"
+          class="flex flex-wrap items-center gap-2.5 pt-0.5"
+          :aria-label="t('explore.nav_label')"
+        >
+          <button
+            v-for="nav in routeNavItems"
+            :key="nav.href"
+            type="button"
+            class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+            @click="drillDown(nav)"
+          >
+            <component
+              :is="nav.icon"
+              class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
+            />
+            <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+              {{ nav.title }}
+            </span>
+            <ChevronRight
+              class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+            />
+          </button>
+        </nav>
+
+        <div
+          v-if="drillDownPublications.length === 0"
+          class="py-16 text-center text-muted-foreground space-y-2"
+        >
+          <Search class="size-8 mx-auto text-muted-foreground/40" />
+          <p class="text-sm font-medium">{{ t("explore.empty_explore") }}</p>
+          <p v-if="activeRoute" class="text-xs text-muted-foreground/70">
+            {{ t("explore.empty_explore_hint") }}
+          </p>
+        </div>
+
+        <div
+          v-else
+          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+        >
+          <div
+            v-for="pub in drillDownPublications"
+            :key="pub.gid + ':' + pub.token"
+            class="group relative flex flex-col cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+            @click="openGallery(pub, drillDownPublications)"
+          >
+            <!-- Cover -->
+            <div
+              class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+            >
+              <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+
+              <!-- Overlay Gradient (only covering bottom 1/2) -->
+              <div
+                class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+              />
+
+              <!-- Category -->
+              <div
+                v-if="pub.category"
+                class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
+                :style="{ backgroundColor: getCategoryColor(pub.category) }"
+              >
+                {{ pub.category }}
+              </div>
+
+              <!-- Archive Badge -->
+              <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+                <Badge
+                  :variant="pub.archiveBadge.variant"
+                  class="text-[10px] px-1.5 py-0 font-medium"
+                >
+                  {{ pub.archiveBadge.label }}
+                </Badge>
+              </div>
+
+              <!-- Bottom info -->
+              <div
+                class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
+              >
+                <div class="flex items-center gap-0.5 shrink-0">
+                  <Star class="size-3 fill-amber-400 text-amber-400" />
+                  <span>{{ pub.rating.toFixed(1) }}</span>
+                </div>
+                <span
+                  v-if="pub.language || pub.pageCount > 0"
+                  class="truncate ml-1.5 text-right drop-shadow-xs"
+                  :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                >
+                  <template v-if="pub.language && pub.pageCount > 0">
+                    <span>{{ pub.language }}</span>
+                    <span class="mx-1 opacity-70">·</span>
+                    <span class="font-mono">{{ pub.pageCount }}P</span>
+                  </template>
+                  <template v-else-if="pub.pageCount > 0">
+                    <span class="font-mono">{{ pub.pageCount }}P</span>
+                  </template>
+                  <template v-else>
+                    <span>{{ pub.language }}</span>
+                  </template>
+                </span>
+              </div>
+            </div>
+
+            <!-- Title -->
+            <div
+              class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
+              :title="pub.title"
+            >
+              {{ pub.title }}
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Infinite Scroll Sentinel & Status Footer -->
-      <div class="pt-4 pb-8 space-y-4">
-        <!-- Invisible Sentinel (triggers auto loading when within 600px of bottom) -->
-        <div
-          v-if="nextLink && !loadingMoreError"
-          ref="gridSentinelRef"
-          class="h-8 w-full pointer-events-none -mt-4"
-          aria-hidden="true"
-        />
+        <!-- Infinite Scroll Sentinel & Status Footer -->
+        <div class="pt-4 pb-8 space-y-4">
+          <!-- Invisible Sentinel (triggers auto loading when within 600px of bottom) -->
+          <div
+            v-if="nextLink && !loadingMoreError"
+            ref="gridSentinelRef"
+            class="h-8 w-full pointer-events-none -mt-4"
+            aria-hidden="true"
+          />
 
-        <!-- Loading More Spinner -->
-        <div
-          v-if="loadingMore"
-          class="flex items-center justify-center gap-2.5 py-6 text-sm text-muted-foreground"
-        >
-          <RefreshCw class="size-4 animate-spin text-primary" />
-          <span class="font-medium">{{ t("explore.loading_more") }}</span>
-        </div>
-
-        <!-- Error State with Retry Button -->
-        <div
-          v-else-if="loadingMoreError"
-          class="flex flex-col sm:flex-row items-center justify-center gap-3 py-6 text-sm text-destructive"
-        >
-          <span>{{ t("explore.loading_more_failed", { err: loadingMoreError }) }}</span>
-          <Button
-            variant="outline"
-            size="sm"
-            class="gap-1.5 text-foreground hover:text-foreground"
-            @click="loadNextPage"
+          <!-- Loading More Spinner -->
+          <div
+            v-if="loadingMore"
+            class="flex items-center justify-center gap-2.5 py-6 text-sm text-muted-foreground"
           >
-            <RefreshCw class="size-3.5" /> {{ t("explore.click_retry") }}
-          </Button>
-        </div>
+            <RefreshCw class="size-4 animate-spin text-primary" />
+            <span class="font-medium">{{ t("explore.loading_more") }}</span>
+          </div>
 
-        <!-- All Items Loaded (End of list) -->
-        <div
-          v-else-if="!nextLink && drillDownPublications.length > 0"
-          class="flex items-center justify-center gap-3 py-8 text-xs text-muted-foreground/60 select-none"
-        >
-          <div class="h-px w-12 sm:w-20 bg-border/60" />
-          <span>{{ t("explore.all_loaded", { count: drillDownPublications.length }) }}</span>
-          <div class="h-px w-12 sm:w-20 bg-border/60" />
+          <!-- Error State with Retry Button -->
+          <div
+            v-else-if="loadingMoreError"
+            class="flex flex-col sm:flex-row items-center justify-center gap-3 py-6 text-sm text-destructive"
+          >
+            <span>{{ t("explore.loading_more_failed", { err: loadingMoreError }) }}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              class="gap-1.5 text-foreground hover:text-foreground"
+              @click="loadNextPage"
+            >
+              <RefreshCw class="size-3.5" /> {{ t("explore.click_retry") }}
+            </Button>
+          </div>
+
+          <!-- All Items Loaded (End of list) -->
+          <div
+            v-else-if="!nextLink && drillDownPublications.length > 0"
+            class="flex items-center justify-center gap-3 py-8 text-xs text-muted-foreground/60 select-none"
+          >
+            <div class="h-px w-12 sm:w-20 bg-border/60" />
+            <span>{{ t("explore.all_loaded", { count: drillDownPublications.length }) }}</span>
+            <div class="h-px w-12 sm:w-20 bg-border/60" />
+          </div>
         </div>
-      </div>
+      </template>
     </div>
 
     <!-- ================= APPLE BOOKS STYLE GALLERY DETAIL DIALOG ================= -->

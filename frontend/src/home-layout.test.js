@@ -55,6 +55,8 @@ test("facet entries follow the current publication source", () => {
   assert.equal(updated.type, "preset");
   assert.equal(updated.query, "toplist:month");
   assert.equal(canUseFacets(drafts.publication), true);
+  assert.equal(canUseFacets({ type: "preset", query: "watched" }), true);
+  assert.equal(canUseFacets({ type: "preset", query: "archives" }), true);
   assert.equal(chooseInitialHomeMode([{ kind: "publication", group: false }, { kind: "publication", group: true }]), "");
 });
 
@@ -100,4 +102,22 @@ test("navigation group with multiple items splits and serializes cleanly", () =>
     { title: "Month", type: "preset", query: "toplist:month" },
     { title: "Year", type: "preset", query: "toplist:year" },
   ]);
+});
+
+test("page navigation items serialize and validate cleanly", () => {
+  const pageNavLayout = {
+    navigation: [
+      { title: "同人专区", type: "page", query: "doujin" },
+      { title: "返回主页", type: "page", query: "home" },
+    ],
+    publication: null,
+    facets: [],
+    groups: [],
+  };
+  const serialized = serializeHomeLayout(pageNavLayout, "publications");
+  assert.equal(serialized.length, 2);
+  assert.equal(serialized[0].kind, "navigation");
+  assert.equal(serialized[0].type, "page");
+  assert.equal(serialized[0].query, "doujin");
+  assert.equal(serialized[1].query, "home");
 });

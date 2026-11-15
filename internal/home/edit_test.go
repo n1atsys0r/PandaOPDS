@@ -196,3 +196,223 @@ unknown_field = "oops"
 		t.Fatal("expected DecodeEditor to reject unknown field in section.items")
 	}
 }
+
+func TestMultiPageConfigDecodeAndValidate(t *testing.T) {
+	data := []byte(`
+[[page]]
+id = "home"
+title = "首页"
+
+[[page.section]]
+kind = "navigation"
+title = "同人志专区"
+type = "page"
+query = "doujin"
+
+[[page.section]]
+kind = "publication"
+title = "热门"
+type = "preset"
+query = "popular"
+count = 10
+
+[[page]]
+id = "doujin"
+title = "同人志"
+
+[[page.section]]
+kind = "navigation"
+title = "返回首页"
+type = "page"
+query = "home"
+
+[[page.section]]
+kind = "publication"
+title = "中文同人"
+type = "search"
+query = "language:chinese"
+count = 20
+`)
+	c, err := DecodeEditor(data)
+	if err != nil {
+		t.Fatalf("failed to decode multi-page: %v", err)
+	}
+	if len(c.Pages) != 2 {
+		t.Fatalf("expected 2 pages, got %d", len(c.Pages))
+	}
+	if err := Validate(c); err != nil {
+		t.Fatalf("validation failed: %v", err)
+	}
+
+	homePage, ok := c.FindPage("home")
+	if !ok || homePage.Title != "首页" {
+		t.Fatalf("home page not found or mismatch: %+v", homePage)
+	}
+	if len(homePage.Sections) != 2 {
+		t.Fatalf("expected 2 sections in home, got %d", len(homePage.Sections))
+	}
+
+	doujinPage, ok := c.FindPage("doujin")
+	if !ok || doujinPage.Title != "同人志" {
+		t.Fatalf("doujin page not found or mismatch: %+v", doujinPage)
+	}
+	if len(doujinPage.Sections) != 2 {
+		t.Fatalf("expected 2 sections in doujin, got %d", len(doujinPage.Sections))
+	}
+
+	// Test BuildHref
+	if href := BuildHref("page", "home"); href != "/opds/v2.0" {
+		t.Fatalf("expected /opds/v2.0 for page home, got %s", href)
+	}
+	if href := BuildHref("page", "doujin"); href != "/opds/v2.0/page/doujin" {
+		t.Fatalf("expected /opds/v2.0/page/doujin, got %s", href)
+	}
+	// Test ResolvePreset page: alias
+	if kind, arg, err := ResolvePreset("page:doujin"); err != nil || kind != "page" || arg != "doujin" {
+		t.Fatalf("ResolvePreset(page:doujin) failed: kind=%s, arg=%s, err=%v", kind, arg, err)
+	}
+
+	// Test validation: duplicate ID
+	dupConfig := c
+	dupConfig.Pages = append(dupConfig.Pages, Page{ID: "doujin", Title: "Duplicate", Sections: nil})
+	if err := Validate(dupConfig); err == nil {
+		t.Fatalf("expected error for duplicate page ID, got nil")
+	}
+
+	// Test validation: missing home
+	noHome := Config{Pages: []Page{{ID: "custom", Title: "Custom", Sections: nil}}}
+	if err := Validate(noHome); err == nil {
+		t.Fatalf("expected error for missing home page, got nil")
+	}
+
+	// Test validation: invalid slug
+	invalidSlug := Config{Pages: []Page{{ID: "home", Title: "Home"}, {ID: "bad slug!", Title: "Bad"}}}
+	if err := Validate(invalidSlug); err == nil {
+		t.Fatalf("expected error for invalid slug, got nil")
+	}
+}
+
+func TestDefaultPresetConfiguration(t *testing.T) {
+	c := Default()
+	if err := Validate(c); err != nil {
+		t.Fatalf("Default() must pass Validate(): %v", err)
+	}
+
+	expectedPages := []string{"home", "watched", "favorites", "toplists", "archives"}
+	if len(c.Pages) != len(expectedPages) {
+		t.Fatalf("expected %d pages, got %d", len(expectedPages), len(c.Pages))
+	}
+
+	for i, id := range expectedPages {
+		p := c.Pages[i]
+		if p.ID != id {
+			t.Errorf("page[%d] ID=%s, want %s", i, p.ID, id)
+		}
+
+		// Verify 4 top navigation items on all pages
+		var navs []Section
+		for _, s := range p.Sections {
+			if s.Kind == "navigation" && !s.Group {
+				navs = append(navs, s)
+			}
+		}
+		if len(navs) != 4 {
+			t.Fatalf("page %q has %d top navigation items, want 4", p.ID, len(navs))
+		}
+		for j, navID := range []string{"watched", "favorites", "toplists", "archives"} {
+			if navs[j].Type != "page" || navs[j].Query != navID {
+				t.Errorf("page %q nav[%d] = {%s, %s}, want {page, %s}", p.ID, j, navs[j].Type, navs[j].Query, navID)
+			}
+		}
+	}
+
+	// Page: home (sections mode, Popular > Latest)
+	homeP := c.HomePage()
+	if homeP.Mode != "groups" {
+		t.Errorf("home page mode=%s, want groups", homeP.Mode)
+	}
+	var homePubs []Section
+	for _, s := range homeP.Sections {
+		if s.Kind == "publication" && s.Group {
+			homePubs = append(homePubs, s)
+		}
+	}
+	if len(homePubs) != 2 || homePubs[0].Query != "popular" || homePubs[1].Query != "latest" {
+		t.Errorf("home publications = %+v, want Popular then Latest", homePubs)
+	}
+
+	// Page: watched (publications mode, Watched publication + Categories facets)
+	watchedP, _ := c.FindPage("watched")
+	if watchedP.Mode != "publications" {
+		t.Errorf("watched page mode=%s, want publications", watchedP.Mode)
+	}
+	hasWatchedPub, hasWatchedFacets := false, false
+	for _, s := range watchedP.Sections {
+		if s.Kind == "publication" && !s.Group && s.Query == "watched" {
+			hasWatchedPub = true
+		}
+		if s.Kind == "facets" && s.Query == "watched" {
+			hasWatchedFacets = true
+		}
+	}
+	if !hasWatchedPub || !hasWatchedFacets {
+		t.Errorf("watched page missing publication or facets: pub=%v, facets=%v", hasWatchedPub, hasWatchedFacets)
+	}
+
+	// Page: favorites (publications mode, Favorites publication + Folders facets)
+	favP, _ := c.FindPage("favorites")
+	if favP.Mode != "publications" {
+		t.Errorf("favorites page mode=%s, want publications", favP.Mode)
+	}
+	hasFavPub, hasFavFacets := false, false
+	for _, s := range favP.Sections {
+		if s.Kind == "publication" && !s.Group && s.Query == "favorites" {
+			hasFavPub = true
+		}
+		if s.Kind == "facets" && s.Query == "favorites" {
+			hasFavFacets = true
+		}
+	}
+	if !hasFavPub || !hasFavFacets {
+		t.Errorf("favorites page missing publication or facets: pub=%v, facets=%v", hasFavPub, hasFavFacets)
+	}
+
+	// Page: toplists (sections mode, All-Time > Past Year > Past Month > Yesterday)
+	topP, _ := c.FindPage("toplists")
+	if topP.Mode != "groups" {
+		t.Errorf("toplists page mode=%s, want groups", topP.Mode)
+	}
+	var topPubs []Section
+	for _, s := range topP.Sections {
+		if s.Kind == "publication" && s.Group {
+			topPubs = append(topPubs, s)
+		}
+	}
+	expectedPeriods := []string{"toplist:alltime", "toplist:year", "toplist:month", "toplist:yesterday"}
+	if len(topPubs) != 4 {
+		t.Fatalf("toplists page has %d groups, want 4", len(topPubs))
+	}
+	for i, q := range expectedPeriods {
+		if topPubs[i].Query != q {
+			t.Errorf("toplists[%d] query=%s, want %s", i, topPubs[i].Query, q)
+		}
+	}
+
+	// Page: archives (publications mode, Archives publication + Categories facets)
+	archP, _ := c.FindPage("archives")
+	if archP.Mode != "publications" {
+		t.Errorf("archives page mode=%s, want publications", archP.Mode)
+	}
+	hasArchPub, hasArchFacets := false, false
+	for _, s := range archP.Sections {
+		if s.Kind == "publication" && !s.Group && s.Query == "archives" {
+			hasArchPub = true
+		}
+		if s.Kind == "facets" && s.Query == "archives" {
+			hasArchFacets = true
+		}
+	}
+	if !hasArchPub || !hasArchFacets {
+		t.Errorf("archives page missing publication or facets: pub=%v, facets=%v", hasArchPub, hasArchFacets)
+	}
+}

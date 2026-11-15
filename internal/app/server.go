@@ -147,6 +147,7 @@ func (s *Server) register() {
 	m.HandleFunc("GET /opds/v2/{$}", s.redirectOPDS("/opds/v2.0"))
 	m.HandleFunc("GET /opds/v2.0/{$}", s.redirectOPDS("/opds/v2.0"))
 	m.HandleFunc("GET /opds/v2.0", s.rootV20)
+	m.HandleFunc("GET /opds/v2.0/page/{id}", s.pageV20)
 	m.HandleFunc("GET /opds/v2.0/search.xml", s.searchXML20)
 	m.HandleFunc("GET /opds/v2.0/gallery", s.gallery20)
 	m.HandleFunc("GET /opds/v2.0/toplist", s.toplist20)

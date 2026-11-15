@@ -1,5 +1,5 @@
 import { reactive, toRefs } from "vue";
-import { canUseFacets, chooseInitialHomeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
+import { canUseFacets, chooseInitialHomeMode, createDefaultHomePages, normalizeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
 import { t } from "./i18n.js";
 import {
   READER_PAGE_KEY_PREFIX,
@@ -49,6 +49,8 @@ const state = reactive({
   homeModeRequired: false,
   form: {},
   layout: { navigation: [], publication: null, facets: [], groups: [] },
+  pages: [],
+  activePageId: "home",
 });
 const MAX_COVER_CACHE = 300;
 const coverCache = new Map();
@@ -344,10 +346,33 @@ async function loadHome(options = {}) {
     state.home = r.data;
     state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     if (!options.preserveDrafts) {
-      const sections = r.data.sections || [];
-      state.layout = splitHomeSections(sections);
-      state.homeMode = chooseInitialHomeMode(sections);
-      state.homeModeRequired = !state.homeMode;
+      if (Array.isArray(r.data.pages) && r.data.pages.length > 0) {
+        state.pages = r.data.pages.map((p) => {
+          const secs = p.sections || [];
+          const initialMode = p.mode ? normalizeMode(p.mode) : (chooseInitialHomeMode(secs) || "publications");
+          return {
+            id: p.id,
+            title: p.title || (p.id === "home" ? t("home_editor.home_page_title") : p.id),
+            mode: initialMode,
+            layout: splitHomeSections(secs),
+          };
+        });
+      } else {
+        const sections = r.data.sections || [];
+        state.pages = [{
+          id: "home",
+          title: t("home_editor.home_page_title"),
+          mode: chooseInitialHomeMode(sections) || "publications",
+          layout: splitHomeSections(sections),
+        }];
+      }
+      if (!state.pages.some((p) => p.id === state.activePageId)) {
+        state.activePageId = "home";
+      }
+      const active = state.pages.find((p) => p.id === state.activePageId) || state.pages[0];
+      state.layout = active.layout;
+      state.homeMode = normalizeMode(active.mode);
+      state.homeModeRequired = !active.mode;
     }
     state.homeDirty = false;
   } catch (e) {
@@ -361,38 +386,137 @@ async function loadHome(options = {}) {
   }
 }
 async function saveHome() {
-  if (!state.homeMode) {
-    state.error = t("notice.select_home_mode_first");
-    return;
+  for (const page of state.pages) {
+    if (page.mode === "publications" && page.layout.facets.length && !canUseFacets(page.layout.publication)) {
+      state.error = t("notice.unsupported_facet_source");
+      return;
+    }
   }
-  if (state.homeMode === "publications" && state.layout.facets.length && !canUseFacets(state.layout.publication)) {
-    state.error = t("notice.unsupported_facet_source");
-    return;
-  }
-  const sections = serializeHomeLayout(state.layout, state.homeMode);
-  const submitted = JSON.stringify(sections);
+  const payloadPages = state.pages.map((p) => ({
+    id: p.id,
+    title: p.title || (p.id === "home" ? t("home_editor.home_page_title") : p.id),
+    mode: normalizeMode(p.mode),
+    sections: serializeHomeLayout(p.layout, p.mode),
+  }));
   await run(async () => {
     const saved = await api("/api/home/edit", {
       method: "PUT",
       headers: { "If-Match": state.homeTag },
-      body: JSON.stringify({ sections }),
+      body: JSON.stringify({ pages: payloadPages }),
     });
     state.home = saved.data;
     state.homeTag = (saved.headers.get("ETag") || "").replace(/^W\//i, "");
     state.notice = t("notice.home_saved");
-    state.homeDirty = JSON.stringify(serializeHomeLayout(state.layout, state.homeMode)) !== submitted;
+    state.homeDirty = false;
   });
 }
+function selectActivePage(pageId) {
+  const p = state.pages.find((x) => x.id === pageId);
+  if (!p) return;
+  state.activePageId = pageId;
+  state.layout = p.layout;
+  state.homeMode = normalizeMode(p.mode);
+  state.homeModeRequired = !p.mode;
+}
+function addPage({ id, title, mode = "publications" }) {
+  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return false;
+  if (state.pages.some((p) => p.id === id)) return false;
+  const normalized = normalizeMode(mode);
+  const newPage = {
+    id,
+    title: title || id,
+    mode: normalized,
+    layout: {
+      navigation: [],
+      publication: mode === "publications"
+        ? { kind: "publication", group: false, title: t("home_editor.latest"), type: "preset", query: "latest", count: 10 }
+        : null,
+      facets: [],
+      groups: [],
+    },
+  };
+  state.pages.push(newPage);
+  selectActivePage(id);
+  state.homeDirty = true;
+  return true;
+}
+function removePage(pageId) {
+  if (pageId === "home") return false;
+  const idx = state.pages.findIndex((p) => p.id === pageId);
+  if (idx < 0) return false;
+  state.pages.splice(idx, 1);
+  if (state.activePageId === pageId) {
+    selectActivePage("home");
+  }
+  state.homeDirty = true;
+  return true;
+}
+function updatePageMeta(pageId, { title, id: newId }) {
+  const p = state.pages.find((x) => x.id === pageId);
+  if (!p) return false;
+  if (title !== undefined) p.title = title;
+  if (newId && newId !== pageId && pageId !== "home") {
+    if (!/^[a-zA-Z0-9_-]+$/.test(newId)) return false;
+    if (state.pages.some((x) => x.id === newId)) return false;
+    p.id = newId;
+    if (state.activePageId === pageId) {
+      state.activePageId = newId;
+    }
+  }
+  state.homeDirty = true;
+  return true;
+}
+function reorderPages(fromIndex, toIndex) {
+  if (fromIndex <= 0 || toIndex <= 0) return;
+  if (fromIndex >= state.pages.length || toIndex >= state.pages.length) return;
+  const item = state.pages.splice(fromIndex, 1)[0];
+  state.pages.splice(toIndex, 0, item);
+  state.homeDirty = true;
+}
+function resetHomeToDefault() {
+  state.pages = createDefaultHomePages();
+  selectActivePage("home");
+  state.homeDirty = true;
+}
 function selectHomeMode(mode) {
-  state.homeMode = mode;
+  const normalized = normalizeMode(mode);
+  const active = state.pages.find((p) => p.id === state.activePageId);
+  if (state.homeMode === normalized && (!active || active.mode === normalized) && !state.homeModeRequired) {
+    return;
+  }
+  state.homeMode = normalized;
   state.homeModeRequired = false;
+  if (active) {
+    active.mode = normalized;
+    if (normalized === "publications" && !active.layout.publication) {
+      active.layout.publication = {
+        kind: "publication",
+        group: false,
+        title: "Latest",
+        type: "preset",
+        query: "latest",
+        count: 10,
+      };
+    }
+  }
   state.homeDirty = true;
 }
 function canAddFacet() {
   return canUseFacets(state.layout.publication);
 }
-function addNavigation() {
-  state.layout.navigation.push({ kind: "navigation", group: false, title: t("home_editor.latest"), type: "preset", query: "latest" });
+function addNavigation(targetPageId) {
+  let target = targetPageId;
+  if (!target) {
+    const other = state.pages.find((p) => p.id !== state.activePageId);
+    target = other ? other.id : "home";
+  }
+  state.layout.navigation.push({
+    kind: "navigation",
+    group: false,
+    title: "",
+    type: "page",
+    query: target,
+  });
   state.homeDirty = true;
 }
 function removeItem(collection, i) {
@@ -427,17 +551,22 @@ function addGroupSection(kind) {
         group: true,
         title: t("home_editor.nav_group_default_title"),
         items: [
-          { title: t("home_editor.latest"), type: "preset", query: "latest" },
+          { title: "", type: "page", query: "home" },
         ],
       }
     : { kind: "publication", group: true, title: t("home_editor.popular"), type: "preset", query: "popular", count: 10 });
   state.homeDirty = true;
 }
-function addGroupNavigationItem(groupIndex) {
+function addGroupNavigationItem(groupIndex, targetPageId) {
   const grp = state.layout.groups[groupIndex];
   if (!grp) return;
   if (!Array.isArray(grp.items)) grp.items = [];
-  grp.items.push({ title: "", type: "preset", query: "latest" });
+  let target = targetPageId;
+  if (!target) {
+    const other = state.pages.find((p) => p.id !== state.activePageId);
+    target = other ? other.id : "home";
+  }
+  grp.items.push({ title: "", type: "page", query: target });
   state.homeDirty = true;
 }
 function removeGroupNavigationItem(groupIndex, itemIndex) {
@@ -954,6 +1083,12 @@ export function useApp() {
     saveHome,
     setField,
     selectHomeMode,
+    selectActivePage,
+    addPage,
+    removePage,
+    updatePageMeta,
+    reorderPages,
+    resetHomeToDefault,
     canAddFacet,
     addNavigation,
     addPublication,

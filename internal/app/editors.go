@@ -297,9 +297,12 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 		// A decodable legacy layout may violate current output-shape rules. Permit
 		// replacing it with a valid layout; the original is backed up on save.
 		var c home.Config
-		if e := decodeJSON(w, r, &c); e != nil || c.Sections == nil {
-			writeJSON(w, 400, map[string]any{"detail": "sections must be a JSON array"})
+		if e := decodeJSON(w, r, &c); e != nil || (c.Sections == nil && c.Pages == nil) {
+			writeJSON(w, 400, map[string]any{"detail": "sections or pages must be provided"})
 			return
+		}
+		if len(c.Pages) == 0 && len(c.Sections) > 0 {
+			c.Pages = []home.Page{{ID: "home", Title: "首页", Sections: c.Sections}}
 		}
 		if e := home.Validate(c); e != nil {
 			writeJSON(w, 400, map[string]any{"detail": e.Error()})
@@ -326,17 +329,10 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", s.fileETag("home", exists, snapshot))
 	writeJSON(w, 200, shape)
 }
-func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[string]any {
-	c := home.Default()
-	var parseErr, validationErr error
-	if exists {
-		c, parseErr = home.DecodeEditor(snapshot)
-		if parseErr == nil {
-			validationErr = home.Validate(c)
-		}
-	}
+
+func formatEditorSections(secs []home.Section) []map[string]any {
 	sections := []map[string]any{}
-	for _, v := range c.Sections {
+	for _, v := range secs {
 		var count any
 		if v.Count != nil {
 			count = *v.Count
@@ -351,8 +347,36 @@ func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[str
 		}
 		sections = append(sections, item)
 	}
-	out := map[string]any{"path": s.Settings.HomeConfigPath, "using_file": exists}
-	if parseErr == nil { out["sections"] = sections }
+	return sections
+}
+
+func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[string]any {
+	c := home.Default()
+	var parseErr, validationErr error
+	if exists {
+		c, parseErr = home.DecodeEditor(snapshot)
+		if parseErr == nil {
+			validationErr = home.Validate(c)
+		}
+	}
+	pages := []map[string]any{}
+	for _, p := range c.Pages {
+		pages = append(pages, map[string]any{
+			"id":       p.ID,
+			"title":    p.Title,
+			"mode":     p.Mode,
+			"sections": formatEditorSections(p.Sections),
+		})
+	}
+	out := map[string]any{
+		"path":       s.Settings.HomeConfigPath,
+		"using_file": exists,
+		"mode":       c.HomePage().Mode,
+	}
+	if parseErr == nil {
+		out["sections"] = formatEditorSections(c.HomePage().Sections)
+		out["pages"] = pages
+	}
 	if parseErr != nil {
 		out["error"] = parseErr.Error()
 	} else if validationErr != nil {

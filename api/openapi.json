@@ -739,6 +739,86 @@
         }
       }
     },
+    "/opds/v2.0/page/{id}": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Page Feed",
+        "description": "Custom OPDS 2.0 page feed defined in home.toml. Supports publications stream mode and sections/groups mode.",
+        "operationId": "page_feed_opds_v2_0_page__id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Page slug identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page feed. Navigation and publication previews for this page.",
+            "content": {
+              "application/opds+json;profile=navigation": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Page not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream or parsing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream unavailable or circuit breaker open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/opds/v2.0/search.xml": {
       "get": {
         "tags": [
@@ -4025,6 +4105,12 @@
                         "null"
                       ]
                     },
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ApiHomePage"
+                      }
+                    },
                     "sections": {
                       "type": "array",
                       "items": {
@@ -4394,6 +4480,12 @@
                     "using_file": {
                       "type": "boolean"
                     },
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomePage"
+                      }
+                    },
                     "sections": {
                       "type": "array",
                       "items": {
@@ -4453,11 +4545,14 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "sections"
-                ],
                 "additionalProperties": false,
                 "properties": {
+                  "pages": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/HomePage"
+                    }
+                  },
                   "sections": {
                     "type": "array",
                     "items": {
@@ -4501,6 +4596,12 @@
                     },
                     "using_file": {
                       "type": "boolean"
+                    },
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomePage"
+                      }
                     },
                     "sections": {
                       "type": "array",
@@ -5224,7 +5325,8 @@
             "type": "string",
             "enum": [
               "preset",
-              "search"
+              "search",
+              "page"
             ]
           },
           "query": {
@@ -5262,7 +5364,8 @@
             "type": "string",
             "enum": [
               "preset",
-              "search"
+              "search",
+              "page"
             ]
           },
           "query": {
@@ -5271,6 +5374,78 @@
         }
       }
     },
+      "HomePage": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Page slug identifier ('home' for root page)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Page display title"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "publications",
+              "sections",
+              "groups"
+            ],
+            "default": "publications",
+            "description": "Page layout mode"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeSection"
+            }
+          }
+        }
+      },
+      "ApiHomePage": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/HomeSection"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "href": {
+                      "type": "string"
+                    },
+                    "auth_required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
       "Progression": {"type":"object","required":["modified","device","progression"],"properties":{"modified":{"type":"string","format":"date-time"},"device":{"type":"object","required":["id","name"],"properties":{"id":{"type":"string","format":"uri"},"name":{"type":"string","minLength":1}}},"progression":{"type":"number","minimum":0,"maximum":1},"title":{"type":"string"},"references":{"type":"array","items":{"type":"string","format":"uri-reference"}}}},
     "securitySchemes": {
       "basicAuth": {

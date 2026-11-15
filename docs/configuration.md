@@ -48,7 +48,7 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `COMMENTS_ENABLED` | `true` | 控制 v2.0 详情是否输出评论扩展。 |
 | `IMAGE_PROXY_HOSTS` | `ehgt.org,s.exhentai.org` | `/image/fetch` 允许代理的 host。 |
 | `EH_PROFILE` | `PandaOPDS` | 上游 uconfig profile 名；空值关闭。 |
-| `HOME_CONFIG` | `./config/home.toml` | v2.0 首页布局文件。 |
+| `HOME_CONFIG` | `./config/home.toml` | v2.0 编排布局文件（支持多页面）。 |
 | `FACETS` | 内置 10 分类 | 分类筛选配置，`名称:掩码` 逗号分隔。 |
 | `ARCHIVE_DIR` | `./archives` | 长期归档存储目录。 |
 | `ARCHIVE_STATE_DIR` | `./config/archive`（容器内 `/config/archive`） | 本地归档状态与图库元数据目录；应与归档 ZIP 卷分开持久化。 |
@@ -81,7 +81,7 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 
 收藏自动归档开关 `FAVORITES_SYNC_ARCHIVE` 与归档范围 `FAVORITES_SYNC_CATEGORIES` 也可在网页的收藏夹配置项中设置。自动归档默认关闭，启用后可能消耗 GP，首次扫描只建立增量基线。范围使用逗号分隔的收藏夹 ID（0–9）；留空表示全部，`-ID` 表示排除该收藏夹。范围只限制自动归档，不影响同步扫描。环境变量优先于 `settings.toml`，因此由环境变量设置时网页显示只读；保存的文件设置在重启后生效。
 
-未配置 Basic Auth 时，任何能访问服务的用户都可匿名读取和保存配置及首页布局；配置 Basic Auth 后，编辑接口要求有效凭据，即使路径匹配认证豁免规则也不例外。编辑接口的写请求仅接受同源 JSON，并要求使用读取时返回的 `ETag` 作为 `If-Match`。首页布局写入 `HOME_CONFIG` 指定的文件，旧文件备份为 `.bak`，下一次 OPDS 2.0 首页请求读取新布局。
+未配置 Basic Auth 时，任何能访问服务的用户都可匿名读取和保存配置及首页布局；配置 Basic Auth 后，编辑接口要求有效凭据，即使路径匹配认证豁免规则也不例外。编辑接口的写请求仅接受同源 JSON，并要求使用读取时返回的 `ETag` 作为 `If-Match`。编排布局写入 `HOME_CONFIG` 指定的文件，旧文件备份为 `.bak`，下一次 OPDS 2.0 页面请求读取新布局。
 
 ## 反向代理
 

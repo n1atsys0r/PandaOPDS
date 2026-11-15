@@ -529,3 +529,90 @@ func TestHomeEditorNavigationGroupWithItems(t *testing.T) {
 		t.Fatalf("item 0 mismatch: %#v", it0)
 	}
 }
+
+func TestMultiPageEditorAndOPDSPageEndpoint(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "home.toml")
+	s := &Server{Settings: config.Settings{HomeConfigPath: p}, editKey: []byte("test-only-etag-key")}
+
+	// 1. Initial GET /api/home/edit has pages and sections
+	get := httptest.NewRecorder()
+	s.homeEdit(get, httptest.NewRequest(http.MethodGet, "/api/home/edit", nil))
+	tag := get.Header().Get("ETag")
+	var getRes map[string]any
+	if err := json.Unmarshal(get.Body.Bytes(), &getRes); err != nil {
+		t.Fatal(err)
+	}
+	pages, ok := getRes["pages"].([]any)
+	if !ok || len(pages) == 0 {
+		t.Fatalf("expected pages array, got %#v", getRes["pages"])
+	}
+
+	// 2. PUT /api/home/edit with multiple pages
+	multiPayload := `{
+		"pages": [
+			{
+				"id": "home",
+				"title": "首页",
+				"sections": [
+					{"kind":"navigation","group":false,"title":"同人专区","type":"page","query":"doujin"}
+				]
+			},
+			{
+				"id": "doujin",
+				"title": "同人专区",
+				"sections": [
+					{"kind":"navigation","group":false,"title":"返回首页","type":"page","query":"home"}
+				]
+			}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(multiPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", tag)
+	rr := httptest.NewRecorder()
+	s.homeEdit(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("PUT multi-page failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// 3. GET /api/home returns pages
+	apiHomeRec := httptest.NewRecorder()
+	s.apiHome(apiHomeRec, httptest.NewRequest(http.MethodGet, "/api/home", nil))
+	if apiHomeRec.Code != 200 {
+		t.Fatalf("GET /api/home failed: %d", apiHomeRec.Code)
+	}
+	var apiHomeData map[string]any
+	if err := json.Unmarshal(apiHomeRec.Body.Bytes(), &apiHomeData); err != nil {
+		t.Fatal(err)
+	}
+	homePages := apiHomeData["pages"].([]any)
+	if len(homePages) != 2 {
+		t.Fatalf("expected 2 pages in /api/home, got %d", len(homePages))
+	}
+
+	// 4. GET /opds/v2.0/page/doujin
+	pageReq := httptest.NewRequest(http.MethodGet, "/opds/v2.0/page/doujin", nil)
+	pageReq.SetPathValue("id", "doujin")
+	pageRec := httptest.NewRecorder()
+	s.pageV20(pageRec, pageReq)
+	if pageRec.Code != 200 {
+		t.Fatalf("GET /opds/v2.0/page/doujin status=%d %s", pageRec.Code, pageRec.Body.String())
+	}
+	var pageDoc map[string]any
+	if err := json.Unmarshal(pageRec.Body.Bytes(), &pageDoc); err != nil {
+		t.Fatal(err)
+	}
+	meta := pageDoc["metadata"].(map[string]any)
+	if meta["title"] != "同人专区" {
+		t.Fatalf("expected title 同人专区, got %v", meta["title"])
+	}
+
+	// 5. GET /opds/v2.0/page/nonexistent -> 404
+	badReq := httptest.NewRequest(http.MethodGet, "/opds/v2.0/page/nonexistent", nil)
+	badReq.SetPathValue("id", "nonexistent")
+	badRec := httptest.NewRecorder()
+	s.pageV20(badRec, badReq)
+	if badRec.Code != 404 {
+		t.Fatalf("expected 404 for nonexistent page, got %d", badRec.Code)
+	}
+}

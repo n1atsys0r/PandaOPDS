@@ -1,96 +1,286 @@
-# PandaOPDS OPDS 2.0 首页布局
+# PandaOPDS OPDS 2.0 编排布局
 #
-# 每个 [[section]] 声明一个栏目。
+# 支持多页面结构（[[page]]）与旧版单页结构（直接声明 [[section]]）。
+#
+# 每个 [[page]] 声明一个页面：
+#   id           = 页面唯一标识（主页必须为 "home"，自定义页面使用字母数字中划线下划线）
+#   title        = 页面标题
+#   mode         = "sections" (分组栏目模式) 或 "publications" (出版物流模式)
+#
+# 每个 [[page.section]]（或根级 [[section]]）声明一个栏目：
 #   kind         = "publication" | "navigation" | "facets"
-#   group        = true 时，publication 形成独立画廊分组，navigation 形成独立导航分组（可在 items 中添加多个子导航）；缺省为 false
+#   group        = true 时，publication 形成独立画廊分组，navigation 形成独立导航分组；缺省为 false
 #   title        = 栏目或分组标题
-#   type / query = "preset" + 内置预设，或 "search" + 搜索表达式（navigation 分组时在各 item 中指定）
+#   type / query = "preset" + 内置预设，或 "search" + 搜索表达式，或 "page" + 目标页面 id
 #   count        = publication 的预览条数，缺省为 10，填 0 关闭预览
 #   items        = navigation 分组包含的子导航项列表，各子项拥有独立的 title、type 和 query
 #
 # 顶层 publications 与 groups 互斥；顶层 navigation 可与其中任一形式并存。
-# facets 只能与顶层 publication 并用，type 和 query 须与其相同。
 # 内置预设：latest、popular、watched、favorites、favorites:N、archives、
 # toplist:yesterday、toplist:month、toplist:year、toplist:alltime。
 
-# ---- 排行榜 ----
+# ================= 主页 (Home) =================
+[[page]]
+id = "home"
+title = "Home"
+mode = "groups"
 
-[[section]]
-kind = "publication"
-group = true
-title = "Toplist: Yesterday"
-type = "preset"
-query = "toplist:yesterday"
-count = 5
-
-[[section]]
+# ---- 默认顶级 Navigation ----
+[[page.section]]
 kind = "navigation"
-group = true
-title = "Rankings"
+group = false
+title = "Watched"
+type = "page"
+query = "watched"
 
-[[section.items]]
-title = "Toplist: Month"
-type = "preset"
-query = "toplist:month"
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Favorites"
+type = "page"
+query = "favorites"
 
-[[section.items]]
-title = "Toplist: Year"
-type = "preset"
-query = "toplist:year"
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Toplists"
+type = "page"
+query = "toplists"
 
-# ---- 浏览组 ----
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Archives"
+type = "page"
+query = "archives"
 
-[[section]]
+# ---- 浏览组 (Popular > Latest) ----
+[[page.section]]
 kind = "publication"
 group = true
 title = "Popular"
 type = "preset"
 query = "popular"
-count = 10
+count = 20
 
-[[section]]
-kind = "navigation"
+[[page.section]]
+kind = "publication"
 group = true
 title = "Latest"
 type = "preset"
 query = "latest"
+count = 20
 
-# 本示例使用 groups，因此不配置顶层 publication / facets。
-# 另一种布局可将 publication 和 facets 设为 group=false，并移除所有 group=true 栏目。
+# ================= 页面: Watched =================
+[[page]]
+id = "watched"
+title = "Watched"
+mode = "publications"
 
-# ---- 根 navigation ----
-
-[[section]]
+[[page.section]]
 kind = "navigation"
 group = false
-title = "Toplist: All Time"
-type = "preset"
-query = "toplist:alltime"
+title = "Watched"
+type = "page"
+query = "watched"
 
-[[section]]
+[[page.section]]
 kind = "navigation"
+group = false
+title = "Favorites"
+type = "page"
+query = "favorites"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Toplists"
+type = "page"
+query = "toplists"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Archives"
+type = "page"
+query = "archives"
+
+[[page.section]]
+kind = "publication"
 group = false
 title = "Watched"
 type = "preset"
 query = "watched"
+count = 20
 
-[[section]]
+[[page.section]]
+kind = "facets"
+group = false
+title = "Categories"
+type = "preset"
+query = "watched"
+
+# ================= 页面: Favorites =================
+[[page]]
+id = "favorites"
+title = "Favorites"
+mode = "publications"
+
+[[page.section]]
 kind = "navigation"
+group = false
+title = "Watched"
+type = "page"
+query = "watched"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Favorites"
+type = "page"
+query = "favorites"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Toplists"
+type = "page"
+query = "toplists"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Archives"
+type = "page"
+query = "archives"
+
+[[page.section]]
+kind = "publication"
 group = false
 title = "Favorites"
 type = "preset"
 query = "favorites"
+count = 20
 
-[[section]]
+[[page.section]]
+kind = "facets"
+group = false
+title = "Folders"
+type = "preset"
+query = "favorites"
+
+# ================= 页面: Toplists =================
+[[page]]
+id = "toplists"
+title = "Toplists"
+mode = "groups"
+
+[[page.section]]
 kind = "navigation"
 group = false
-title = "Japanese Original"
-type = "search"
-query = "language:japanese"
+title = "Watched"
+type = "page"
+query = "watched"
 
-[[section]]
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Favorites"
+type = "page"
+query = "favorites"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Toplists"
+type = "page"
+query = "toplists"
+
+[[page.section]]
 kind = "navigation"
 group = false
 title = "Archives"
+type = "page"
+query = "archives"
+
+# ---- 排行榜分组 (All-Time > Past Year > Past Month > Yesterday) ----
+[[page.section]]
+kind = "publication"
+group = true
+title = "All Time"
+type = "preset"
+query = "toplist:alltime"
+count = 20
+
+[[page.section]]
+kind = "publication"
+group = true
+title = "Past Year"
+type = "preset"
+query = "toplist:year"
+count = 20
+
+[[page.section]]
+kind = "publication"
+group = true
+title = "Past Month"
+type = "preset"
+query = "toplist:month"
+count = 20
+
+[[page.section]]
+kind = "publication"
+group = true
+title = "Yesterday"
+type = "preset"
+query = "toplist:yesterday"
+count = 20
+
+# ================= 页面: Archives =================
+[[page]]
+id = "archives"
+title = "Archives"
+mode = "publications"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Watched"
+type = "page"
+query = "watched"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Favorites"
+type = "page"
+query = "favorites"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Toplists"
+type = "page"
+query = "toplists"
+
+[[page.section]]
+kind = "navigation"
+group = false
+title = "Archives"
+type = "page"
+query = "archives"
+
+[[page.section]]
+kind = "publication"
+group = false
+title = "Archives"
+type = "preset"
+query = "archives"
+count = 20
+
+[[page.section]]
+kind = "facets"
+group = false
+title = "Categories"
 type = "preset"
 query = "archives"
