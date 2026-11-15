@@ -15,6 +15,7 @@ import (
 	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
+	"pandaopds/internal/home"
 )
 
 type homePreviewTransport func(*http.Request) (*http.Response, error)
@@ -204,10 +205,12 @@ title="Category"
 		}
 		return homePreviewResponse(r, `<div class="gl1e"><a class="glink" href="/g/101/aaa/">Chinese Item</a></div>`), nil
 	}))
+	server.Settings.IPBMemberID = "123"
+	server.Settings.IPBPassHash = "abc"
 	server.Settings.Facets = []config.Facet{{Name: "Doujinshi", Mask: 1021}, {Name: "Manga", Mask: 1019}}
 	rr := httptest.NewRecorder()
 	server.rootV20(rr, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"title": "Category"`) || !strings.Contains(rr.Body.String(), `category=Doujinshi`) || !strings.Contains(rr.Body.String(), `query=language%3Achinese`) {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"title": "Category"`) || !strings.Contains(rr.Body.String(), `f_cats=1021`) || !strings.Contains(rr.Body.String(), `query=language%3Achinese`) {
 		t.Fatalf("facets/root source missing: %s", rr.Body.String())
 	}
 	if calls != 2 {
@@ -275,5 +278,234 @@ query = "toplist:year"
 	}
 	if grp.Navigation[1].Title != "Year" || !strings.Contains(grp.Navigation[1].Href, "period=year") {
 		t.Fatalf("item 1 mismatch: %+v", grp.Navigation[1])
+	}
+}
+
+func TestAutoFacetsAndGalleryConsistency(t *testing.T) {
+	// A publication page without explicit kind="facets" section
+	homeTOML := `[[section]]
+kind="publication"
+type="preset"
+query="watched"
+title="Watched"
+count=1
+`
+	server := newHomePreviewServer(t, homeTOML, homePreviewTransport(func(r *http.Request) (*http.Response, error) {
+		return homePreviewResponse(r, `<div class="gl1e"><a class="glink" href="/g/101/aaa/">Watched Item</a></div>`), nil
+	}))
+	server.Settings.IPBMemberID = "123"
+	server.Settings.IPBPassHash = "abc"
+	server.Settings.Facets = []config.Facet{{Name: "Doujinshi", Mask: 1021}, {Name: "Manga", Mask: 1019}}
+
+	// 1. rootV20 automatically generates facets
+	rr := httptest.NewRecorder()
+	server.rootV20(rr, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("rootV20 status=%d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"title": "Filter"`) || !strings.Contains(body, `f_cats=1021`) || !strings.Contains(body, `query=watched`) {
+		t.Fatalf("auto-derived facets missing or malformed: %s", body)
+	}
+
+	// 2. gallery20 with query=watched and f_cats=1021 preserves query and sets rel="self" on Doujinshi
+	galleryReq := httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery?query=watched&f_cats=1021", nil)
+	galleryRR := httptest.NewRecorder()
+	server.gallery20(galleryRR, galleryReq)
+	if galleryRR.Code != http.StatusOK {
+		t.Fatalf("gallery20 status=%d", galleryRR.Code)
+	}
+	gBody := galleryRR.Body.String()
+	if !strings.Contains(gBody, `"title": "Filter"`) || !strings.Contains(gBody, `query=watched`) {
+		t.Fatalf("gallery20 facets missing for watched: %s", gBody)
+	}
+	var galleryDoc struct {
+		Facets []struct {
+			Links []struct {
+				Title string `json:"title"`
+				Href  string `json:"href"`
+				Rel   string `json:"rel"`
+			} `json:"links"`
+		} `json:"facets"`
+	}
+	if err := json.Unmarshal(galleryRR.Body.Bytes(), &galleryDoc); err != nil || len(galleryDoc.Facets) == 0 {
+		t.Fatalf("failed to parse gallery facets: %v", err)
+	}
+	doujinLinkFound := false
+	for _, l := range galleryDoc.Facets[0].Links {
+		if l.Title == "Doujinshi" {
+			doujinLinkFound = true
+			if l.Rel != "self" {
+				t.Fatalf("expected Doujinshi to have rel='self', got %q", l.Rel)
+			}
+			if !strings.Contains(l.Href, "f_cats=1021") || !strings.Contains(l.Href, "query=watched") {
+				t.Fatalf("expected Doujinshi href to contain f_cats and query, got %q", l.Href)
+			}
+		}
+	}
+	if !doujinLinkFound {
+		t.Fatalf("Doujinshi link not found in gallery facets: %+v", galleryDoc.Facets)
+	}
+}
+
+func TestPageWithCustomFacetSetAndGalleryParams(t *testing.T) {
+	homeTOML := `[[page]]
+id = "home"
+title = "Home"
+mode = "publications"
+
+  [[page.section]]
+  kind = "publication"
+  title = "东方Project"
+  type = "search"
+  query = "touhou"
+  count = 10
+
+  [[page.section]]
+  kind = "facets"
+  title = "深度筛选"
+
+    [[page.section.items]]
+    title = "全部"
+
+    [[page.section.items]]
+    title = "4星汉化同人"
+    categories = ["Doujinshi"]
+    rating = 4
+    expunged = true
+    disable_filters = ["language"]
+    query = "language:chinese"
+`
+	server := newHomePreviewServer(t, homeTOML, homePreviewTransport(func(r *http.Request) (*http.Response, error) {
+		return homePreviewResponse(r, `<div class="gl1e"><a class="glink" href="/g/101/aaa/">Touhou Item</a></div>`), nil
+	}))
+	if _, err := home.Load(server.Settings.HomeConfigPath); err != nil {
+		t.Fatalf("home.Load error: %v", err)
+	}
+	server.Settings.Facets = []config.Facet{{Name: "Doujinshi", Mask: 1021}, {Name: "Manga", Mask: 1019}}
+
+	// 1. GET /opds/v2.0 renders custom facets with deep parameters
+	rec := httptest.NewRecorder()
+	server.rootV20(rec, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rootV20 status=%d, body=%s", rec.Code, rec.Body.String())
+	}
+	var doc struct {
+		Facets []struct {
+			Metadata map[string]string `json:"metadata"`
+			Links    []struct {
+				Title string `json:"title"`
+				Href  string `json:"href"`
+				Rel   string `json:"rel"`
+			} `json:"links"`
+		} `json:"facets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil || len(doc.Facets) != 1 {
+		t.Fatalf("failed to decode root facets: %v, body=%s", err, rec.Body.String())
+	}
+	if doc.Facets[0].Metadata["title"] != "深度筛选" {
+		t.Fatalf("expected facet group title '深度筛选', got %q", doc.Facets[0].Metadata["title"])
+	}
+	links := doc.Facets[0].Links
+	if len(links) != 2 {
+		t.Fatalf("expected 2 facet links, got %d", len(links))
+	}
+	// Link 0: 全部 -> /opds/v2.0/gallery?query=touhou
+	if links[0].Title != "全部" || !strings.Contains(links[0].Href, "query=touhou") {
+		t.Fatalf("unexpected link 0: %+v", links[0])
+	}
+	// Link 1: 4星汉化同人 -> includes f_cats=1021, advsearch=1, f_srdd=4, f_sh=on, f_sfl=on, query=touhou language:chinese
+	l1 := links[1]
+	if l1.Title != "4星汉化同人" {
+		t.Fatalf("unexpected link 1 title: %q", l1.Title)
+	}
+	for _, expected := range []string{"f_cats=1021", "advsearch=1", "f_srdd=4", "f_sh=on", "f_sfl=on", "query=touhou+language%3Achinese"} {
+		if !strings.Contains(l1.Href, expected) {
+			t.Errorf("link 1 href %q missing %q", l1.Href, expected)
+		}
+	}
+
+	// 2. GET gallery with these query parameters forwards them and preserves in self & next
+	gReq := httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery?query=touhou+language%3Achinese&f_cats=1021&advsearch=1&f_srdd=4&f_sh=on", nil)
+	gRec := httptest.NewRecorder()
+	server.gallery20(gRec, gReq)
+	if gRec.Code != http.StatusOK {
+		t.Fatalf("gallery20 status=%d", gRec.Code)
+	}
+	gBody := gRec.Body.String()
+	for _, expected := range []string{"f_cats=1021", "advsearch=1", "f_srdd=4", "f_sh=on"} {
+		if !strings.Contains(gBody, expected) {
+			t.Errorf("gallery response missing %q in self/next links: %s", expected, gBody)
+		}
+	}
+}
+
+func TestPageWithReferencedFacetSet(t *testing.T) {
+	homeTOML := `
+[[facet_set]]
+id = "manga_favs"
+title = "单行本精选"
+
+[[facet_set.items]]
+title = "全部单行本"
+categories = ["Manga"]
+
+[[facet_set.items]]
+title = "5星中文单行本"
+categories = ["Manga"]
+rating = 5
+query = "language:chinese"
+
+[[page]]
+id = "home"
+title = "Home"
+mode = "publications"
+
+[[page.section]]
+kind = "publication"
+type = "search"
+query = "tag:romance"
+
+[[page.section]]
+kind = "facets"
+facet_set = "manga_favs"
+`
+	server := newHomePreviewServer(t, homeTOML, homePreviewTransport(func(r *http.Request) (*http.Response, error) {
+		return homePreviewResponse(r, `<div class="gl1e"><a class="glink" href="/g/101/aaa/">Item 1</a></div>`), nil
+	}))
+	server.Settings.IPBMemberID = "123"
+	server.Settings.IPBPassHash = "abc"
+
+	rr := httptest.NewRecorder()
+	server.rootV20(rr, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("rootV20 status=%d: %s", rr.Code, rr.Body.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	facets, ok := doc["facets"].([]any)
+	if !ok || len(facets) != 1 {
+		t.Fatalf("expected 1 facet group from referenced set, got %v", doc["facets"])
+	}
+	fg := facets[0].(map[string]any)
+	meta := fg["metadata"].(map[string]any)
+	if meta["title"] != "单行本精选" {
+		t.Fatalf("expected title '单行本精选', got %v", meta["title"])
+	}
+	links := fg["links"].([]any)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links, got %d", len(links))
+	}
+	l1 := links[1].(map[string]any)
+	if l1["title"] != "5星中文单行本" {
+		t.Fatalf("unexpected link 1: %+v", l1)
+	}
+	href := l1["href"].(string)
+	for _, expected := range []string{"f_cats=1019", "advsearch=1", "f_srdd=5", "query=tag%3Aromance+language%3Achinese"} {
+		if !strings.Contains(href, expected) {
+			t.Errorf("referenced facet href %q missing %q", href, expected)
+		}
 	}
 }

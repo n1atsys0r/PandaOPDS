@@ -289,15 +289,10 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 412, map[string]any{"detail": "home layout changed; reload before editing"})
 			return
 		}
-		_, err := home.DecodeEditor(snapshot)
-		if err != nil {
-			writeJSON(w, 400, map[string]any{"detail": "home configuration is invalid"})
-			return
-		}
-		// A decodable legacy layout may violate current output-shape rules. Permit
-		// replacing it with a valid layout; the original is backed up on save.
+		// A decodable legacy layout or corrupt file may violate current output-shape rules.
+		// Permit replacing it with a valid layout; the original is backed up on save.
 		var c home.Config
-		if e := decodeJSON(w, r, &c); e != nil || (c.Sections == nil && c.Pages == nil) {
+		if e := decodeJSON(w, r, &c); e != nil || (c.Sections == nil && c.Pages == nil && c.Navigation == nil && c.SearchFacets == nil && c.FacetSets == nil) {
 			writeJSON(w, 400, map[string]any{"detail": "sections or pages must be provided"})
 			return
 		}
@@ -338,16 +333,88 @@ func formatEditorSections(secs []home.Section) []map[string]any {
 			count = *v.Count
 		}
 		item := map[string]any{"group": v.Group, "kind": v.Kind, "title": v.Title, "type": v.Type, "query": v.Query, "count": count}
+		if v.FacetSet != "" {
+			item["facet_set"] = v.FacetSet
+		}
 		if len(v.Items) > 0 {
 			items := make([]map[string]any, len(v.Items))
 			for i, it := range v.Items {
-				items[i] = map[string]any{"title": it.Title, "type": it.Type, "query": it.Query}
+				itMap := map[string]any{"title": it.Title, "type": it.Type, "query": it.Query}
+				if len(it.Categories) > 0 {
+					itMap["categories"] = it.Categories
+				}
+				if it.Rating > 0 {
+					itMap["rating"] = it.Rating
+				}
+				if it.Expunged {
+					itMap["expunged"] = it.Expunged
+				}
+				if len(it.DisableFilters) > 0 {
+					itMap["disable_filters"] = it.DisableFilters
+				}
+				items[i] = itMap
 			}
 			item["items"] = items
 		}
 		sections = append(sections, item)
 	}
 	return sections
+}
+
+func formatSearchFacets(items []home.NavigationItem) []map[string]any {
+	out := make([]map[string]any, len(items))
+	for i, it := range items {
+		itMap := map[string]any{
+			"title": it.Title,
+			"query": it.Query,
+		}
+		if len(it.Categories) > 0 {
+			itMap["categories"] = it.Categories
+		}
+		if it.Rating > 0 {
+			itMap["rating"] = it.Rating
+		}
+		if it.Expunged {
+			itMap["expunged"] = it.Expunged
+		}
+		if len(it.DisableFilters) > 0 {
+			itMap["disable_filters"] = it.DisableFilters
+		}
+		out[i] = itMap
+	}
+	return out
+}
+
+func formatFacetSets(sets []home.FacetSet) []map[string]any {
+	out := make([]map[string]any, len(sets))
+	for i, s := range sets {
+		items := make([]map[string]any, len(s.Items))
+		for j, it := range s.Items {
+			itMap := map[string]any{
+				"title": it.Title,
+				"query": it.Query,
+			}
+			if len(it.Categories) > 0 {
+				itMap["categories"] = it.Categories
+			}
+			if it.Rating > 0 {
+				itMap["rating"] = it.Rating
+			}
+			if it.Expunged {
+				itMap["expunged"] = it.Expunged
+			}
+			if len(it.DisableFilters) > 0 {
+				itMap["disable_filters"] = it.DisableFilters
+			}
+			items[j] = itMap
+		}
+		out[i] = map[string]any{
+			"id":    s.ID,
+			"title": s.Title,
+			"items": items,
+		}
+	}
+	return out
 }
 
 func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[string]any {
@@ -375,6 +442,8 @@ func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[str
 	}
 	if parseErr == nil {
 		out["sections"] = formatEditorSections(c.HomePage().Sections)
+		out["navigation"] = formatEditorSections(c.GlobalNavigation())
+		out["search_facets"] = formatSearchFacets(c.GetSearchFacets())
 		out["pages"] = pages
 	}
 	if parseErr != nil {

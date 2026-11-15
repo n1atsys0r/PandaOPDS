@@ -325,12 +325,26 @@ func (b Builder) Acquisition(title, identifier, self string, publications []map[
 	}
 	return doc
 }
-func (b Builder) CategoryFacets() []map[string]any {
-	links := []map[string]any{{"href": b.Href("/opds/v2.0/gallery"), "title": "All"}}
-	for _, f := range b.Settings.Facets {
-		links = append(links, map[string]any{"href": b.Href("/opds/v2.0/gallery?category=" + url.QueryEscape(f.Name)), "title": f.Name})
+func (b Builder) CategoryFacets(route, query, selected string) []map[string]any {
+	if route == "" {
+		route = "/opds/v2.0/gallery"
 	}
-	return []map[string]any{{"metadata": map[string]string{"title": "Category"}, "links": links}}
+	var links []map[string]any
+	for _, f := range b.Settings.Facets {
+		values := url.Values{"category": {f.Name}}
+		if query != "" {
+			values.Set("query", query)
+		}
+		link := map[string]any{
+			"href":  b.Href(route + "?" + values.Encode()),
+			"title": f.Name,
+		}
+		if strings.EqualFold(selected, f.Name) {
+			link["rel"] = "self"
+		}
+		links = append(links, link)
+	}
+	return []map[string]any{{"metadata": map[string]string{"title": "Categories"}, "links": links}}
 }
 func (b Builder) JSON(doc any) []byte {
 	var out bytes.Buffer

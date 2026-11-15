@@ -4111,6 +4111,12 @@
                         "$ref": "#/components/schemas/ApiHomePage"
                       }
                     },
+                    "search_facets": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeFacetItem"
+                      }
+                    },
                     "sections": {
                       "type": "array",
                       "items": {
@@ -4480,6 +4486,24 @@
                     "using_file": {
                       "type": "boolean"
                     },
+                    "navigation": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeSection"
+                      }
+                    },
+                    "facet_sets": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeFacetSet"
+                      }
+                    },
+                    "search_facets": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeFacetItem"
+                      }
+                    },
                     "pages": {
                       "type": "array",
                       "items": {
@@ -4547,6 +4571,18 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "navigation": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/HomeSection"
+                    }
+                  },
+                  "facet_sets": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/HomeFacetSet"
+                    }
+                  },
                   "pages": {
                     "type": "array",
                     "items": {
@@ -4596,6 +4632,24 @@
                     },
                     "using_file": {
                       "type": "boolean"
+                    },
+                    "navigation": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeSection"
+                      }
+                    },
+                    "facet_sets": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeFacetSet"
+                      }
+                    },
+                    "search_facets": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HomeFacetItem"
+                      }
                     },
                     "pages": {
                       "type": "array",
@@ -5340,11 +5394,70 @@
             "minimum": 0,
             "description": "Publication preview limit. Null or omitted uses 10; 0 disables the preview."
           },
+          "facet_set": {
+            "type": "string",
+            "description": "ID of the referenced global facet set (for kind='facets')."
+          },
           "items": {
             "type": "array",
             "description": "Navigation items for a grouped navigation section sharing the same group title.",
             "items": {
               "$ref": "#/components/schemas/HomeNavigationItem"
+            }
+          }
+        }
+      },
+      "HomeFacetSet": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeFacetItem"
+            }
+          }
+        }
+      },
+      "HomeFacetItem": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "expunged": {
+            "type": "boolean"
+          },
+          "disable_filters": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }

@@ -491,6 +491,33 @@ title="Root"
 	}
 }
 
+func TestHomeEditorCanOverwriteCorruptFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "home.toml")
+	corrupt := []byte("this is completely invalid toml content [[[ {{{")
+	if err := os.WriteFile(p, corrupt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Settings: config.Settings{HomeConfigPath: p}, editKey: []byte("test-only-etag-key")}
+	get := httptest.NewRecorder()
+	s.homeEdit(get, httptest.NewRequest(http.MethodGet, "/api/home/edit", nil))
+	if get.Code != 200 {
+		t.Fatalf("expected 200 on corrupt file GET, got %d", get.Code)
+	}
+	tag := get.Header().Get("ETag")
+	req := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(`{"sections":[{"kind":"publication","group":false,"title":"Root","type":"preset","query":"latest"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", tag)
+	rr := httptest.NewRecorder()
+	s.homeEdit(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("expected overwrite PUT to succeed on corrupt file, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	backup, err := os.ReadFile(p + ".bak")
+	if err != nil || string(backup) != string(corrupt) {
+		t.Fatalf("corrupt file backup missing or corrupt: %v", err)
+	}
+}
+
 func TestHomeEditorNavigationGroupWithItems(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "home.toml")
 	s := &Server{Settings: config.Settings{HomeConfigPath: p}, editKey: []byte("test-only-etag-key")}

@@ -267,7 +267,13 @@ count = 20
 	if href := BuildHref("page", "doujin"); href != "/opds/v2.0/page/doujin" {
 		t.Fatalf("expected /opds/v2.0/page/doujin, got %s", href)
 	}
-	// Test ResolvePreset page: alias
+	if href := BuildHref("preset", "toplists"); href != "/opds/v2.0/page/toplists" {
+		t.Fatalf("expected /opds/v2.0/page/toplists, got %s", href)
+	}
+	// Test ResolvePreset toplists and page: alias
+	if kind, arg, err := ResolvePreset("toplists"); err != nil || kind != "toplists" || arg != "" {
+		t.Fatalf("ResolvePreset(toplists) failed: kind=%s, arg=%s, err=%v", kind, arg, err)
+	}
 	if kind, arg, err := ResolvePreset("page:doujin"); err != nil || kind != "page" || arg != "doujin" {
 		t.Fatalf("ResolvePreset(page:doujin) failed: kind=%s, arg=%s, err=%v", kind, arg, err)
 	}
@@ -298,31 +304,18 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 		t.Fatalf("Default() must pass Validate(): %v", err)
 	}
 
-	expectedPages := []string{"home", "watched", "favorites", "toplists", "archives"}
-	if len(c.Pages) != len(expectedPages) {
-		t.Fatalf("expected %d pages, got %d", len(expectedPages), len(c.Pages))
+	if len(c.Pages) != 1 || c.Pages[0].ID != "home" {
+		t.Fatalf("expected 1 page ('home'), got %d", len(c.Pages))
 	}
 
-	for i, id := range expectedPages {
-		p := c.Pages[i]
-		if p.ID != id {
-			t.Errorf("page[%d] ID=%s, want %s", i, p.ID, id)
-		}
-
-		// Verify 4 top navigation items on all pages
-		var navs []Section
-		for _, s := range p.Sections {
-			if s.Kind == "navigation" && !s.Group {
-				navs = append(navs, s)
-			}
-		}
-		if len(navs) != 4 {
-			t.Fatalf("page %q has %d top navigation items, want 4", p.ID, len(navs))
-		}
-		for j, navID := range []string{"watched", "favorites", "toplists", "archives"} {
-			if navs[j].Type != "page" || navs[j].Query != navID {
-				t.Errorf("page %q nav[%d] = {%s, %s}, want {page, %s}", p.ID, j, navs[j].Type, navs[j].Query, navID)
-			}
+	// Verify 4 top navigation items globally
+	navs := c.GlobalNavigation()
+	if len(navs) != 4 {
+		t.Fatalf("global navigation has %d items, want 4", len(navs))
+	}
+	for j, navID := range []string{"watched", "favorites", "toplists", "archives"} {
+		if navs[j].Type != "preset" || navs[j].Query != navID {
+			t.Errorf("global nav[%d] = {%s, %s}, want {preset, %s}", j, navs[j].Type, navs[j].Query, navID)
 		}
 	}
 
@@ -341,43 +334,37 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 		t.Errorf("home publications = %+v, want Popular then Latest", homePubs)
 	}
 
-	// Page: watched (publications mode, Watched publication + Categories facets)
+	// Page: watched (publications mode, Watched publication)
 	watchedP, _ := c.FindPage("watched")
 	if watchedP.Mode != "publications" {
 		t.Errorf("watched page mode=%s, want publications", watchedP.Mode)
 	}
-	hasWatchedPub, hasWatchedFacets := false, false
+	hasWatchedPub := false
 	for _, s := range watchedP.Sections {
 		if s.Kind == "publication" && !s.Group && s.Query == "watched" {
 			hasWatchedPub = true
 		}
-		if s.Kind == "facets" && s.Query == "watched" {
-			hasWatchedFacets = true
-		}
 	}
-	if !hasWatchedPub || !hasWatchedFacets {
-		t.Errorf("watched page missing publication or facets: pub=%v, facets=%v", hasWatchedPub, hasWatchedFacets)
+	if !hasWatchedPub {
+		t.Errorf("watched page missing publication: pub=%v", hasWatchedPub)
 	}
 
-	// Page: favorites (publications mode, Favorites publication + Folders facets)
+	// Page: favorites (publications mode, Favorites publication)
 	favP, _ := c.FindPage("favorites")
 	if favP.Mode != "publications" {
 		t.Errorf("favorites page mode=%s, want publications", favP.Mode)
 	}
-	hasFavPub, hasFavFacets := false, false
+	hasFavPub := false
 	for _, s := range favP.Sections {
 		if s.Kind == "publication" && !s.Group && s.Query == "favorites" {
 			hasFavPub = true
 		}
-		if s.Kind == "facets" && s.Query == "favorites" {
-			hasFavFacets = true
-		}
 	}
-	if !hasFavPub || !hasFavFacets {
-		t.Errorf("favorites page missing publication or facets: pub=%v, facets=%v", hasFavPub, hasFavFacets)
+	if !hasFavPub {
+		t.Errorf("favorites page missing publication: pub=%v", hasFavPub)
 	}
 
-	// Page: toplists (sections mode, All-Time > Past Year > Past Month > Yesterday)
+	// Page: toplists (sections mode, Yesterday > Past Month > Past Year > All-Time)
 	topP, _ := c.FindPage("toplists")
 	if topP.Mode != "groups" {
 		t.Errorf("toplists page mode=%s, want groups", topP.Mode)
@@ -388,7 +375,7 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 			topPubs = append(topPubs, s)
 		}
 	}
-	expectedPeriods := []string{"toplist:alltime", "toplist:year", "toplist:month", "toplist:yesterday"}
+	expectedPeriods := []string{"toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime"}
 	if len(topPubs) != 4 {
 		t.Fatalf("toplists page has %d groups, want 4", len(topPubs))
 	}
@@ -398,21 +385,172 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 		}
 	}
 
-	// Page: archives (publications mode, Archives publication + Categories facets)
+	// Page: archives (publications mode, Archives publication)
 	archP, _ := c.FindPage("archives")
 	if archP.Mode != "publications" {
 		t.Errorf("archives page mode=%s, want publications", archP.Mode)
 	}
-	hasArchPub, hasArchFacets := false, false
+	hasArchPub := false
 	for _, s := range archP.Sections {
 		if s.Kind == "publication" && !s.Group && s.Query == "archives" {
 			hasArchPub = true
 		}
-		if s.Kind == "facets" && s.Query == "archives" {
-			hasArchFacets = true
-		}
 	}
-	if !hasArchPub || !hasArchFacets {
-		t.Errorf("archives page missing publication or facets: pub=%v, facets=%v", hasArchPub, hasArchFacets)
+	if !hasArchPub {
+		t.Errorf("archives page missing publication: pub=%v", hasArchPub)
+	}
+}
+
+func TestCustomFacetsValidationAndDecode(t *testing.T) {
+	data := []byte(`
+[[page]]
+id = "home"
+title = "Home"
+mode = "publications"
+
+  [[page.section]]
+  kind = "publication"
+  type = "preset"
+  query = "latest"
+
+  [[page.section]]
+  kind = "facets"
+  title = "精选筛选"
+
+    [[page.section.items]]
+    title = "全部"
+
+    [[page.section.items]]
+    title = "4星汉化同人"
+    categories = ["Doujinshi"]
+    rating = 4
+    expunged = true
+    disable_filters = ["language"]
+    query = "language:chinese"
+`)
+	c, err := DecodeEditor(data)
+	if err != nil {
+		t.Fatalf("DecodeEditor failed: %v", err)
+	}
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+	facetsSec := c.HomePage().Sections[1]
+	if facetsSec.Kind != "facets" || facetsSec.Title != "精选筛选" {
+		t.Fatalf("unexpected section: %+v", facetsSec)
+	}
+	if len(facetsSec.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(facetsSec.Items))
+	}
+	item2 := facetsSec.Items[1]
+	if item2.Title != "4星汉化同人" || item2.Rating != 4 || !item2.Expunged || len(item2.Categories) != 1 || item2.Categories[0] != "Doujinshi" || item2.Query != "language:chinese" {
+		t.Fatalf("unexpected item: %+v", item2)
+	}
+
+	// Test invalid item (rating > 5)
+	badRating := facetsSec
+	badRating.Items[1].Rating = 6
+	if err := ValidateSection(badRating); err == nil {
+		t.Fatal("expected error for rating > 5")
+	}
+
+	// Test invalid item (empty title)
+	badTitle := facetsSec
+	badTitle.Items[1].Title = ""
+	if err := ValidateSection(badTitle); err == nil {
+		t.Fatal("expected error for empty title")
+	}
+}
+
+func TestCheckConfigHomeToml(t *testing.T) {
+	b, err := os.ReadFile("../../config/home.toml")
+	if err != nil {
+		t.Skip("no config/home.toml")
+	}
+	c, err := DecodeEditor(b)
+	if err != nil {
+		t.Fatalf("DecodeEditor failed on config/home.toml: %v", err)
+	}
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate failed on config/home.toml: %v", err)
+	}
+}
+
+func TestReferencedFacetSets(t *testing.T) {
+	tomlContent := `
+[[facet_set]]
+id = "chinese_filter"
+title = "中文与同人"
+
+[[facet_set.items]]
+title = "全部"
+
+[[facet_set.items]]
+title = "高分同人"
+categories = ["Doujinshi"]
+rating = 4
+expunged = true
+disable_filters = ["language"]
+query = "language:chinese"
+
+[[page]]
+id = "home"
+title = "首页"
+mode = "publications"
+
+[[page.section]]
+kind = "publication"
+type = "preset"
+query = "latest"
+
+[[page.section]]
+kind = "facets"
+facet_set = "chinese_filter"
+`
+	c, err := decodeHome([]byte(tomlContent), false)
+	if err != nil {
+		t.Fatalf("decodeHome failed: %v", err)
+	}
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+	if len(c.FacetSets) != 1 {
+		t.Fatalf("expected 1 facet set, got %d", len(c.FacetSets))
+	}
+	fs := c.GetFacetSet("chinese_filter")
+	if fs == nil || fs.Title != "中文与同人" || len(fs.Items) != 2 {
+		t.Fatalf("unexpected facet set: %+v", fs)
+	}
+	sec := c.HomePage().Sections[1]
+	if sec.Kind != "facets" || sec.FacetSet != "chinese_filter" {
+		t.Fatalf("unexpected section: %+v", sec)
+	}
+
+	// Save snapshot and reload
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "home.toml")
+	if err := SaveSnapshot(path, c, false, nil); err != nil {
+		t.Fatalf("SaveSnapshot failed: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := decodeHome(b, false)
+	if err != nil {
+		t.Fatalf("reloaded decodeHome failed: %v", err)
+	}
+	if err := Validate(reloaded); err != nil {
+		t.Fatalf("reloaded Validate failed: %v", err)
+	}
+	if len(reloaded.GetSearchFacets()) != 2 || reloaded.GetSearchFacets()[0].Title != "全部" {
+		t.Fatalf("reloaded search facets mismatch: %+v", reloaded.GetSearchFacets())
+	}
+
+	// Unknown facet_set validation failure
+	badConfig := c
+	badConfig.Pages[0].Sections[1].FacetSet = "non_existent"
+	if err := Validate(badConfig); err == nil {
+		t.Fatal("expected error for unknown facet set reference, got nil")
 	}
 }

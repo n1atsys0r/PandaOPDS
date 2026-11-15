@@ -14,19 +14,30 @@ import (
 var slugRE = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type NavigationItem struct {
-	Title string `toml:"title" json:"title"`
-	Type  string `toml:"type" json:"type"`
-	Query string `toml:"query" json:"query"`
+	Title          string   `toml:"title" json:"title"`
+	Type           string   `toml:"type,omitempty" json:"type,omitempty"`
+	Query          string   `toml:"query,omitempty" json:"query,omitempty"`
+	Categories     []string `toml:"categories,omitempty" json:"categories,omitempty"`
+	Rating         int      `toml:"rating,omitempty" json:"rating,omitempty"`
+	Expunged       bool     `toml:"expunged,omitempty" json:"expunged,omitempty"`
+	DisableFilters []string `toml:"disable_filters,omitempty" json:"disable_filters,omitempty"`
+}
+
+type FacetSet struct {
+	ID    string           `toml:"id" json:"id"`
+	Title string           `toml:"title" json:"title"`
+	Items []NavigationItem `toml:"items" json:"items"`
 }
 
 type Section struct {
-	Group bool             `toml:"group" json:"group"`
-	Kind  string           `toml:"kind" json:"kind"`
-	Title string           `toml:"title" json:"title"`
-	Type  string           `toml:"type" json:"type"`
-	Query string           `toml:"query" json:"query"`
-	Count *int             `toml:"count" json:"count"`
-	Items []NavigationItem `toml:"items,omitempty" json:"items,omitempty"`
+	Group    bool             `toml:"group" json:"group"`
+	Kind     string           `toml:"kind" json:"kind"`
+	Title    string           `toml:"title" json:"title"`
+	Type     string           `toml:"type" json:"type"`
+	Query    string           `toml:"query" json:"query"`
+	FacetSet string           `toml:"facet_set,omitempty" json:"facet_set,omitempty"`
+	Count    *int             `toml:"count" json:"count"`
+	Items    []NavigationItem `toml:"items,omitempty" json:"items,omitempty"`
 }
 
 type Page struct {
@@ -37,16 +48,53 @@ type Page struct {
 }
 
 type Config struct {
-	Pages    []Page    `toml:"page" json:"pages"`
-	Sections []Section `toml:"section,omitempty" json:"sections,omitempty"`
+	Navigation   []Section        `toml:"navigation,omitempty" json:"navigation,omitempty"`
+	SearchFacets []NavigationItem `toml:"search_facet,omitempty" json:"search_facets,omitempty"`
+	FacetSets    []FacetSet       `toml:"facet_set,omitempty" json:"facet_sets,omitempty"`
+	Pages        []Page           `toml:"page" json:"pages"`
+	Sections     []Section        `toml:"section,omitempty" json:"sections,omitempty"`
+}
+
+func DefaultSearchFacets() []NavigationItem {
+	return []NavigationItem{
+		{Title: "Doujinshi", Categories: []string{"Doujinshi"}},
+		{Title: "Manga", Categories: []string{"Manga"}},
+		{Title: "Artist CG", Categories: []string{"Artist CG"}},
+		{Title: "Game CG", Categories: []string{"Game CG"}},
+		{Title: "Western", Categories: []string{"Western"}},
+		{Title: "Non-H", Categories: []string{"Non-H"}},
+		{Title: "Image Set", Categories: []string{"Image Set"}},
+		{Title: "Cosplay", Categories: []string{"Cosplay"}},
+		{Title: "Asian Porn", Categories: []string{"Asian Porn"}},
+		{Title: "Misc", Categories: []string{"Misc"}},
+	}
+}
+
+func (c Config) GetSearchFacets() []NavigationItem {
+	if len(c.SearchFacets) > 0 {
+		return c.SearchFacets
+	}
+	if len(c.FacetSets) > 0 && len(c.FacetSets[0].Items) > 0 {
+		return c.FacetSets[0].Items
+	}
+	return DefaultSearchFacets()
+}
+
+func (c Config) GetFacetSet(id string) *FacetSet {
+	for i := range c.FacetSets {
+		if c.FacetSets[i].ID == id {
+			return &c.FacetSets[i]
+		}
+	}
+	return nil
 }
 
 func Default() Config {
 	topNav := []Section{
-		{Kind: "navigation", Title: "Watched", Type: "page", Query: "watched"},
-		{Kind: "navigation", Title: "Favorites", Type: "page", Query: "favorites"},
-		{Kind: "navigation", Title: "Toplists", Type: "page", Query: "toplists"},
-		{Kind: "navigation", Title: "Archives", Type: "page", Query: "archives"},
+		{Kind: "navigation", Title: "Watched", Type: "preset", Query: "watched"},
+		{Kind: "navigation", Title: "Favorites", Type: "preset", Query: "favorites"},
+		{Kind: "navigation", Title: "Toplists", Type: "preset", Query: "toplists"},
+		{Kind: "navigation", Title: "Archives", Type: "preset", Query: "archives"},
 	}
 
 	homePage := Page{
@@ -54,65 +102,46 @@ func Default() Config {
 		Title: "Home",
 		Mode:  "groups",
 		Sections: []Section{
-			topNav[0], topNav[1], topNav[2], topNav[3],
 			{Group: true, Kind: "publication", Title: "Popular", Type: "preset", Query: "popular", Count: intp(20)},
 			{Group: true, Kind: "publication", Title: "Latest", Type: "preset", Query: "latest", Count: intp(20)},
 		},
 	}
 
-	watchedPage := Page{
-		ID:    "watched",
-		Title: "Watched",
-		Mode:  "publications",
-		Sections: []Section{
-			topNav[0], topNav[1], topNav[2], topNav[3],
-			{Group: false, Kind: "publication", Title: "Watched", Type: "preset", Query: "watched", Count: intp(20)},
-			{Group: false, Kind: "facets", Title: "Categories", Type: "preset", Query: "watched"},
-		},
-	}
-
-	favoritesPage := Page{
-		ID:    "favorites",
-		Title: "Favorites",
-		Mode:  "publications",
-		Sections: []Section{
-			topNav[0], topNav[1], topNav[2], topNav[3],
-			{Group: false, Kind: "publication", Title: "Favorites", Type: "preset", Query: "favorites", Count: intp(20)},
-			{Group: false, Kind: "facets", Title: "Folders", Type: "preset", Query: "favorites"},
-		},
-	}
-
-	toplistsPage := Page{
-		ID:    "toplists",
-		Title: "Toplists",
-		Mode:  "groups",
-		Sections: []Section{
-			topNav[0], topNav[1], topNav[2], topNav[3],
-			{Group: true, Kind: "publication", Title: "All Time", Type: "preset", Query: "toplist:alltime", Count: intp(20)},
-			{Group: true, Kind: "publication", Title: "Past Year", Type: "preset", Query: "toplist:year", Count: intp(20)},
-			{Group: true, Kind: "publication", Title: "Past Month", Type: "preset", Query: "toplist:month", Count: intp(20)},
-			{Group: true, Kind: "publication", Title: "Yesterday", Type: "preset", Query: "toplist:yesterday", Count: intp(20)},
-		},
-	}
-
-	archivesPage := Page{
-		ID:    "archives",
-		Title: "Archives",
-		Mode:  "publications",
-		Sections: []Section{
-			topNav[0], topNav[1], topNav[2], topNav[3],
-			{Group: false, Kind: "publication", Title: "Archives", Type: "preset", Query: "archives", Count: intp(20)},
-			{Group: false, Kind: "facets", Title: "Categories", Type: "preset", Query: "archives"},
-		},
-	}
-
-	pages := []Page{homePage, watchedPage, favoritesPage, toplistsPage, archivesPage}
 	return Config{
-		Pages:    pages,
-		Sections: homePage.Sections,
+		Navigation:   topNav,
+		SearchFacets: DefaultSearchFacets(),
+		Pages:        []Page{homePage},
+		Sections:     homePage.Sections,
 	}
 }
 func intp(v int) *int { return &v }
+
+func IsBuiltinPageID(id string) bool {
+	return id == "watched" || id == "favorites" || id == "toplists" || id == "archives"
+}
+
+func (c Config) GlobalNavigation() []Section {
+	if len(c.Navigation) > 0 {
+		return c.Navigation
+	}
+	for _, p := range c.Pages {
+		var nav []Section
+		for _, s := range p.Sections {
+			if s.Kind == "navigation" && !s.Group {
+				nav = append(nav, s)
+			}
+		}
+		if len(nav) > 0 {
+			return nav
+		}
+	}
+	for _, s := range c.Sections {
+		if s.Kind == "navigation" && !s.Group {
+			return []Section{s}
+		}
+	}
+	return nil
+}
 
 func (c Config) HomePage() Page {
 	for _, p := range c.Pages {
@@ -134,6 +163,47 @@ func (c Config) FindPage(id string) (Page, bool) {
 	}
 	if id == "home" && len(c.Sections) > 0 {
 		return Page{ID: "home", Title: "Home", Sections: c.Sections}, true
+	}
+	switch id {
+	case "watched":
+		return Page{
+			ID:    "watched",
+			Title: "Watched",
+			Mode:  "publications",
+			Sections: []Section{
+				{Group: false, Kind: "publication", Title: "Watched", Type: "preset", Query: "watched", Count: intp(20)},
+			},
+		}, true
+	case "favorites":
+		return Page{
+			ID:    "favorites",
+			Title: "Favorites",
+			Mode:  "publications",
+			Sections: []Section{
+				{Group: false, Kind: "publication", Title: "Favorites", Type: "preset", Query: "favorites", Count: intp(20)},
+			},
+		}, true
+	case "toplists":
+		return Page{
+			ID:    "toplists",
+			Title: "Toplists",
+			Mode:  "groups",
+			Sections: []Section{
+				{Group: true, Kind: "publication", Title: "Yesterday", Type: "preset", Query: "toplist:yesterday", Count: intp(20)},
+				{Group: true, Kind: "publication", Title: "Past Month", Type: "preset", Query: "toplist:month", Count: intp(20)},
+				{Group: true, Kind: "publication", Title: "Past Year", Type: "preset", Query: "toplist:year", Count: intp(20)},
+				{Group: true, Kind: "publication", Title: "All Time", Type: "preset", Query: "toplist:alltime", Count: intp(20)},
+			},
+		}, true
+	case "archives":
+		return Page{
+			ID:    "archives",
+			Title: "Archives",
+			Mode:  "publications",
+			Sections: []Section{
+				{Group: false, Kind: "publication", Title: "Archives", Type: "preset", Query: "archives", Count: intp(20)},
+			},
+		}, true
 	}
 	return Page{}, false
 }
@@ -176,8 +246,33 @@ func ValidateSection(s Section) error {
 				return fmt.Errorf("search query cannot be empty")
 			}
 		}
+	} else if s.Kind == "facets" {
+		if s.FacetSet != "" {
+			if !slugRE.MatchString(s.FacetSet) {
+				return fmt.Errorf("invalid facet_set id %q", s.FacetSet)
+			}
+		} else if len(s.Items) > 0 {
+			for _, it := range s.Items {
+				if it.Title == "" {
+					return fmt.Errorf("facet item title cannot be empty")
+				}
+				if it.Rating < 0 || it.Rating > 5 {
+					return fmt.Errorf("invalid facet item rating %d (expected 0-5)", it.Rating)
+				}
+			}
+		} else {
+			if s.Type != "" && s.Type != "preset" && s.Type != "search" {
+				return fmt.Errorf("invalid section type %q for facets", s.Type)
+			}
+			if s.Type == "preset" {
+				kind, _, _ := ResolvePreset(s.Query)
+				if kind != "search" && kind != "toplist" && kind != "favorites" && kind != "watched" && kind != "archives" {
+					return fmt.Errorf("preset has no facet provider: %s", s.Query)
+				}
+			}
+		}
 	} else {
-		// publication or facets
+		// publication
 		if s.Type != "preset" && s.Type != "search" {
 			return fmt.Errorf("invalid section type %q for kind %s", s.Type, s.Kind)
 		}
@@ -195,7 +290,7 @@ func ValidateSection(s Section) error {
 	if s.Kind == "facets" && s.Group {
 		return fmt.Errorf("facet sections cannot be grouped")
 	}
-	if s.Kind == "facets" && s.Type == "preset" {
+	if s.Kind == "facets" && s.Type == "preset" && s.FacetSet == "" && len(s.Items) == 0 {
 		kind, _, _ := ResolvePreset(s.Query)
 		if kind != "search" && kind != "toplist" && kind != "favorites" && kind != "watched" && kind != "archives" {
 			return fmt.Errorf("preset has no facet provider: %s", s.Query)
@@ -235,14 +330,57 @@ func ValidatePage(p Page) error {
 		return fmt.Errorf("page %q: top-level publications and groups cannot coexist", p.ID)
 	}
 	for _, s := range p.Sections {
-		if s.Kind == "facets" && (rootPublication == nil || rootPublication.Type != s.Type || rootPublication.Query != s.Query) {
-			return fmt.Errorf("page %q: facet source must match an ungrouped publication section", p.ID)
+		if s.Kind == "facets" {
+			if rootPublication == nil {
+				return fmt.Errorf("page %q: facets require an ungrouped publication section", p.ID)
+			}
+			if s.FacetSet == "" && len(s.Items) == 0 && (s.Type != "" || s.Query != "") && (rootPublication.Type != s.Type || rootPublication.Query != s.Query) {
+				return fmt.Errorf("page %q: facet source must match an ungrouped publication section", p.ID)
+			}
 		}
 	}
 	return nil
 }
 
 func Validate(c Config) error {
+	for _, it := range c.SearchFacets {
+		if strings.TrimSpace(it.Title) == "" {
+			return fmt.Errorf("search facet item title cannot be empty")
+		}
+		if it.Rating < 0 || it.Rating > 5 {
+			return fmt.Errorf("search facet %q: invalid item rating %d (expected 0-5)", it.Title, it.Rating)
+		}
+	}
+	seenFS := make(map[string]bool)
+	for _, fs := range c.FacetSets {
+		id := strings.TrimSpace(fs.ID)
+		if id == "" || !slugRE.MatchString(id) {
+			return fmt.Errorf("invalid facet set id %q", fs.ID)
+		}
+		if seenFS[id] {
+			return fmt.Errorf("duplicate facet set id %q", id)
+		}
+		seenFS[id] = true
+		for _, it := range fs.Items {
+			if strings.TrimSpace(it.Title) == "" {
+				return fmt.Errorf("facet set %q: item title cannot be empty", id)
+			}
+			if it.Rating < 0 || it.Rating > 5 {
+				return fmt.Errorf("facet set %q: invalid item rating %d", id, it.Rating)
+			}
+		}
+	}
+	for _, s := range c.Navigation {
+		if s.Kind != "navigation" {
+			return fmt.Errorf("global navigation entry must have kind 'navigation'")
+		}
+		if s.Group {
+			return fmt.Errorf("global navigation entry cannot be grouped")
+		}
+		if err := ValidateSection(s); err != nil {
+			return fmt.Errorf("global navigation: %w", err)
+		}
+	}
 	pages := c.Pages
 	if len(pages) == 0 && len(c.Sections) > 0 {
 		pages = []Page{{ID: "home", Title: "首页", Sections: c.Sections}}
@@ -263,6 +401,13 @@ func Validate(c Config) error {
 		if err := ValidatePage(p); err != nil {
 			return err
 		}
+		for _, s := range p.Sections {
+			if s.Kind == "facets" && s.FacetSet != "" {
+				if !seenFS[s.FacetSet] {
+					return fmt.Errorf("page %q references unknown facet set %q", p.ID, s.FacetSet)
+				}
+			}
+		}
 	}
 	if !hasHome {
 		return fmt.Errorf("configuration must include a 'home' page")
@@ -281,7 +426,28 @@ func SaveSnapshot(path string, c Config, hadPrevious bool, previous []byte) erro
 	if len(toSave.Pages) == 0 && len(toSave.Sections) > 0 {
 		toSave.Pages = []Page{{ID: "home", Title: "首页", Sections: toSave.Sections}}
 	}
-	// Do not write top-level sections if Pages are present
+	if len(toSave.Navigation) == 0 {
+		toSave.Navigation = toSave.GlobalNavigation()
+	}
+	// Strip redundant ungrouped navigation and built-in preset pages on save
+	var filteredPages []Page
+	for i := range toSave.Pages {
+		if IsBuiltinPageID(toSave.Pages[i].ID) {
+			continue
+		}
+		var kept []Section
+		for _, s := range toSave.Pages[i].Sections {
+			if s.Kind == "navigation" && !s.Group {
+				continue
+			}
+			kept = append(kept, s)
+		}
+		pCopy := toSave.Pages[i]
+		pCopy.Sections = kept
+		filteredPages = append(filteredPages, pCopy)
+	}
+	toSave.Pages = filteredPages
+	// Do not write legacy top-level sections if Pages are present
 	toSave.Sections = nil
 	b, err := toml.Marshal(toSave)
 	if err != nil {
@@ -383,6 +549,9 @@ func normalize(c Config) Config {
 	if len(c.Pages) == 0 && len(c.Sections) > 0 {
 		c.Pages = []Page{{ID: "home", Title: "Home", Sections: c.Sections}}
 	}
+	if len(c.Navigation) > 0 {
+		c.Navigation = normalizeSections(c.Navigation)
+	}
 	for i := range c.Pages {
 		c.Pages[i].Sections = normalizeSections(c.Pages[i].Sections)
 		if c.Pages[i].Title == "" {
@@ -402,6 +571,13 @@ func DecodeEditor(b []byte) (Config, error) {
 	if err != nil {
 		return Default(), err
 	}
+	navCounts := make([]*int, len(raw.Navigation))
+	for i, s := range raw.Navigation {
+		if s.Count != nil {
+			n := *s.Count
+			navCounts[i] = &n
+		}
+	}
 	// Preserve raw count pointers for each section in each page
 	counts := make([][]*int, len(raw.Pages))
 	for pIdx, p := range raw.Pages {
@@ -414,6 +590,11 @@ func DecodeEditor(b []byte) (Config, error) {
 		}
 	}
 	c := normalize(raw)
+	for i := range c.Navigation {
+		if i < len(navCounts) {
+			c.Navigation[i].Count = navCounts[i]
+		}
+	}
 	for pIdx := range c.Pages {
 		if pIdx < len(counts) {
 			for sIdx := range c.Pages[pIdx].Sections {
@@ -428,13 +609,14 @@ func DecodeEditor(b []byte) (Config, error) {
 }
 
 type rawSection struct {
-	Group any              `toml:"group"`
-	Kind  any              `toml:"kind"`
-	Title any              `toml:"title"`
-	Type  any              `toml:"type"`
-	Query any              `toml:"query"`
-	Count any              `toml:"count"`
-	Items []NavigationItem `toml:"items"`
+	Group    any              `toml:"group"`
+	Kind     any              `toml:"kind"`
+	Title    any              `toml:"title"`
+	Type     any              `toml:"type"`
+	Query    any              `toml:"query"`
+	FacetSet any              `toml:"facet_set"`
+	Count    any              `toml:"count"`
+	Items    []NavigationItem `toml:"items"`
 }
 
 func decodeRawSections(raw []rawSection, legacy bool) ([]Section, error) {
@@ -467,6 +649,11 @@ func decodeRawSections(raw []rawSection, legacy bool) ([]Section, error) {
 				return nil, fmt.Errorf("invalid section field type")
 			}
 		}
+		if m.FacetSet != nil {
+			if _, ok := m.FacetSet.(string); !ok {
+				return nil, fmt.Errorf("invalid section field type")
+			}
+		}
 		if m.Count != nil {
 			if _, ok := m.Count.(int64); !ok {
 				return nil, fmt.Errorf("invalid section count")
@@ -484,6 +671,9 @@ func decodeRawSections(raw []rawSection, legacy bool) ([]Section, error) {
 		}
 		if v, ok := m.Query.(string); ok {
 			s.Query = v
+		}
+		if v, ok := m.FacetSet.(string); ok {
+			s.FacetSet = v
 		}
 		if v, ok := m.Count.(int64); ok {
 			n := int(v)
@@ -510,7 +700,10 @@ func decodeHome(b []byte, strict bool) (Config, error) {
 			ID    string `toml:"id"`
 			Title string `toml:"title"`
 		} `toml:"group"`
-		Pages []struct {
+		Navigation   []rawSection     `toml:"navigation"`
+		SearchFacets []NavigationItem `toml:"search_facet"`
+		FacetSets    []FacetSet       `toml:"facet_set"`
+		Pages        []struct {
 			ID       string       `toml:"id"`
 			Title    string       `toml:"title"`
 			Mode     string       `toml:"mode"`
@@ -525,6 +718,18 @@ func decodeHome(b []byte, strict bool) (Config, error) {
 	if strict && len(metadata.Undecoded()) > 0 {
 		return Default(), fmt.Errorf("unknown home configuration field")
 	}
+	var nav []Section
+	if len(data.Navigation) > 0 {
+		var err error
+		nav, err = decodeRawSections(data.Navigation, false)
+		if err != nil {
+			return Default(), err
+		}
+	}
+	searchFacets := data.SearchFacets
+	if len(searchFacets) == 0 && len(data.FacetSets) > 0 {
+		searchFacets = data.FacetSets[0].Items
+	}
 	legacy := len(data.Groups) > 0
 	for _, m := range data.Sections {
 		if _, ok := m.Group.(string); ok {
@@ -532,7 +737,7 @@ func decodeHome(b []byte, strict bool) (Config, error) {
 		}
 	}
 	if len(data.Pages) > 0 {
-		c := Config{Pages: make([]Page, 0, len(data.Pages))}
+		c := Config{Navigation: nav, SearchFacets: searchFacets, FacetSets: data.FacetSets, Pages: make([]Page, 0, len(data.Pages))}
 		for _, p := range data.Pages {
 			secs, err := decodeRawSections(p.Sections, false)
 			if err != nil {
@@ -554,6 +759,9 @@ func decodeHome(b []byte, strict bool) (Config, error) {
 		return Default(), err
 	}
 	c := Config{
+		Navigation:   nav,
+		SearchFacets: searchFacets,
+		FacetSets:    data.FacetSets,
 		Pages: []Page{
 			{ID: "home", Title: "Home", Sections: secs},
 		},
@@ -568,6 +776,8 @@ func ResolvePreset(q string) (kind, arg string, err error) {
 		return "search", "", nil
 	case "popular", "watched", "favorites", "archives":
 		return q, "", nil
+	case "toplists":
+		return "toplists", "", nil
 	}
 	if strings.HasPrefix(q, "page:") {
 		arg = strings.TrimPrefix(q, "page:")
@@ -626,6 +836,8 @@ func BuildHref(typ, query string) string {
 		return base + "/gallery?query=" + kind
 	case "toplist":
 		return base + "/toplist?period=" + arg
+	case "toplists":
+		return base + "/page/toplists"
 	case "archives":
 		return base + "/archives"
 	}
@@ -633,5 +845,5 @@ func BuildHref(typ, query string) string {
 }
 
 func AuthRequired(s Section) bool {
-	return s.Type == "preset" && (s.Query == "watched" || s.Query == "favorites" || strings.HasPrefix(s.Query, "favorites:"))
+	return s.Query == "watched" || s.Query == "favorites" || strings.HasPrefix(s.Query, "favorites:")
 }

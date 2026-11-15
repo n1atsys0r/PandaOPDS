@@ -74,6 +74,9 @@ func formatSectionMaps(secs []home.Section) []map[string]any {
 			title = sec.Query
 		}
 		secMap := map[string]any{"kind": sec.Kind, "title": title, "type": sec.Type, "query": sec.Query, "count": count, "group": sec.Group, "href": home.BuildHref(sec.Type, sec.Query), "auth_required": home.AuthRequired(sec)}
+		if sec.FacetSet != "" {
+			secMap["facet_set"] = sec.FacetSet
+		}
 		if len(sec.Items) > 0 {
 			items := make([]map[string]any, len(sec.Items))
 			for i, it := range sec.Items {
@@ -81,13 +84,26 @@ func formatSectionMaps(secs []home.Section) []map[string]any {
 				if itTitle == "" {
 					itTitle = it.Query
 				}
-				items[i] = map[string]any{
+				itMap := map[string]any{
 					"title":         itTitle,
 					"type":          it.Type,
 					"query":         it.Query,
 					"href":          home.BuildHref(it.Type, it.Query),
 					"auth_required": home.AuthRequired(home.Section{Type: it.Type, Query: it.Query}),
 				}
+				if len(it.Categories) > 0 {
+					itMap["categories"] = it.Categories
+				}
+				if it.Rating > 0 {
+					itMap["rating"] = it.Rating
+				}
+				if it.Expunged {
+					itMap["expunged"] = it.Expunged
+				}
+				if len(it.DisableFilters) > 0 {
+					itMap["disable_filters"] = it.DisableFilters
+				}
+				items[i] = itMap
 			}
 			secMap["items"] = items
 		}
@@ -113,6 +129,9 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 		"error":      err,
 		"mode":       cfg.HomePage().Mode,
 		"sections":   formatSectionMaps(cfg.HomePage().Sections),
+		"navigation":    formatSectionMaps(cfg.GlobalNavigation()),
+		"search_facets": formatSearchFacets(cfg.GetSearchFacets()),
+		"facet_sets":    formatFacetSets(cfg.FacetSets),
 		"pages":      pages,
 	})
 }

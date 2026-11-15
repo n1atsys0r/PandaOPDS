@@ -1,5 +1,5 @@
 import { reactive, toRefs } from "vue";
-import { canUseFacets, chooseInitialHomeMode, createDefaultHomePages, normalizeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
+import { canUseFacets, chooseInitialHomeMode, createDefaultGlobalNavigation, createDefaultHomePages, createDefaultSearchFacets, normalizeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
 import { t } from "./i18n.js";
 import {
   READER_PAGE_KEY_PREFIX,
@@ -22,6 +22,9 @@ const state = reactive({
   status: null,
   config: null,
   home: null,
+  navigation: [],
+  searchFacets: createDefaultSearchFacets(),
+  facetSets: [],
   archives: [],
   archiveStats: {},
   archiveScan: { status: "idle", imported: 0, skipped: 0, conflicts: 0 },
@@ -346,8 +349,20 @@ async function loadHome(options = {}) {
     state.home = r.data;
     state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     if (!options.preserveDrafts) {
-      if (Array.isArray(r.data.pages) && r.data.pages.length > 0) {
-        state.pages = r.data.pages.map((p) => {
+      state.navigation = Array.isArray(r.data.navigation) ? r.data.navigation : [];
+      if (Array.isArray(r.data.search_facets) && r.data.search_facets.length > 0) {
+        state.searchFacets = structuredClone(r.data.search_facets);
+      } else if (Array.isArray(r.data.facet_sets) && r.data.facet_sets.length > 0 && Array.isArray(r.data.facet_sets[0].items)) {
+        state.searchFacets = structuredClone(r.data.facet_sets[0].items);
+      } else {
+        state.searchFacets = createDefaultSearchFacets();
+      }
+      state.facetSets = Array.isArray(r.data.facet_sets) ? structuredClone(r.data.facet_sets) : [];
+      const rawPages = (Array.isArray(r.data.pages) && r.data.pages.length > 0)
+        ? r.data.pages.filter((p) => !BUILTIN_PAGE_IDS.has(p.id))
+        : [];
+      if (rawPages.length > 0) {
+        state.pages = rawPages.map((p) => {
           const secs = p.sections || [];
           const initialMode = p.mode ? normalizeMode(p.mode) : (chooseInitialHomeMode(secs) || "publications");
           return {
@@ -386,40 +401,69 @@ async function loadHome(options = {}) {
   }
 }
 async function saveHome() {
-  for (const page of state.pages) {
-    if (page.mode === "publications" && page.layout.facets.length && !canUseFacets(page.layout.publication)) {
-      state.error = t("notice.unsupported_facet_source");
-      return;
-    }
-  }
   const payloadPages = state.pages.map((p) => ({
     id: p.id,
     title: p.title || (p.id === "home" ? t("home_editor.home_page_title") : p.id),
     mode: normalizeMode(p.mode),
     sections: serializeHomeLayout(p.layout, p.mode),
   }));
+  const payload = {
+    navigation: state.navigation || [],
+    search_facets: state.searchFacets || [],
+    facet_sets: state.facetSets || [],
+    pages: payloadPages,
+  };
   await run(async () => {
+    let tag = state.homeTag;
+    if (!tag) {
+      try {
+        const probe = await api("/api/home/edit");
+        tag = (probe.headers.get("ETag") || "").replace(/^W\//i, "");
+        state.homeTag = tag;
+      } catch {}
+    }
     const saved = await api("/api/home/edit", {
       method: "PUT",
-      headers: { "If-Match": state.homeTag },
-      body: JSON.stringify({ pages: payloadPages }),
+      headers: { "If-Match": tag },
+      body: JSON.stringify(payload),
     });
     state.home = saved.data;
+    if (state.home) {
+      delete state.home.legacy;
+      delete state.home.error;
+      delete state.home.validation_error;
+    }
+    state.error = "";
     state.homeTag = (saved.headers.get("ETag") || "").replace(/^W\//i, "");
+    if (Array.isArray(saved.data.navigation)) {
+      state.navigation = saved.data.navigation;
+    }
+    if (Array.isArray(saved.data.search_facets)) {
+      state.searchFacets = saved.data.search_facets;
+    }
+    if (Array.isArray(saved.data.facet_sets)) {
+      state.facetSets = saved.data.facet_sets;
+    }
     state.notice = t("notice.home_saved");
     state.homeDirty = false;
   });
 }
 function selectActivePage(pageId) {
+  state.activePageId = pageId;
+  if (pageId === "__global_nav__" || pageId === "__search_facets__" || pageId === "__facet_sets__") {
+    return;
+  }
   const p = state.pages.find((x) => x.id === pageId);
   if (!p) return;
-  state.activePageId = pageId;
   state.layout = p.layout;
   state.homeMode = normalizeMode(p.mode);
   state.homeModeRequired = !p.mode;
 }
+const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "toplists", "archives"]);
+
 function addPage({ id, title, mode = "publications" }) {
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return false;
+  if (BUILTIN_PAGE_IDS.has(id)) return false;
   if (state.pages.some((p) => p.id === id)) return false;
   const normalized = normalizeMode(mode);
   const newPage = {
@@ -457,6 +501,7 @@ function updatePageMeta(pageId, { title, id: newId }) {
   if (title !== undefined) p.title = title;
   if (newId && newId !== pageId && pageId !== "home") {
     if (!/^[a-zA-Z0-9_-]+$/.test(newId)) return false;
+    if (BUILTIN_PAGE_IDS.has(newId)) return false;
     if (state.pages.some((x) => x.id === newId)) return false;
     p.id = newId;
     if (state.activePageId === pageId) {
@@ -474,8 +519,46 @@ function reorderPages(fromIndex, toIndex) {
   state.homeDirty = true;
 }
 function resetHomeToDefault() {
+  if (state.home) {
+    delete state.home.legacy;
+    delete state.home.error;
+    delete state.home.validation_error;
+  } else {
+    state.home = {};
+  }
+  state.error = "";
+  state.navigation = createDefaultGlobalNavigation();
+  state.searchFacets = createDefaultSearchFacets();
+  state.facetSets = [];
   state.pages = createDefaultHomePages();
   selectActivePage("home");
+  state.homeDirty = true;
+}
+
+function addGlobalNavigation(presetOrQuery = "watched") {
+  if (!Array.isArray(state.navigation)) state.navigation = [];
+  state.navigation.push({
+    kind: "navigation",
+    group: false,
+    title: "",
+    type: "preset",
+    query: presetOrQuery,
+  });
+  state.homeDirty = true;
+}
+
+function removeGlobalNavigation(index) {
+  if (!Array.isArray(state.navigation)) return;
+  state.navigation.splice(index, 1);
+  state.homeDirty = true;
+}
+
+function moveGlobalNavigation(index, delta) {
+  if (!Array.isArray(state.navigation)) return;
+  const targetIndex = index + delta;
+  if (targetIndex < 0 || targetIndex >= state.navigation.length) return;
+  const item = state.navigation.splice(index, 1)[0];
+  state.navigation.splice(targetIndex, 0, item);
   state.homeDirty = true;
 }
 function selectHomeMode(mode) {
@@ -504,18 +587,13 @@ function selectHomeMode(mode) {
 function canAddFacet() {
   return canUseFacets(state.layout.publication);
 }
-function addNavigation(targetPageId) {
-  let target = targetPageId;
-  if (!target) {
-    const other = state.pages.find((p) => p.id !== state.activePageId);
-    target = other ? other.id : "home";
-  }
+function addNavigation(presetOrQuery = "watched") {
   state.layout.navigation.push({
     kind: "navigation",
     group: false,
     title: "",
-    type: "page",
-    query: target,
+    type: "preset",
+    query: presetOrQuery,
   });
   state.homeDirty = true;
 }
@@ -539,10 +617,190 @@ function removePublication() {
   state.layout.publication = null;
   state.homeDirty = true;
 }
+function addSearchFacet(item = {}) {
+  if (!Array.isArray(state.searchFacets)) state.searchFacets = [];
+  state.searchFacets.push({
+    title: item.title || "",
+    categories: Array.isArray(item.categories) ? item.categories : [],
+    rating: Number(item.rating) || 0,
+    expunged: Boolean(item.expunged),
+    disable_filters: Array.isArray(item.disable_filters) ? item.disable_filters : [],
+    query: item.query || "",
+  });
+  state.homeDirty = true;
+}
+
+function removeSearchFacet(index) {
+  if (!Array.isArray(state.searchFacets)) return;
+  state.searchFacets.splice(index, 1);
+  state.homeDirty = true;
+}
+
+function moveSearchFacet(index, delta) {
+  if (!Array.isArray(state.searchFacets)) return;
+  const target = index + delta;
+  if (target < 0 || target >= state.searchFacets.length) return;
+  const item = state.searchFacets.splice(index, 1)[0];
+  state.searchFacets.splice(target, 0, item);
+  state.homeDirty = true;
+}
+
+function toggleSearchFacetCategory(target, catName) {
+  const it = typeof target === "number" ? state.searchFacets[target] : target;
+  if (!it) return;
+  if (!Array.isArray(it.categories)) it.categories = [];
+  const idx = it.categories.indexOf(catName);
+  if (idx >= 0) {
+    it.categories.splice(idx, 1);
+  } else {
+    it.categories.push(catName);
+  }
+  state.homeDirty = true;
+}
+
+function toggleSearchFacetFilter(target, filterName) {
+  const it = typeof target === "number" ? state.searchFacets[target] : target;
+  if (!it) return;
+  if (!Array.isArray(it.disable_filters)) it.disable_filters = [];
+  const idx = it.disable_filters.indexOf(filterName);
+  if (idx >= 0) {
+    it.disable_filters.splice(idx, 1);
+  } else {
+    it.disable_filters.push(filterName);
+  }
+  state.homeDirty = true;
+}
+
+function addFacetSet(title = "", id = "") {
+  if (!Array.isArray(state.facetSets)) state.facetSets = [];
+  const generatedId = (id || `set_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-");
+  state.facetSets.push({
+    id: generatedId,
+    title: title || t("home_editor.facet_set_default_title"),
+    items: [
+      {
+        title: t("home_editor.facet_all"),
+        categories: [],
+        rating: 0,
+        expunged: false,
+        disable_filters: [],
+        query: "",
+      },
+    ],
+  });
+  state.homeDirty = true;
+  return generatedId;
+}
+
+function removeFacetSet(setIndex) {
+  if (!Array.isArray(state.facetSets)) return;
+  const removed = state.facetSets.splice(setIndex, 1)[0];
+  if (removed && removed.id) {
+    for (const p of state.pages) {
+      if (p.layout && Array.isArray(p.layout.facets)) {
+        p.layout.facets = p.layout.facets.filter((f) => f.facet_set !== removed.id);
+      }
+    }
+  }
+  state.homeDirty = true;
+}
+
+function moveFacetSet(setIndex, delta) {
+  if (!Array.isArray(state.facetSets)) return;
+  const target = setIndex + delta;
+  if (target < 0 || target >= state.facetSets.length) return;
+  const item = state.facetSets.splice(setIndex, 1)[0];
+  state.facetSets.splice(target, 0, item);
+  state.homeDirty = true;
+}
+
+function addFacetItem(setIndex) {
+  const set = state.facetSets[setIndex];
+  if (!set) return;
+  if (!Array.isArray(set.items)) set.items = [];
+  set.items.push({
+    title: "",
+    categories: [],
+    rating: 0,
+    expunged: false,
+    disable_filters: [],
+    query: "",
+  });
+  state.homeDirty = true;
+}
+
+function removeFacetItem(setIndex, itemIndex) {
+  const set = state.facetSets[setIndex];
+  if (!set || !Array.isArray(set.items)) return;
+  set.items.splice(itemIndex, 1);
+  state.homeDirty = true;
+}
+
+function moveFacetItem(setIndex, itemIndex, delta) {
+  const set = state.facetSets[setIndex];
+  if (!set || !Array.isArray(set.items)) return;
+  const target = itemIndex + delta;
+  if (target < 0 || target >= set.items.length) return;
+  const item = set.items.splice(itemIndex, 1)[0];
+  set.items.splice(target, 0, item);
+  state.homeDirty = true;
+}
+
+function addPageFacetReference(facetSetId) {
+  if (!state.layout) return;
+  if (!Array.isArray(state.layout.facets)) state.layout.facets = [];
+  if (state.layout.facets.some((f) => f.facet_set === facetSetId)) return;
+  state.layout.facets.push({
+    facet_set: facetSetId,
+    title: "",
+    items: [],
+  });
+  state.homeDirty = true;
+}
+
+function removePageFacetReference(idx) {
+  if (!state.layout || !Array.isArray(state.layout.facets)) return;
+  state.layout.facets.splice(idx, 1);
+  state.homeDirty = true;
+}
+
+function movePageFacetReference(idx, delta) {
+  if (!state.layout || !Array.isArray(state.layout.facets)) return;
+  const target = idx + delta;
+  if (target < 0 || target >= state.layout.facets.length) return;
+  const item = state.layout.facets.splice(idx, 1)[0];
+  state.layout.facets.splice(target, 0, item);
+  state.homeDirty = true;
+}
+
+function toggleFacetCategory(item, catName) {
+  if (!Array.isArray(item.categories)) item.categories = [];
+  const idx = item.categories.findIndex((c) => c.toLowerCase() === catName.toLowerCase());
+  if (idx >= 0) {
+    item.categories.splice(idx, 1);
+  } else {
+    item.categories.push(catName);
+  }
+  state.homeDirty = true;
+}
+
+function toggleFacetFilter(item, filterKey) {
+  if (!Array.isArray(item.disable_filters)) item.disable_filters = [];
+  const idx = item.disable_filters.indexOf(filterKey);
+  if (idx >= 0) {
+    item.disable_filters.splice(idx, 1);
+  } else {
+    item.disable_filters.push(filterKey);
+  }
+  state.homeDirty = true;
+}
+
 function addFacet() {
   if (!canAddFacet()) return;
-  state.layout.facets.push({ title: t("explore.modal_tags") });
-  state.homeDirty = true;
+  addFacetSet();
 }
 function addGroupSection(kind) {
   state.layout.groups.push(kind === "navigation"
@@ -551,22 +809,17 @@ function addGroupSection(kind) {
         group: true,
         title: t("home_editor.nav_group_default_title"),
         items: [
-          { title: "", type: "page", query: "home" },
+          { title: "", type: "preset", query: "latest" },
         ],
       }
     : { kind: "publication", group: true, title: t("home_editor.popular"), type: "preset", query: "popular", count: 10 });
   state.homeDirty = true;
 }
-function addGroupNavigationItem(groupIndex, targetPageId) {
+function addGroupNavigationItem(groupIndex, presetOrQuery = "latest") {
   const grp = state.layout.groups[groupIndex];
   if (!grp) return;
   if (!Array.isArray(grp.items)) grp.items = [];
-  let target = targetPageId;
-  if (!target) {
-    const other = state.pages.find((p) => p.id !== state.activePageId);
-    target = other ? other.id : "home";
-  }
-  grp.items.push({ title: "", type: "page", query: target });
+  grp.items.push({ title: "", type: "preset", query: presetOrQuery });
   state.homeDirty = true;
 }
 function removeGroupNavigationItem(groupIndex, itemIndex) {
@@ -909,6 +1162,22 @@ function enterExploreSubRoute(navItem, pushHistory = true) {
   }
 }
 
+function replaceExploreSubRoute(navItem) {
+  if (!navItem) return;
+  state.page = "explore";
+  state.exploreSubRoute = {
+    title: navItem.title || t("notice.gallery_list"),
+    href: navItem.href,
+  };
+  if (typeof window !== "undefined") {
+    window.history.replaceState(
+      { page: "explore", subRoute: state.exploreSubRoute },
+      "",
+      `#explore/${encodeURIComponent(navItem.title || "list")}`,
+    );
+  }
+}
+
 function exitExploreSubRoute(popHistory = true) {
   if (
     popHistory &&
@@ -1072,6 +1341,7 @@ export function useApp() {
     ...toRefs(state),
     route,
     enterExploreSubRoute,
+    replaceExploreSubRoute,
     exitExploreSubRoute,
     setTheme,
     login,
@@ -1089,11 +1359,30 @@ export function useApp() {
     updatePageMeta,
     reorderPages,
     resetHomeToDefault,
+    addSearchFacet,
+    removeSearchFacet,
+    moveSearchFacet,
+    toggleSearchFacetCategory,
+    toggleSearchFacetFilter,
     canAddFacet,
+    addGlobalNavigation,
+    removeGlobalNavigation,
+    moveGlobalNavigation,
     addNavigation,
     addPublication,
     removePublication,
     addFacet,
+    addFacetSet,
+    removeFacetSet,
+    moveFacetSet,
+    addFacetItem,
+    removeFacetItem,
+    moveFacetItem,
+    toggleFacetCategory,
+    toggleFacetFilter,
+    addPageFacetReference,
+    removePageFacetReference,
+    movePageFacetReference,
     addGroupSection,
     addGroupNavigationItem,
     removeGroupNavigationItem,

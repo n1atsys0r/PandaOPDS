@@ -16,6 +16,7 @@ import {
 import CoverImage from "@/components/CoverImage.vue";
 import {
   CompassIcon as Compass,
+  HomeIcon as Home,
   ChevronLeftIcon as ChevronLeft,
   ChevronRightIcon as ChevronRight,
   ChevronUpIcon as ChevronUp,
@@ -70,6 +71,13 @@ function getCategoryColor(category) {
     (x) => x.key.toLowerCase() === (category || "").toLowerCase(),
   );
   return c ? c.color : "#9e9e9e";
+}
+
+function getCategoryIndicatorColor(title) {
+  const c = EH_CATEGORIES.find(
+    (x) => x.key.toLowerCase() === (title || "").toLowerCase(),
+  );
+  return c ? c.color : null;
 }
 
 // State
@@ -914,7 +922,8 @@ function normalizeNavItems(navs) {
     const hrefLower = (nav.href || "").toLowerCase();
     const titleLower = (nav.title || "").toLowerCase();
 
-    if (hrefLower.includes("watched") || titleLower.includes("watch")) icon = Eye;
+    if (hrefLower.endsWith("/opds/v2.0") || hrefLower.endsWith("/page/home") || titleLower === "home" || titleLower === "首页") icon = Home;
+    else if (hrefLower.includes("watched") || titleLower.includes("watch")) icon = Eye;
     else if (hrefLower.includes("favorites") || titleLower.includes("fav")) icon = Heart;
     else if (hrefLower.includes("archives") || titleLower.includes("arch")) icon = Package2;
     else if (hrefLower.includes("top") || titleLower.includes("rank") || hrefLower.includes("toplist")) icon = Trophy;
@@ -996,9 +1005,166 @@ function parseCatalogGroups(doc, feedHref, allowRootFallback = false) {
   return groups;
 }
 
-// Normalized Navigation Pills
-const navigationItems = computed(() => normalizeNavItems(catalog.value?.navigation));
-const routeNavItems = computed(() => normalizeNavItems(routeFeed.value?.navigation));
+function normalizeFacetUrl(href) {
+  if (!href) return null;
+  try {
+    const u = new URL(href, typeof window !== "undefined" ? window.location.href : "http://localhost");
+    u.searchParams.delete("next");
+    u.searchParams.delete("page");
+    u.searchParams.delete("_t");
+    return u;
+  } catch {
+    return null;
+  }
+}
+
+function areUrlsMatching(hrefA, hrefB) {
+  if (!hrefA || !hrefB) return false;
+  const uA = normalizeFacetUrl(hrefA);
+  const uB = normalizeFacetUrl(hrefB);
+  if (!uA || !uB) return hrefA === hrefB;
+  if (uA.pathname.replace(/\/+$/, "") !== uB.pathname.replace(/\/+$/, "")) return false;
+
+  const ignored = new Set(["next", "page", "_t"]);
+  const paramsA = new Map();
+  const paramsB = new Map();
+  for (const [k, v] of uA.searchParams.entries()) {
+    if (!ignored.has(k) && v !== "") paramsA.set(k, v);
+  }
+  for (const [k, v] of uB.searchParams.entries()) {
+    if (!ignored.has(k) && v !== "") paramsB.set(k, v);
+  }
+  if (paramsA.size !== paramsB.size) return false;
+  for (const [k, v] of paramsA.entries()) {
+    if (paramsB.get(k) !== v) return false;
+  }
+  return true;
+}
+
+function normalizeFacetGroups(facets, currentFeedHref) {
+  if (!Array.isArray(facets)) return [];
+  return facets
+    .map((grp, gIdx) => {
+      const title = grp?.metadata?.title || "";
+      const rawLinks = Array.isArray(grp?.links) ? grp.links : [];
+      if (rawLinks.length === 0) return null;
+
+      let activeIndex = rawLinks.findIndex((l) => l.active === true || l.rel === "self");
+
+      if (activeIndex === -1 && currentFeedHref) {
+        activeIndex = rawLinks.findIndex((l) => areUrlsMatching(l.href, currentFeedHref));
+      }
+
+      const links = rawLinks.map((l, lIdx) => ({
+        title: l.title || l.href || "",
+        href: l.href,
+        isActive: lIdx === activeIndex,
+      }));
+
+      return {
+        id: `facet-grp-${gIdx}`,
+        title,
+        links,
+        hasActive: activeIndex !== -1,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Cached route navigation and facets so they never disappear or flicker during facet switches
+const cachedRouteNav = ref([]);
+const cachedRouteFacets = ref([]);
+
+watch(
+  () => catalog.value?.navigation,
+  (newNav) => {
+    if (Array.isArray(newNav) && newNav.length > 0) {
+      cachedRouteNav.value = normalizeNavItems(newNav);
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => routeFeed.value?.navigation,
+  (newNav) => {
+    if (Array.isArray(newNav) && newNav.length > 0) {
+      cachedRouteNav.value = normalizeNavItems(newNav);
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => routeFeed.value?.facets,
+  (newFacets) => {
+    if (Array.isArray(newFacets) && newFacets.length > 0) {
+      cachedRouteFacets.value = newFacets;
+    }
+  },
+  { immediate: true },
+);
+
+// Unified Global Navigation Pills
+const globalNavItems = computed(() => {
+  if (Array.isArray(catalog.value?.navigation) && catalog.value.navigation.length > 0) {
+    return normalizeNavItems(catalog.value.navigation);
+  }
+  if (Array.isArray(routeFeed.value?.navigation) && routeFeed.value.navigation.length > 0) {
+    return normalizeNavItems(routeFeed.value.navigation);
+  }
+  if (cachedRouteNav.value.length > 0) {
+    return cachedRouteNav.value;
+  }
+  return [];
+});
+
+const navigationItems = globalNavItems;
+const routeNavItems = globalNavItems;
+
+function isHomeNav(nav) {
+  if (!nav || !nav.href) return false;
+  const u = normalizeFacetUrl(nav.href);
+  if (!u) return false;
+  const p = u.pathname.replace(/\/+$/, "");
+  return p === "/opds/v2.0" || p === "/opds/v2.0/page/home";
+}
+
+function isNavActive(nav) {
+  if (!nav || !nav.href) return false;
+  if (!activeRoute.value) {
+    return isHomeNav(nav);
+  }
+  const uActive = normalizeFacetUrl(activeRoute.value.href);
+  const uNav = normalizeFacetUrl(nav.href);
+  if (!uActive || !uNav) return activeRoute.value.href === nav.href;
+
+  const pathActive = uActive.pathname.replace(/\/+$/, "");
+  const pathNav = uNav.pathname.replace(/\/+$/, "");
+  if (pathActive !== pathNav) return false;
+
+  for (const [k, v] of uNav.searchParams.entries()) {
+    if (k !== "next" && k !== "page" && k !== "_t") {
+      if (uActive.searchParams.get(k) !== v) return false;
+    }
+  }
+  return true;
+}
+
+// Normalized Facets
+const homeFacets = computed(() => normalizeFacetGroups(catalog.value?.facets, catalogFeedHref));
+const currentFeedFacets = computed(() => {
+  if (Array.isArray(routeFeed.value?.facets) && routeFeed.value.facets.length > 0) {
+    return routeFeed.value.facets;
+  }
+  if (cachedRouteFacets.value.length > 0) {
+    return cachedRouteFacets.value;
+  }
+  return catalog.value?.facets || [];
+});
+const routeFacets = computed(() =>
+  normalizeFacetGroups(currentFeedFacets.value, activeRoute.value?.href || routeFeedHref),
+);
 
 // Normalized Groups (preserving catalog.groups order)
 const homeGroups = computed(() => parseCatalogGroups(catalog.value, catalogFeedHref, true));
@@ -1111,14 +1277,100 @@ async function loadCatalog() {
 // Drill-Down into a specific feed
 function drillDown(navItem) {
   if (!navItem || !navItem.href) return;
+  if (isHomeNav(navItem)) {
+    if (activeRoute.value) {
+      s.exitExploreSubRoute(false);
+      routePageStack.value = [];
+      cachedRouteNav.value = [];
+      cachedRouteFacets.value = [];
+    }
+    return;
+  }
+  if (isNavActive(navItem)) return;
+
   routePageStack.value = [];
+  cachedRouteNav.value = [];
+  cachedRouteFacets.value = [];
+  const currentHref = activeRoute.value?.href;
   s.enterExploreSubRoute(
     {
-      title: navItem.title || t("notice.gallery_list"),
+      title: navItem.title || activeRoute.value?.title || t("notice.gallery_list"),
       href: navItem.href,
     },
     true,
   );
+  if (currentHref === navItem.href) {
+    loadRouteFeed(navItem.href);
+  }
+}
+
+function onResetFacets() {
+  if (!activeRoute.value) return;
+
+  if (activeRoute.value.fromHome && !activeRoute.value.baseHref) {
+    s.exitExploreSubRoute();
+    return;
+  }
+
+  let resetHref = activeRoute.value.baseHref;
+  if (!resetHref) {
+    try {
+      const u = new URL(activeRoute.value.href, window.location.origin);
+      u.searchParams.delete("f_cats");
+      u.searchParams.delete("advsearch");
+      u.searchParams.delete("f_sr");
+      u.searchParams.delete("f_srdd");
+      u.searchParams.delete("f_sh");
+      u.searchParams.delete("f_sfl");
+      u.searchParams.delete("f_sfu");
+      u.searchParams.delete("f_sft");
+      resetHref = u.pathname + (u.search ? u.search : "");
+    } catch {
+      resetHref = activeRoute.value.href;
+    }
+  }
+
+  s.replaceExploreSubRoute({
+    title: activeRoute.value.title,
+    href: resetHref,
+    baseHref: activeRoute.value.baseHref,
+    fromHome: activeRoute.value.fromHome || false,
+  });
+  loadRouteFeed(resetHref);
+}
+
+// Filter in-place by facet without drilling down into a new history stack. Clicking an active facet clears it.
+function onFacetClick(facetLink) {
+  if (!facetLink || !facetLink.href) return;
+  if (facetLink.isActive) {
+    onResetFacets();
+    return;
+  }
+
+  routePageStack.value = [];
+
+  if (activeRoute.value) {
+    // Already in a sub-route: replace the route URL in-place, keeping current page identity
+    const baseHref = activeRoute.value.baseHref || activeRoute.value.href;
+    s.replaceExploreSubRoute({
+      title: activeRoute.value.title,
+      href: facetLink.href,
+      baseHref: baseHref,
+      fromHome: activeRoute.value.fromHome || false,
+    });
+    loadRouteFeed(facetLink.href);
+  } else {
+    // In root catalog view, open the filtered view directly
+    s.enterExploreSubRoute(
+      {
+        title: facetLink.title || t("notice.gallery_list"),
+        href: facetLink.href,
+        baseHref: null,
+        fromHome: true,
+      },
+      true,
+    );
+  }
 }
 
 function getPubId(pub) {
@@ -1152,6 +1404,11 @@ async function loadRouteFeed(url) {
     });
     routeFeedHref = localApiUrl(url) || url;
     routeFeed.value = res.data;
+    if (res.data?.metadata?.title && s.exploreSubRoute.value) {
+      if (!s.exploreSubRoute.value.title || s.exploreSubRoute.value.title === t("notice.gallery_list")) {
+        s.exploreSubRoute.value.title = res.data.metadata.title;
+      }
+    }
     const pubs = Array.isArray(res.data?.publications) ? res.data.publications : [];
     rawRoutePublications.value = pubs.map((pub) => ({
       pub,
@@ -1252,6 +1509,8 @@ function scrollToTop() {
 function exitDrillDown() {
   routePageStack.value = [];
   rawRoutePublications.value = [];
+  cachedRouteNav.value = [];
+  cachedRouteFacets.value = [];
   loadingMore.value = false;
   loadingMoreError.value = "";
   gridObserver?.disconnect();
@@ -1794,15 +2053,51 @@ onUnmounted(() => {
       {{ error || routeError }}
     </div>
 
-    <!-- Loading Skeleton -->
-    <div v-if="loading && !catalog" class="space-y-6 animate-pulse">
-      <div class="flex flex-wrap gap-2.5 pt-0.5">
+    <!-- Global Top Navigation Bar (Permanent, unified across catalog and sub-routes) -->
+    <nav
+      v-if="globalNavItems.length || (loading && !catalog)"
+      class="flex flex-wrap items-center gap-2.5 pt-0.5"
+      :aria-label="t('explore.nav_label')"
+    >
+      <template v-if="globalNavItems.length">
+        <button
+          v-for="nav in globalNavItems"
+          :key="nav.href"
+          type="button"
+          class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+          :class="isNavActive(nav)
+            ? 'bg-primary text-primary-foreground border-primary shadow-xs font-semibold'
+            : 'border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs'"
+          @click="drillDown(nav)"
+        >
+          <component
+            :is="nav.icon"
+            class="size-4 shrink-0 transition-colors"
+            :class="isNavActive(nav) ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'"
+          />
+          <span
+            class="tracking-tight"
+            :class="isNavActive(nav) ? 'text-primary-foreground' : 'text-foreground/90 group-hover:text-foreground'"
+          >
+            {{ nav.title }}
+          </span>
+          <ChevronRight
+            class="size-3.5 transition-all duration-200 group-hover:translate-x-0.5"
+            :class="isNavActive(nav) ? 'text-primary-foreground/70' : 'text-muted-foreground/40 group-hover:text-foreground/80'"
+          />
+        </button>
+      </template>
+      <template v-else>
         <div
           v-for="i in 4"
           :key="i"
-          class="h-9 w-28 bg-muted/60 rounded-full"
+          class="h-9 w-28 bg-muted/60 rounded-full animate-pulse"
         />
-      </div>
+      </template>
+    </nav>
+
+    <!-- Loading Skeleton -->
+    <div v-if="loading && !catalog" class="space-y-6 animate-pulse">
       <div v-for="i in 2" :key="i" class="space-y-3">
         <div class="h-6 w-36 bg-muted rounded" />
         <div class="flex gap-4 overflow-hidden">
@@ -1817,31 +2112,44 @@ onUnmounted(() => {
 
     <!-- ================= CATALOG HOME VIEW ================= -->
     <div v-else-if="!activeRoute" class="space-y-8">
-      <!-- 1. Top Navigation Bar (Independent Premium Navigation Capsules) -->
-      <nav
-        v-if="navigationItems.length"
-        class="flex flex-wrap items-center gap-2.5 pt-0.5"
-        :aria-label="t('explore.nav_label')"
+      <!-- Facet Filter Rails (Root Catalog) -->
+      <div
+        v-if="homeFacets.length"
+        class="space-y-2 pt-0.5"
       >
-        <button
-          v-for="nav in navigationItems"
-          :key="nav.href"
-          type="button"
-          class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
-          @click="drillDown(nav)"
+        <div
+          v-for="grp in homeFacets"
+          :key="grp.id"
+          class="overflow-hidden"
         >
-          <component
-            :is="nav.icon"
-            class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-          />
-          <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
-            {{ nav.title }}
-          </span>
-          <ChevronRight
-            class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
-          />
-        </button>
-      </nav>
+          <div
+            class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
+            :aria-label="grp.title || t('explore.facets_label')"
+          >
+            <button
+              v-for="link in grp.links"
+              :key="link.title || link.href"
+              type="button"
+              class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
+              :class="link.isActive
+                ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
+                : 'bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/50 hover:border-border/80'"
+              :aria-pressed="link.isActive"
+              @click="onFacetClick(link)"
+            >
+              <span
+                v-if="getCategoryIndicatorColor(link.title)"
+                class="size-2 rounded-full shrink-0 ring-1 ring-background/30"
+                :style="{ backgroundColor: getCategoryIndicatorColor(link.title) }"
+              />
+              <span class="tracking-tight whitespace-nowrap">
+                {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
+              </span>
+              <X v-if="link.isActive" class="size-3 ml-0.5 opacity-70 group-hover:opacity-100" />
+            </button>
+          </div>
+        </div>
+      </div>
 
       <!-- 2. Groups (preserving configured order of publication shelves & navigation groups) -->
       <template v-for="group in homeGroups" :key="group.id">
@@ -2029,40 +2337,60 @@ onUnmounted(() => {
 
     <!-- ================= DRILL-DOWN VIEW ================= -->
     <div v-else class="space-y-6">
-      <div v-if="routeLoading" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse">
+      <div v-if="!routeFeed && routeLoading" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse">
         <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
       </div>
 
       <!-- A: Custom Page with Groups -->
       <template v-else-if="routeGroups.length > 0">
-        <!-- Top Navigation Capsules for Route Feed if present -->
-        <nav
-          v-if="routeNavItems.length"
-          class="flex flex-wrap items-center gap-2.5 pt-0.5"
-          :aria-label="t('explore.nav_label')"
+        <!-- Route Facets for Groups Mode (if present) -->
+        <div
+          v-if="routeFacets.length"
+          class="space-y-2 pt-0.5"
         >
-          <button
-            v-for="nav in routeNavItems"
-            :key="nav.href"
-            type="button"
-            class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
-            @click="drillDown(nav)"
+          <div
+            v-for="grp in routeFacets"
+            :key="grp.id"
+            class="overflow-hidden"
           >
-            <component
-              :is="nav.icon"
-              class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-            />
-            <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
-              {{ nav.title }}
-            </span>
-            <ChevronRight
-              class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
-            />
-          </button>
-        </nav>
+            <div
+              class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
+              :aria-label="grp.title || t('explore.facets_label')"
+            >
+              <button
+                v-for="link in grp.links"
+                :key="link.title || link.href"
+                type="button"
+                class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
+                :class="link.isActive
+                  ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
+                  : 'bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/50 hover:border-border/80'"
+                :aria-pressed="link.isActive"
+                @click="onFacetClick(link)"
+              >
+                <span
+                  v-if="getCategoryIndicatorColor(link.title)"
+                  class="size-2 rounded-full shrink-0 ring-1 ring-background/30"
+                  :style="{ backgroundColor: getCategoryIndicatorColor(link.title) }"
+                />
+                <span class="tracking-tight whitespace-nowrap">
+                  {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
+                </span>
+                <X v-if="link.isActive" class="size-3 ml-0.5 opacity-70 group-hover:opacity-100" />
+              </button>
+            </div>
+          </div>
+        </div>
 
         <!-- Shelves and Navigation groups -->
-        <template v-for="group in routeGroups" :key="group.id">
+        <div
+          v-if="routeLoading"
+          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse pt-2"
+        >
+          <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
+        </div>
+        <template v-else>
+          <template v-for="group in routeGroups" :key="group.id">
           <!-- Navigation Group (Subtle Tags) -->
           <div
             v-if="group.type === 'navigation'"
@@ -2243,38 +2571,60 @@ onUnmounted(() => {
             </div>
           </div>
         </template>
+        </template>
       </template>
 
       <!-- B: Publications Stream Mode or Regular Feed -->
       <template v-else>
-        <!-- Top Navigation Capsules if page has navigation -->
-        <nav
-          v-if="routeNavItems.length"
-          class="flex flex-wrap items-center gap-2.5 pt-0.5"
-          :aria-label="t('explore.nav_label')"
+        <!-- Route Facet Rails (Interactive Pill Filter Rail) -->
+        <div
+          v-if="routeFacets.length"
+          class="space-y-2 pt-0.5"
         >
-          <button
-            v-for="nav in routeNavItems"
-            :key="nav.href"
-            type="button"
-            class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
-            @click="drillDown(nav)"
+          <div
+            v-for="grp in routeFacets"
+            :key="grp.id"
+            class="overflow-hidden"
           >
-            <component
-              :is="nav.icon"
-              class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-            />
-            <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
-              {{ nav.title }}
-            </span>
-            <ChevronRight
-              class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
-            />
-          </button>
-        </nav>
+            <div
+              class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
+              :aria-label="grp.title || t('explore.facets_label')"
+            >
+              <button
+                v-for="link in grp.links"
+                :key="link.title || link.href"
+                type="button"
+                class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
+                :class="link.isActive
+                  ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
+                  : 'bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/50 hover:border-border/80'"
+                :aria-pressed="link.isActive"
+                @click="onFacetClick(link)"
+              >
+                <span
+                  v-if="getCategoryIndicatorColor(link.title)"
+                  class="size-2 rounded-full shrink-0 ring-1 ring-background/30"
+                  :style="{ backgroundColor: getCategoryIndicatorColor(link.title) }"
+                />
+                <span class="tracking-tight whitespace-nowrap">
+                  {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
+                </span>
+                <X v-if="link.isActive" class="size-3 ml-0.5 opacity-70 group-hover:opacity-100" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Publications Grid / In-Place Loading Skeleton / Empty State -->
+        <div
+          v-if="routeLoading"
+          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse pt-2"
+        >
+          <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
+        </div>
 
         <div
-          v-if="drillDownPublications.length === 0"
+          v-else-if="drillDownPublications.length === 0"
           class="py-16 text-center text-muted-foreground space-y-2"
         >
           <Search class="size-8 mx-auto text-muted-foreground/40" />

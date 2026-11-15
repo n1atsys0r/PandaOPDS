@@ -17,6 +17,7 @@ import {
   PanelsTopLeft,
   Pencil,
   FileText,
+  SlidersHorizontal,
 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -101,6 +102,8 @@ function handleAddPageTitleInput(val) {
   }
 }
 
+const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "toplists", "archives"]);
+
 function confirmAddPage() {
   const title = addPageForm.value.title.trim();
   const id = addPageForm.value.id.trim().toLowerCase();
@@ -108,7 +111,7 @@ function confirmAddPage() {
     addPageError.value = t("home_editor.page_id_invalid");
     return;
   }
-  if (s.pages.value.some((p) => p.id === id)) {
+  if (BUILTIN_PAGE_IDS.has(id) || s.pages.value.some((p) => p.id === id)) {
     addPageError.value = t("home_editor.page_id_exists");
     return;
   }
@@ -143,7 +146,7 @@ function confirmEditPage() {
       editPageError.value = t("home_editor.page_id_invalid");
       return;
     }
-    if (newId !== editPageForm.value.origId && s.pages.value.some((p) => p.id === newId)) {
+    if (newId !== editPageForm.value.origId && (BUILTIN_PAGE_IDS.has(newId) || s.pages.value.some((p) => p.id === newId))) {
       editPageError.value = t("home_editor.page_id_exists");
       return;
     }
@@ -206,10 +209,96 @@ function collapseAll() {
 
 function expandAll() {
   const next = new Set();
-  (s.layout.value.navigation || []).forEach((x) => next.add(x));
-  (s.layout.value.groups || []).forEach((x) => next.add(x));
-  if (s.layout.value.publication) next.add(s.layout.value.publication);
+  if (s.activePageId.value === "__global_nav__") {
+    (s.navigation.value || []).forEach((x) => next.add(x));
+  } else if (s.activePageId.value === "__search_facets__" || s.activePageId.value === "__facet_sets__") {
+    (s.searchFacets.value || []).forEach((f) => next.add(f));
+  } else {
+    (s.layout.value.groups || []).forEach((x) => next.add(x));
+    if (s.layout.value.publication) next.add(s.layout.value.publication);
+    (s.layout.value.facets || []).forEach((f) => next.add(f));
+  }
   expandedItems.value = next;
+}
+
+const EH_CATEGORIES = [
+  { name: "Doujinshi", bg: "bg-[#ed5565]", text: "text-white", border: "border-[#ed5565]" },
+  { name: "Manga", bg: "bg-[#f6bb42]", text: "text-white", border: "border-[#f6bb42]" },
+  { name: "Artist CG", bg: "bg-[#d0b400]", text: "text-white", border: "border-[#d0b400]" },
+  { name: "Game CG", bg: "bg-[#2ecc71]", text: "text-white", border: "border-[#2ecc71]" },
+  { name: "Western", bg: "bg-[#8cc152]", text: "text-white", border: "border-[#8cc152]" },
+  { name: "Non-H", bg: "bg-[#4fc1e9]", text: "text-white", border: "border-[#4fc1e9]" },
+  { name: "Image Set", bg: "bg-[#5d9cec]", text: "text-white", border: "border-[#5d9cec]" },
+  { name: "Cosplay", bg: "bg-[#ac92ec]", text: "text-white", border: "border-[#ac92ec]" },
+  { name: "Asian Porn", bg: "bg-[#ec87c0]", text: "text-white", border: "border-[#ec87c0]" },
+  { name: "Misc", bg: "bg-[#aab2bd]", text: "text-white", border: "border-[#aab2bd]" },
+];
+
+function isCatSelected(item, catName) {
+  return Array.isArray(item.categories) && item.categories.some((c) => c.toLowerCase() === catName.toLowerCase());
+}
+
+function selectAllCategories(item) {
+  item.categories = EH_CATEGORIES.map((c) => c.name);
+  s.homeDirty.value = true;
+}
+
+function clearAllCategories(item) {
+  item.categories = [];
+  s.homeDirty.value = true;
+}
+
+function isFilterDisabled(item, key) {
+  return Array.isArray(item.disable_filters) && item.disable_filters.includes(key);
+}
+
+function getFacetSetById(id) {
+  if (!id || !Array.isArray(s.facetSets.value)) return null;
+  return s.facetSets.value.find((fs) => fs.id === id) || null;
+}
+
+const unreferencedFacetSets = computed(() => {
+  if (!Array.isArray(s.facetSets.value)) return [];
+  const referencedIds = new Set((s.layout.value.facets || []).map((f) => f.facet_set).filter(Boolean));
+  return s.facetSets.value.filter((fs) => !referencedIds.has(fs.id));
+});
+
+const selectedFacetSetToRef = ref("");
+
+function handleAddSearchFacet() {
+  s.addSearchFacet();
+  nextTick(() => {
+    const list = s.searchFacets.value;
+    if (list && list.length > 0) {
+      expandItem(list[list.length - 1]);
+    }
+  });
+}
+
+function handleAddPageFacetRef() {
+  if (!selectedFacetSetToRef.value) return;
+  s.addPageFacetReference(selectedFacetSetToRef.value);
+  selectedFacetSetToRef.value = "";
+}
+
+function handleAddFacetSet() {
+  s.addFacetSet();
+  nextTick(() => {
+    const list = s.facetSets.value;
+    if (list && list.length > 0) {
+      expandItem(list[list.length - 1]);
+    }
+  });
+}
+
+function handleAddFacetItem(setIdx) {
+  s.addFacetItem(setIdx);
+  nextTick(() => {
+    const set = s.facetSets.value[setIdx];
+    if (set && set.items && set.items.length > 0) {
+      expandItem(set.items[set.items.length - 1]);
+    }
+  });
 }
 
 // When active page changes, clear expanded items
@@ -264,14 +353,6 @@ const homeReplaceWarning = computed(() => {
   return "";
 });
 
-const homeFacetWarning = computed(() =>
-  currentPageMode.value === "publications" &&
-  s.layout.value.facets.length > 0 &&
-  !canUseFacets(s.layout.value.publication)
-    ? t("home_editor.facet_unsupported_warning")
-    : "",
-);
-
 function handleNavTypeChange(item) {
   if (item.type === "page") {
     if (!item.query || !s.pages.value.some((p) => p.id === item.query)) {
@@ -282,7 +363,7 @@ function handleNavTypeChange(item) {
       item.query = "latest";
     }
   } else if (item.type === "search") {
-    if (item.query && (isKnownPreset(item.query) || s.pages.value.some((p) => p.id === item.query))) {
+    if (item.query && isKnownPreset(item.query)) {
       item.query = "";
     }
   }
@@ -298,6 +379,16 @@ function handleAddNavigation() {
   nextTick(() => {
     const list = s.layout.value.navigation;
     if (list.length > 0) {
+      expandItem(list[list.length - 1]);
+    }
+  });
+}
+
+function handleAddGlobalNavigation() {
+  s.addGlobalNavigation();
+  nextTick(() => {
+    const list = s.navigation.value;
+    if (list && list.length > 0) {
       expandItem(list[list.length - 1]);
     }
   });
@@ -322,10 +413,6 @@ function handleAddPublication() {
   });
 }
 
-function handleAddFacet() {
-  s.addFacet();
-}
-
 const PRESET_GROUPS = computed(() => [
   {
     label: t("home_editor.preset_gallery"),
@@ -340,6 +427,7 @@ const PRESET_GROUPS = computed(() => [
   {
     label: t("home_editor.preset_toplist"),
     options: [
+      { value: "toplists", label: t("home_editor.toplists_all") },
       { value: "toplist:yesterday", label: t("home_editor.toplist_yesterday") },
       { value: "toplist:month", label: t("home_editor.toplist_month") },
       { value: "toplist:year", label: t("home_editor.toplist_year") },
@@ -361,9 +449,6 @@ function isKnownPreset(q) {
 
 function getNavTargetTitle(nav) {
   if (!nav) return "";
-  if (nav.type === "page") {
-    return getPageTitle(nav.query);
-  }
   if (nav.type === "preset") {
     for (const grp of PRESET_GROUPS.value) {
       const found = grp.options.find((o) => o.value === nav.query);
@@ -374,7 +459,10 @@ function getNavTargetTitle(nav) {
   if (nav.type === "search") {
     return nav.query || "";
   }
-  return getPageTitle(nav.query);
+  if (nav.type === "page") {
+    return getPageTitle(nav.query);
+  }
+  return nav.query || "";
 }
 
 function handleTypeChange(item) {
@@ -390,8 +478,8 @@ function handleGroupKindChange(item) {
       item.items = [
         {
           title: "",
-          type: "page",
-          query: s.pages.value[0]?.id || "home",
+          type: "preset",
+          query: "latest",
         },
       ];
     }
@@ -459,6 +547,12 @@ function handleGroupKindChange(item) {
             <small>{{ item.kind }} · {{ item.query }}</small>
           </div>
         </div>
+        <div class="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <p class="text-xs text-muted-foreground">{{ t("home_editor.readonly_recovery_hint") }}</p>
+          <Button variant="outline" size="sm" class="gap-1.5 shrink-0" @click="resetDefaultsOpen = true">
+            <RotateCcw class="size-4" />{{ t("home_editor.reset_and_recover") }}
+          </Button>
+        </div>
       </CardContent>
     </Card>
 
@@ -469,6 +563,12 @@ function handleGroupKindChange(item) {
       </CardHeader>
       <CardContent class="panel-body">
         <div class="archive-error">{{ s.home.value.error }}</div>
+        <div class="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <p class="text-xs text-muted-foreground">{{ t("home_editor.error_recovery_hint") }}</p>
+          <Button variant="outline" size="sm" class="gap-1.5 shrink-0" @click="resetDefaultsOpen = true">
+            <RotateCcw class="size-4" />{{ t("home_editor.reset_and_recover") }}
+          </Button>
+        </div>
       </CardContent>
     </Card>
 
@@ -502,13 +602,6 @@ function handleGroupKindChange(item) {
         </AlertDescription>
       </Alert>
 
-      <Alert v-if="homeFacetWarning" variant="destructive" class="py-2.5">
-        <AlertTriangle class="size-4 text-destructive shrink-0" />
-        <AlertDescription class="text-xs">
-          {{ homeFacetWarning }} {{ t("home_editor.facet_warning_suffix") }}
-        </AlertDescription>
-      </Alert>
-
       <!-- Master-Detail Layout: Left Internal Sidebar & Right Workbench -->
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <!-- ================= LEFT INTERNAL SIDEBAR: 页面列表 ================= -->
@@ -532,6 +625,56 @@ function handleGroupKindChange(item) {
               </Button>
             </CardHeader>
             <CardContent class="p-2 flex flex-col gap-1">
+              <!-- Pinned Global Navigation item -->
+              <div
+                class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none border border-transparent"
+                :class="s.activePageId.value === '__global_nav__' ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'"
+                @click="s.selectActivePage('__global_nav__')"
+              >
+                <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                  <Compass class="size-4 shrink-0 text-primary" />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm font-medium leading-tight">
+                      {{ t("home_editor.global_nav_title") }}
+                    </div>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                      <span class="text-[10px] text-muted-foreground/80">
+                        {{ t("home_editor.global_nav_desc") }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <Badge variant="secondary" class="h-5 px-1.5 text-[10px] font-mono font-normal">
+                  {{ (s.navigation.value || []).length }}
+                </Badge>
+              </div>
+
+              <!-- Pinned Custom Search Facets item -->
+              <div
+                class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none border border-transparent"
+                :class="s.activePageId.value === '__search_facets__' || s.activePageId.value === '__facet_sets__' ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'"
+                @click="s.selectActivePage('__search_facets__')"
+              >
+                <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                  <Filter class="size-4 shrink-0 text-primary" />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm font-medium leading-tight">
+                      {{ t("home_editor.custom_search_title") }}
+                    </div>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                      <span class="text-[10px] text-muted-foreground/80">
+                        {{ t("home_editor.custom_search_capsules") }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <Badge variant="secondary" class="h-5 px-1.5 text-[10px] font-mono font-normal">
+                  {{ (s.searchFacets.value || []).length }}
+                </Badge>
+              </div>
+
+              <Separator class="my-1" />
+
               <div
                 v-for="page in s.pages.value"
                 :key="page.id"
@@ -583,21 +726,20 @@ function handleGroupKindChange(item) {
           </Card>
         </div>
 
-        <!-- ================= RIGHT PANE: 当前页面工作台 ================= -->
-        <div class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
+        <!-- ================= RIGHT PANE: 全局顶栏导航工作台 ================= -->
+        <div v-if="s.activePageId.value === '__global_nav__'" class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
           <Card class="panel home-workbench">
             <CardHeader class="p-5 pb-3 border-b border-border/60">
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div class="flex items-center gap-2.5">
-                  <Home v-if="activePage.id === 'home'" class="size-5 text-primary shrink-0" />
-                  <PanelsTopLeft v-else class="size-5 text-primary shrink-0" />
+                  <Compass class="size-5 text-primary shrink-0" />
                   <div>
                     <div class="flex items-center gap-2">
                       <h2 class="text-lg font-bold tracking-tight">
-                        {{ getPageDisplayTitle(activePage) }}
+                        {{ t("home_editor.global_nav_title") }}
                       </h2>
                       <Badge variant="secondary" class="font-mono text-xs">
-                        {{ activePage.id === 'home' ? '/' : '/page/' + activePage.id }}
+                        {{ (s.navigation.value || []).length }}
                       </Badge>
                     </div>
                   </div>
@@ -605,59 +747,33 @@ function handleGroupKindChange(item) {
 
                 <div class="flex items-center gap-2">
                   <Button
-                    v-if="activePage.id !== 'home'"
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    class="h-8 gap-1 text-xs"
-                    @click="openEditPageModal(activePage)"
+                    class="h-8 gap-1.5 text-xs"
+                    @click="handleAddGlobalNavigation"
                   >
-                    <Pencil class="size-3.5" />{{ t("home_editor.edit_page_meta") }}
+                    <Plus class="size-3.5" />{{ t("home_editor.add_global_nav") }}
                   </Button>
                 </div>
               </div>
             </CardHeader>
 
             <CardContent class="p-5 sm:p-6 flex flex-col gap-6">
-              <!-- ================= SECTION 1: 顶层导航 ================= -->
               <section class="home-section flex flex-col gap-4">
-                <div class="flex items-start justify-between gap-4 pb-1">
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <Compass class="size-4 text-primary" />
-                      <h3 class="text-base font-semibold tracking-tight">
-                        {{ t("home_editor.nav_title") }}
-                      </h3>
-                      <Badge
-                        variant="secondary"
-                        class="h-5 px-1.5 text-[11px] font-mono font-normal"
-                      >
-                        {{ s.layout.value.navigation.length }}
-                      </Badge>
-                    </div>
-                    <p class="text-xs text-muted-foreground mt-1">
-                      {{ t("home_editor.nav_desc") }}
-                    </p>
-                  </div>
-                  <div class="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      class="h-8 gap-1.5 text-xs"
-                      @click="handleAddNavigation"
-                    >
-                      <Plus class="size-3.5" />{{ t("home_editor.add_nav") }}
-                    </Button>
-                  </div>
+                <div class="pb-1">
+                  <p class="text-xs text-muted-foreground">
+                    {{ t("home_editor.global_nav_workbench_desc") }}
+                  </p>
                 </div>
 
                 <!-- Navigation Items List -->
                 <div
-                  v-if="s.layout.value.navigation.length > 0"
+                  v-if="(s.navigation.value || []).length > 0"
                   class="flex flex-col gap-2.5"
                 >
                   <div
-                    v-for="(nav, i) in s.layout.value.navigation"
-                    :key="'nav-' + i"
+                    v-for="(nav, i) in s.navigation.value"
+                    :key="'gnav-' + i"
                     class="home-item-card rounded-xl border border-border bg-card transition-[border-color,box-shadow] duration-150 overflow-hidden shadow-xs hover:border-border/80"
                     :class="{
                       'ring-1 ring-primary/20 border-primary/30': isExpanded(nav),
@@ -702,17 +818,17 @@ function handleGroupKindChange(item) {
                           :disabled="i === 0"
                           :aria-label="t('home_editor.reorder_up')"
                           :title="t('home_editor.reorder_up')"
-                          @click="s.moveItem('navigation', i, -1)"
+                          @click="s.moveGlobalNavigation(i, -1)"
                         >
                           <ChevronUp class="size-3.5" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          :disabled="i === s.layout.value.navigation.length - 1"
+                          :disabled="i === s.navigation.value.length - 1"
                           :aria-label="t('home_editor.reorder_down')"
                           :title="t('home_editor.reorder_down')"
-                          @click="s.moveItem('navigation', i, 1)"
+                          @click="s.moveGlobalNavigation(i, 1)"
                         >
                           <ChevronDown class="size-3.5" />
                         </Button>
@@ -722,7 +838,7 @@ function handleGroupKindChange(item) {
                           class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                           :aria-label="t('home_editor.delete')"
                           :title="t('home_editor.delete')"
-                          @click="s.removeItem('navigation', i)"
+                          @click="s.removeGlobalNavigation(i)"
                         >
                           <Trash2 class="size-3.5" />
                         </Button>
@@ -759,8 +875,8 @@ function handleGroupKindChange(item) {
                             class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                             @change="handleNavTypeChange(nav)"
                           >
-                            <option value="page">{{ t("home_editor.target_page") }}</option>
                             <option value="preset">{{ t("home_editor.type_preset") }}</option>
+                            <option value="page">{{ t("home_editor.target_page") }}</option>
                             <option value="search">{{ t("home_editor.type_search") }}</option>
                           </select>
                         </div>
@@ -842,32 +958,344 @@ function handleGroupKindChange(item) {
                   </div>
                 </div>
 
-                <!-- Empty Navigation State -->
+                <!-- Empty Global Navigation State -->
                 <div
                   v-else
                   class="flex flex-col items-center justify-center p-7 rounded-2xl border border-dashed border-border bg-muted/10 text-center"
                 >
                   <Compass class="size-7 text-muted-foreground/60 mb-2" />
                   <p class="text-xs font-medium text-foreground">
-                    {{ t("home_editor.empty_nav_title") }}
+                    {{ t("home_editor.empty_global_nav_title") }}
                   </p>
                   <p class="text-[11px] text-muted-foreground mt-1 max-w-sm">
-                    {{ t("home_editor.empty_nav_desc") }}
+                    {{ t("home_editor.empty_global_nav_desc") }}
                   </p>
                   <Button
                     variant="outline"
                     size="sm"
                     class="h-7 text-xs mt-3 gap-1"
-                    @click="handleAddNavigation"
+                    @click="handleAddGlobalNavigation"
                   >
-                    <Plus class="size-3" />{{ t("home_editor.add_nav") }}
+                    <Plus class="size-3" />{{ t("home_editor.add_global_nav") }}
                   </Button>
                 </div>
               </section>
+            </CardContent>
+          </Card>
+        </div>
 
-              <Separator class="my-6" />
+        <!-- ================= RIGHT PANE: 自定义搜索工作台 ================= -->
+        <div v-else-if="s.activePageId.value === '__search_facets__' || s.activePageId.value === '__facet_sets__'" class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
+          <Card class="panel home-workbench">
+            <CardHeader class="p-5 pb-3 border-b border-border/60">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                  <SlidersHorizontal class="size-5 text-primary shrink-0" />
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h2 class="text-lg font-bold tracking-tight">
+                        {{ t("home_editor.custom_search_title") }}
+                      </h2>
+                      <Badge variant="secondary" class="font-mono text-xs">
+                        {{ (s.searchFacets.value || []).length }}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
 
-              <!-- ================= SECTION 2: 内容布局 ================= -->
+                <div class="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-8 gap-1.5 text-xs"
+                    @click="handleAddSearchFacet"
+                  >
+                    <Plus class="size-3.5" />{{ t("home_editor.add_search_facet") }}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent class="p-5 sm:p-6 flex flex-col gap-6">
+              <section class="home-section flex flex-col gap-4">
+                <div class="pb-1">
+                  <p class="text-xs text-muted-foreground">
+                    {{ t("home_editor.custom_search_desc") }}
+                  </p>
+                </div>
+
+                <!-- Empty State -->
+                <div
+                  v-if="!s.searchFacets.value || s.searchFacets.value.length === 0"
+                  class="p-8 rounded-2xl border border-dashed border-border/80 text-center text-xs text-muted-foreground flex flex-col items-center gap-2 bg-muted/10"
+                >
+                  <SlidersHorizontal class="size-8 text-muted-foreground/40 mb-1" />
+                  <span class="font-medium text-foreground">{{ t("home_editor.empty_search_facets_title") }}</span>
+                  <span>{{ t("home_editor.empty_search_facets_desc") }}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-8 text-xs gap-1.5 mt-2"
+                    @click="handleAddSearchFacet"
+                  >
+                    <Plus class="size-3.5" />{{ t("home_editor.add_search_facet") }}
+                  </Button>
+                </div>
+
+                <!-- Search Facet Capsules List -->
+                <div v-else class="flex flex-col gap-3">
+                  <div
+                    v-for="(fItem, fIdx) in s.searchFacets.value"
+                    :key="'sf-' + fIdx"
+                    class="rounded-xl border border-border bg-card shadow-xs overflow-hidden"
+                  >
+                    <!-- Capsule Header Bar -->
+                    <div
+                      class="flex items-center justify-between gap-3 px-3.5 py-2.5 bg-muted/30 cursor-pointer select-none"
+                      @click="toggleExpand(fItem)"
+                    >
+                      <div class="flex items-center gap-2.5 flex-1 min-w-0" @click.stop>
+                        <span class="size-5 rounded text-[11px] font-mono font-medium flex items-center justify-center shrink-0 bg-muted text-muted-foreground">
+                          {{ fIdx + 1 }}
+                        </span>
+                        <Input
+                          v-model="fItem.title"
+                          :placeholder="t('home_editor.facet_item_title_placeholder')"
+                          class="h-7 text-xs bg-background dark:bg-input/30 font-medium max-w-[160px] sm:max-w-[220px]"
+                          @update:model-value="s.homeDirty.value = true"
+                        />
+                        <!-- Badges Summary -->
+                        <div class="flex items-center gap-1.5 flex-wrap shrink-0">
+                          <Badge
+                            v-if="fItem.rating > 0"
+                            variant="outline"
+                            class="text-[10px] px-1 py-0 h-4.5 text-amber-500 border-amber-500/30 font-normal"
+                          >
+                            ★ {{ fItem.rating }}+
+                          </Badge>
+                          <Badge
+                            v-if="fItem.categories && fItem.categories.length > 0"
+                            variant="outline"
+                            class="text-[10px] px-1.5 py-0 h-4.5 text-primary border-primary/30 font-normal"
+                          >
+                            {{ fItem.categories.length === 1 ? fItem.categories[0] : fItem.categories.length + ' ' + t("home_editor.facet_categories") }}
+                          </Badge>
+                          <Badge
+                            v-if="fItem.expunged"
+                            variant="outline"
+                            class="text-[10px] px-1.5 py-0 h-4.5 text-destructive border-destructive/30 font-normal"
+                          >
+                            Expunged
+                          </Badge>
+                          <code
+                            v-if="fItem.query"
+                            class="text-[10px] font-mono bg-muted text-muted-foreground px-1.5 py-0.5 rounded truncate max-w-[140px]"
+                          >
+                            {{ fItem.query }}
+                          </code>
+                        </div>
+                      </div>
+
+                      <div class="flex items-center gap-0.5 shrink-0" @click.stop>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          :disabled="fIdx === 0"
+                          @click="s.moveSearchFacet(fIdx, -1)"
+                        >
+                          <ChevronUp class="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          :disabled="fIdx === s.searchFacets.value.length - 1"
+                          @click="s.moveSearchFacet(fIdx, 1)"
+                        >
+                          <ChevronDown class="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          @click="s.removeSearchFacet(fIdx)"
+                        >
+                          <Trash2 class="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          @click="toggleExpand(fItem)"
+                        >
+                          <ChevronRight
+                            class="size-3.5 text-muted-foreground transition-transform duration-200"
+                            :class="{ 'rotate-90 text-foreground': isExpanded(fItem) }"
+                          />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <!-- Capsule Details (Visual Condition Builder) -->
+                    <div v-if="isExpanded(fItem)" class="p-4 border-t border-border flex flex-col gap-4 text-xs bg-background">
+                      <!-- 1. Categories (10 EH Colored Pills) -->
+                      <div class="flex flex-col gap-2">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="text-xs font-semibold text-foreground">
+                            {{ t("home_editor.facet_categories") }}
+                          </span>
+                          <div class="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              class="text-[11px] text-primary hover:underline cursor-pointer"
+                              @click="selectAllCategories(fItem)"
+                            >
+                              {{ t("home_editor.facet_select_all") }}
+                            </button>
+                            <span class="text-muted-foreground/40">·</span>
+                            <button
+                              type="button"
+                              class="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+                              @click="clearAllCategories(fItem)"
+                            >
+                              {{ t("home_editor.facet_clear_all") }}
+                            </button>
+                          </div>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5">
+                          <button
+                            v-for="cat in EH_CATEGORIES"
+                            :key="cat.name"
+                            type="button"
+                            class="h-6 px-2.5 text-[11px] font-medium rounded-full border transition-all cursor-pointer"
+                            :class="isCatSelected(fItem, cat.name)
+                              ? [cat.bg, cat.text, cat.border, 'shadow-xs font-semibold']
+                              : 'bg-muted/40 border-border/80 text-muted-foreground hover:border-foreground/40'"
+                            @click="s.toggleSearchFacetCategory(fItem, cat.name)"
+                          >
+                            {{ cat.name }}
+                          </button>
+                        </div>
+                      </div>
+
+                      <!-- 2. Rating & Keywords in a Grid -->
+                      <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-1">
+                        <div class="sm:col-span-4 flex flex-col gap-1.5">
+                          <label class="text-xs font-semibold text-foreground">
+                            {{ t("home_editor.facet_rating") }}
+                          </label>
+                          <select
+                            v-model.number="fItem.rating"
+                            class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                            @change="s.homeDirty.value = true"
+                          >
+                            <option :value="0">{{ t("home_editor.facet_rating_none") }}</option>
+                            <option :value="2">{{ t("home_editor.facet_rating_n", { stars: 2 }) }}</option>
+                            <option :value="3">{{ t("home_editor.facet_rating_n", { stars: 3 }) }}</option>
+                            <option :value="4">{{ t("home_editor.facet_rating_n", { stars: 4 }) }}</option>
+                            <option :value="5">{{ t("home_editor.facet_rating_5") }}</option>
+                          </select>
+                        </div>
+
+                        <div class="sm:col-span-8 flex flex-col gap-1.5">
+                          <label class="text-xs font-semibold text-foreground">
+                            {{ t("home_editor.facet_query_label") }}
+                          </label>
+                          <Input
+                            v-model="fItem.query"
+                            :placeholder="t('home_editor.facet_query_placeholder')"
+                            class="h-8 text-xs bg-background dark:bg-input/30 font-mono"
+                            @update:model-value="s.homeDirty.value = true"
+                          />
+                        </div>
+                      </div>
+
+                      <!-- 3. Advanced Options Checkboxes -->
+                      <div class="flex flex-col gap-1.5 pt-1">
+                        <span class="text-xs font-semibold text-foreground">
+                          {{ t("home_editor.facet_options") }}
+                        </span>
+                        <div class="flex flex-wrap gap-x-5 gap-y-2 pt-0.5">
+                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              v-model="fItem.expunged"
+                              class="rounded border-input text-primary focus:ring-primary size-3.5"
+                              @change="s.homeDirty.value = true"
+                            />
+                            <span>{{ t("home_editor.facet_opt_expunged") }}</span>
+                          </label>
+                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              :checked="isFilterDisabled(fItem, 'language')"
+                              class="rounded border-input text-primary focus:ring-primary size-3.5"
+                              @change="s.toggleSearchFacetFilter(fItem, 'language')"
+                            />
+                            <span>{{ t("home_editor.facet_opt_sfl") }}</span>
+                          </label>
+                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              :checked="isFilterDisabled(fItem, 'uploader')"
+                              class="rounded border-input text-primary focus:ring-primary size-3.5"
+                              @change="s.toggleSearchFacetFilter(fItem, 'uploader')"
+                            />
+                            <span>{{ t("home_editor.facet_opt_sfu") }}</span>
+                          </label>
+                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              :checked="isFilterDisabled(fItem, 'tags')"
+                              class="rounded border-input text-primary focus:ring-primary size-3.5"
+                              @change="s.toggleSearchFacetFilter(fItem, 'tags')"
+                            />
+                            <span>{{ t("home_editor.facet_opt_sft") }}</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </CardContent>
+          </Card>
+        </div>
+
+        <!-- ================= RIGHT PANE: 当前页面工作台 ================= -->
+        <div v-else class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
+          <Card class="panel home-workbench">
+            <CardHeader class="p-5 pb-3 border-b border-border/60">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                  <Home v-if="activePage.id === 'home'" class="size-5 text-primary shrink-0" />
+                  <PanelsTopLeft v-else class="size-5 text-primary shrink-0" />
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h2 class="text-lg font-bold tracking-tight">
+                        {{ getPageDisplayTitle(activePage) }}
+                      </h2>
+                      <Badge variant="secondary" class="font-mono text-xs">
+                        {{ activePage.id === 'home' ? '/' : '/page/' + activePage.id }}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <Button
+                    v-if="activePage.id !== 'home'"
+                    variant="ghost"
+                    size="sm"
+                    class="h-8 gap-1 text-xs"
+                    @click="openEditPageModal(activePage)"
+                  >
+                    <Pencil class="size-3.5" />{{ t("home_editor.edit_page_meta") }}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent class="p-5 sm:p-6 flex flex-col gap-6">
+              <!-- ================= SECTION: 内容布局 ================= -->
               <section class="home-section flex flex-col gap-4">
                 <!-- Section Header & Segmented Mode Switcher -->
                 <div
@@ -1237,8 +1665,8 @@ function handleGroupKindChange(item) {
                                     class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                                     @change="handleNavTypeChange(subItem)"
                                   >
-                                    <option value="page">{{ t("home_editor.target_page") }}</option>
                                     <option value="preset">{{ t("home_editor.type_preset") }}</option>
+                                    <option value="page">{{ t("home_editor.target_page") }}</option>
                                     <option value="search">{{ t("home_editor.type_search") }}</option>
                                   </select>
                                 </div>
@@ -1600,6 +2028,35 @@ function handleGroupKindChange(item) {
                       </div>
                     </div>
 
+                    <!-- Unified Custom Search Notice -->
+                    <div
+                      v-if="s.layout.value.publication"
+                      class="flex flex-col gap-3 pt-4 border-t border-border/70"
+                    >
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-border/80 bg-muted/20">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                          <SlidersHorizontal class="size-4 text-primary shrink-0" />
+                          <div class="flex flex-col gap-0.5 min-w-0">
+                            <span class="text-xs font-semibold text-foreground">
+                              {{ t("home_editor.custom_search_title") }}
+                            </span>
+                            <span class="text-[11px] text-muted-foreground">
+                              {{ t("home_editor.page_search_facets_hint") }}
+                            </span>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          class="h-7 text-xs gap-1.5 shrink-0 self-start sm:self-auto"
+                          @click="s.selectActivePage('__search_facets__')"
+                        >
+                          <Pencil class="size-3" />
+                          <span>{{ t("home_editor.goto_custom_search") }}</span>
+                        </Button>
+                      </div>
+                    </div>
+
                     <!-- Pure Navigation Fallback Card -->
                     <div
                       v-else
@@ -1621,114 +2078,6 @@ function handleGroupKindChange(item) {
                       >
                         <Plus class="size-3.5" />{{ t("home_editor.add_top_pub_btn") }}
                       </Button>
-                    </div>
-                  </div>
-
-                  <!-- Facets Section -->
-                  <div class="flex flex-col gap-2 pt-2">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="flex items-center gap-2">
-                        <span class="text-xs font-medium text-foreground"
-                          >{{ t("home_editor.facets_title") }}</span
-                        >
-                        <Badge
-                          variant="secondary"
-                          class="h-5 px-1.5 text-[11px] font-mono font-normal"
-                        >
-                          {{ s.layout.value.facets.length }}
-                        </Badge>
-                        <span
-                          class="text-[11px] text-muted-foreground hidden sm:inline"
-                        >
-                          {{
-                            s.layout.value.publication
-                              ? t("home_editor.facets_follow_pub")
-                              : t("home_editor.facets_require_pub")
-                          }}
-                        </span>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        class="h-8 gap-1.5 text-xs"
-                        :disabled="!s.canAddFacet()"
-                        @click="handleAddFacet"
-                      >
-                        <Plus class="size-3.5" />{{ t("home_editor.add_facet") }}
-                      </Button>
-                    </div>
-
-                    <!-- Facets List -->
-                    <div
-                      v-if="s.layout.value.facets.length > 0"
-                      class="flex flex-col gap-2"
-                    >
-                      <div
-                        v-for="(facet, i) in s.layout.value.facets"
-                        :key="'facet-' + i"
-                        class="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border bg-card shadow-xs text-xs"
-                      >
-                        <div class="flex items-center gap-2.5 flex-1 min-w-0">
-                          <span
-                            class="size-5 rounded text-[11px] font-mono font-medium flex items-center justify-center shrink-0 bg-muted text-muted-foreground"
-                          >
-                            {{ i + 1 }}
-                          </span>
-                          <Input
-                            v-model="facet.title"
-                            :placeholder="t('home_editor.facet_title_placeholder')"
-                            class="h-8 text-xs bg-background dark:bg-input/30 max-w-xs"
-                            @update:model-value="s.homeDirty.value = true"
-                          />
-                          <span
-                            class="text-[11px] text-muted-foreground hidden md:inline truncate"
-                          >
-                            {{ t("home_editor.follow_pub") }}{{
-                              s.layout.value.publication?.query || t("home_editor.not_selected")
-                            }}
-                          </span>
-                        </div>
-
-                        <div class="flex items-center gap-0.5 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            :disabled="i === 0"
-                            :aria-label="t('home_editor.reorder_up')"
-                            :title="t('home_editor.reorder_up')"
-                            @click="s.moveItem('facets', i, -1)"
-                          >
-                            <ChevronUp class="size-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            :disabled="i === s.layout.value.facets.length - 1"
-                            :aria-label="t('home_editor.reorder_down')"
-                            :title="t('home_editor.reorder_down')"
-                            @click="s.moveItem('facets', i, 1)"
-                          >
-                            <ChevronDown class="size-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                            :aria-label="t('home_editor.delete')"
-                            :title="t('home_editor.delete')"
-                            @click="s.removeItem('facets', i)"
-                          >
-                            <Trash2 class="size-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div
-                      v-else-if="s.layout.value.publication"
-                      class="p-4 rounded-xl border border-dashed border-border/70 text-center text-[11px] text-muted-foreground"
-                    >
-                      {{ t("home_editor.empty_facets_desc") }}
                     </div>
                   </div>
                 </div>

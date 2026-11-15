@@ -94,7 +94,7 @@ func (s *Server) favoriteFacetNames(ctx context.Context, current map[int]string)
 }
 
 func favoriteAtomFacets(builder feed.Builder, route, selected string, names map[int]string) []feed.AtomFacet {
-	facets := []feed.AtomFacet{{Title: "All", Href: builder.Href(favoriteFacetPath(route, "")), Group: "Favorite category", Active: selected == ""}}
+	facets := []feed.AtomFacet{}
 	for id := 0; id < 10; id++ {
 		value := strconv.Itoa(id)
 		facets = append(facets, feed.AtomFacet{Title: favoriteFacetTitle(names, id), Href: builder.Href(favoriteFacetPath(route, value)), Group: "Favorite category", Active: selected == value})
@@ -108,13 +108,9 @@ func favoriteJSONFacets(builder feed.Builder, route, selected string, names map[
 
 func favoriteCategoryLinks(builder feed.Builder, route, selected string, names map[int]string) []map[string]any {
 	links := []map[string]any{}
-	for id := -1; id < 10; id++ {
-		favcat := ""
-		title := "All"
-		if id >= 0 {
-			favcat = strconv.Itoa(id)
-			title = favoriteFacetTitle(names, id)
-		}
+	for id := 0; id < 10; id++ {
+		favcat := strconv.Itoa(id)
+		title := favoriteFacetTitle(names, id)
 		link := map[string]any{"href": builder.Href(favoriteFacetPath(route, favcat)), "title": title}
 		if selected == favcat {
 			link["rel"] = "self"
@@ -307,6 +303,11 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	for _, k := range []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"} {
+		if v := q.Get(k); v != "" {
+			extra.Set(k, v)
+		}
+	}
 	var info eh.GalleryPageInfo
 	var e error
 	ctx := r.Context()
@@ -382,6 +383,11 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		if category != "" {
 			params = append(params, "category="+quote(category))
 		}
+		for _, k := range []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"} {
+			if v := q.Get(k); v != "" {
+				params = append(params, k+"="+quote(v))
+			}
+		}
 		if len(params) > 0 {
 			nextHref += "&" + strings.Join(params, "&")
 		}
@@ -394,8 +400,17 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		}
 		names := s.favoriteFacetNames(ctx, info.FavcatMap)
 		facets = favoriteJSONFacets(s.builder(), "/opds/v2.0/gallery", selected, names)
-	} else if query != "popular" && query != "watched" {
-		facets = s.builder().CategoryFacets()
+	} else if query != "popular" {
+		cfg, _ := home.Load(s.Settings.HomeConfigPath)
+		searchFacets := cfg.GetSearchFacets()
+		if len(searchFacets) > 0 {
+			facets = []map[string]any{
+				{
+					"metadata": map[string]string{"title": "Filter"},
+					"links":    s.customFacetLinks(searchFacets, "search", query, r.URL),
+				},
+			}
+		}
 	}
 	self := "/opds/v2.0/gallery"
 	if query == "favorites" || strings.HasPrefix(query, "favorites:") {
@@ -417,6 +432,15 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if category != "" {
 		self += "?category=" + quote(category)
+	}
+	for _, k := range []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"} {
+		if v := q.Get(k); v != "" {
+			if strings.Contains(self, "?") {
+				self += "&" + k + "=" + quote(v)
+			} else {
+				self += "?" + k + "=" + quote(v)
+			}
+		}
 	}
 	doc := s.builder().Acquisition(title, "urn:ehentai:gallery-list:"+firstNonEmpty(query, "latest"), self, pubs, nextHref, facets)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
@@ -447,17 +471,8 @@ func (s *Server) toplist20(w http.ResponseWriter, r *http.Request) {
 	if info.NextPage != nil {
 		next = s.builder().Href(fmt.Sprintf("/opds/v2.0/toplist?period=%s&page=%d", period, *info.NextPage))
 	}
-	links := []map[string]any{}
-	for p, label := range periods {
-		link := map[string]any{"href": s.builder().Href("/opds/v2.0/toplist?period=" + p), "title": label}
-		if p == period {
-			link["active"] = true
-		}
-		links = append(links, link)
-	}
-	facets := []map[string]any{{"metadata": map[string]string{"title": "Period"}, "links": links}}
 	title := "E-Hentai: Toplist " + periods[period]
-	doc := s.builder().Acquisition(title, "urn:ehentai:toplist:"+period, "/opds/v2.0/toplist?period="+period, pubs, next, facets)
+	doc := s.builder().Acquisition(title, "urn:ehentai:toplist:"+period, "/opds/v2.0/toplist?period="+period, pubs, next, nil)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
 func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
@@ -488,7 +503,7 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 		}
 		next = s.builder().Href(nextURL)
 	}
-	facets := s.builder().CategoryFacets()
+	facets := s.builder().CategoryFacets("/opds/v2.0/archives", "", category)
 	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, facets)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
@@ -507,7 +522,7 @@ func (s *Server) pageV20(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"detail": "page not found"})
 		return
 	}
-	s.renderPageV20(w, r, page, false)
+	s.renderPageV20(w, r, cfg, page, false)
 }
 
 func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
@@ -515,10 +530,10 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 	if e != nil && s.Logger != nil {
 		s.Logger.Printf("home config load failed, using defaults: %v", e)
 	}
-	s.renderPageV20(w, r, cfg.HomePage(), true)
+	s.renderPageV20(w, r, cfg, cfg.HomePage(), true)
 }
 
-func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, p home.Page, isRoot bool) {
+func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.Config, p home.Page, isRoot bool) {
 	sections := []home.Section{}
 	for _, sec := range p.Sections {
 		if sec.Kind == "navigation" && sec.Group && len(sec.Items) > 0 {
@@ -534,6 +549,22 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, p home.Pa
 		sections = append(sections, sec)
 	}
 	rootNav := []map[string]any{}
+	for _, sec := range cfg.GlobalNavigation() {
+		if home.AuthRequired(sec) && !s.Settings.HasIPB() {
+			continue
+		}
+		if sec.Type == "preset" && sec.Query == "archives" && s.Store.ReadyCount() == 0 {
+			continue
+		}
+		title := firstNonEmpty(sec.Title, sec.Query)
+		href := s.builder().Href(home.BuildHref(sec.Type, sec.Query))
+		rootNav = append(rootNav, map[string]any{
+			"title": title,
+			"href":  href,
+			"rel":   "subsection",
+			"type":  feed.MIMEOPDSAcq,
+		})
+	}
 	outGroups := []map[string]any{}
 	previews, previewTimedOut := s.fetchHomePreviews(r.Context(), sections)
 	rootPubs := []map[string]any{}
@@ -573,9 +604,6 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, p home.Pa
 						"navigation": navLinks,
 					})
 				}
-			} else {
-				link := map[string]any{"title": title, "href": href, "rel": "subsection", "type": feed.MIMEOPDSAcq}
-				rootNav = append(rootNav, link)
 			}
 			continue
 		}
@@ -618,15 +646,68 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, p home.Pa
 
 	rootFacetGroups := []map[string]any{}
 	for _, sec := range sections {
-		if sec.Kind != "facets" || len(rootPubs) == 0 || rootSource != (homePreviewKey{sec.Type, sec.Query}) {
+		if sec.Kind != "facets" {
 			continue
 		}
-		links := s.homeFacetLinks(sec, previews[rootSource].info)
-		if len(links) >= 2 {
-			rootFacetGroups = append(rootFacetGroups, map[string]any{
-				"metadata": map[string]string{"title": firstNonEmpty(sec.Title, sec.Query)},
-				"links":    links,
-			})
+		if sec.FacetSet != "" {
+			fs := cfg.GetFacetSet(sec.FacetSet)
+			if fs != nil && len(fs.Items) > 0 {
+				links := s.customFacetLinks(fs.Items, rootSource.typeName, rootSource.query, r.URL)
+				if len(links) > 0 {
+					rootFacetGroups = append(rootFacetGroups, map[string]any{
+						"metadata": map[string]string{"title": firstNonEmpty(sec.Title, firstNonEmpty(fs.Title, "Filter"))},
+						"links":    links,
+					})
+				}
+			}
+			continue
+		}
+		if len(sec.Items) > 0 {
+			links := s.customFacetLinks(sec.Items, rootSource.typeName, rootSource.query, r.URL)
+			if len(links) > 0 {
+				rootFacetGroups = append(rootFacetGroups, map[string]any{
+					"metadata": map[string]string{"title": firstNonEmpty(sec.Title, "Filter")},
+					"links":    links,
+				})
+			}
+			continue
+		}
+		if len(rootPubs) == 0 || rootSource != (homePreviewKey{sec.Type, sec.Query}) {
+			continue
+		}
+		searchFacets := cfg.GetSearchFacets()
+		if len(searchFacets) > 0 {
+			links := s.customFacetLinks(searchFacets, rootSource.typeName, rootSource.query, r.URL)
+			if len(links) > 0 {
+				rootFacetGroups = append(rootFacetGroups, map[string]any{
+					"metadata": map[string]string{"title": firstNonEmpty(sec.Title, "Filter")},
+					"links":    links,
+				})
+			}
+		}
+	}
+	if len(rootFacetGroups) == 0 && len(rootPubs) > 0 {
+		kind, _, _ := home.ResolvePreset(rootSource.query)
+		if rootSource.typeName == "preset" && kind == "favorites" {
+			virtualSec := home.Section{Type: rootSource.typeName, Query: rootSource.query}
+			links := s.homeFacetLinks(virtualSec, previews[rootSource].info)
+			if len(links) >= 1 {
+				rootFacetGroups = append(rootFacetGroups, map[string]any{
+					"metadata": map[string]string{"title": "Folders"},
+					"links":    links,
+				})
+			}
+		} else if rootSource.typeName != "preset" || kind != "toplist" {
+			searchFacets := cfg.GetSearchFacets()
+			if len(searchFacets) > 0 {
+				links := s.customFacetLinks(searchFacets, rootSource.typeName, rootSource.query, r.URL)
+				if len(links) > 0 {
+					rootFacetGroups = append(rootFacetGroups, map[string]any{
+						"metadata": map[string]string{"title": "Filter"},
+						"links":    links,
+					})
+				}
+			}
 		}
 	}
 
@@ -668,26 +749,111 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, p home.Pa
 	}
 	writeBytes(w, 200, feed.MIMEOPDSNav, map[string]string{"Cache-Control": cacheControl}, s.builder().JSON(doc))
 }
+func (s *Server) customFacetLinks(items []home.NavigationItem, baseType, baseQuery string, reqURL *url.URL) []map[string]any {
+	var links []map[string]any
+	targetRoute := "/opds/v2.0/gallery"
+	if baseType == "preset" && (baseQuery == "latest" || baseQuery == "") {
+		baseQuery = ""
+	} else if baseQuery == "watched" {
+		baseQuery = "watched"
+	}
+
+	var activeIndex int = -1
+	for idx, it := range items {
+		combinedQuery := baseQuery
+		if it.Query != "" {
+			if combinedQuery != "" {
+				combinedQuery += " " + it.Query
+			} else {
+				combinedQuery = it.Query
+			}
+		}
+		params := url.Values{}
+		if combinedQuery != "" {
+			params.Set("query", combinedQuery)
+		}
+		if len(it.Categories) > 0 {
+			mask := eh.CategoryMask(it.Categories, s.Settings)
+			if mask > 0 {
+				params.Set("f_cats", strconv.Itoa(mask))
+			}
+		}
+		if it.Rating > 0 {
+			params.Set("advsearch", "1")
+			params.Set("f_sr", "on")
+			params.Set("f_srdd", strconv.Itoa(it.Rating))
+		}
+		if it.Expunged {
+			params.Set("advsearch", "1")
+			params.Set("f_sh", "on")
+		}
+		for _, df := range it.DisableFilters {
+			switch strings.ToLower(df) {
+			case "language":
+				params.Set("advsearch", "1")
+				params.Set("f_sfl", "on")
+			case "uploader":
+				params.Set("advsearch", "1")
+				params.Set("f_sfu", "on")
+			case "tags":
+				params.Set("advsearch", "1")
+				params.Set("f_sft", "on")
+			}
+		}
+
+		u := targetRoute
+		if len(params) > 0 {
+			u += "?" + params.Encode()
+		}
+		linkHref := s.builder().Href(u)
+		link := map[string]any{
+			"title": firstNonEmpty(it.Title, "All"),
+			"href":  linkHref,
+			"type":  feed.MIMEOPDSAcq,
+		}
+		if reqURL != nil && isParamsMatching(reqURL.Query(), params) {
+			activeIndex = idx
+		}
+		links = append(links, link)
+	}
+
+	if activeIndex >= 0 && activeIndex < len(links) {
+		links[activeIndex]["rel"] = "self"
+	}
+
+	return links
+}
+
+func isParamsMatching(reqQuery, targetParams url.Values) bool {
+	keys := []string{"query", "f_cats", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft"}
+	for _, k := range keys {
+		if reqQuery.Get(k) != targetParams.Get(k) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) homeFacetLinks(sec home.Section, info eh.GalleryPageInfo) []map[string]any {
 	builder := s.builder()
 	const galleryRoute = "/opds/v2.0/gallery"
 	if sec.Type == "search" || sec.Query == "latest" || sec.Query == "watched" || sec.Query == "archives" {
-		base := home.BuildHref(sec.Type, sec.Query)
 		targetRoute := galleryRoute
+		query := ""
 		if sec.Query == "archives" {
 			targetRoute = "/opds/v2.0/archives"
+		} else if sec.Type == "search" {
+			query = sec.Query
+		} else if sec.Query == "watched" {
+			query = "watched"
 		}
-		links := []map[string]any{builder.Link("self", builder.Href(base), feed.MIMEOPDSAcq, "All", nil)}
-		for _, category := range s.Settings.Facets {
-			params := url.Values{"category": {category.Name}}
-			if sec.Type == "search" {
-				params.Set("query", sec.Query)
-			} else if sec.Query == "watched" {
-				params.Set("query", "watched")
+		groups := builder.CategoryFacets(targetRoute, query, "")
+		if len(groups) > 0 {
+			if links, ok := groups[0]["links"].([]map[string]any); ok {
+				return links
 			}
-			links = append(links, map[string]any{"href": builder.Href(targetRoute + "?" + params.Encode()), "type": feed.MIMEOPDSAcq, "title": category.Name})
 		}
-		return links
+		return nil
 	}
 
 	kind, selected, _ := home.ResolvePreset(sec.Query)

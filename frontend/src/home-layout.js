@@ -1,7 +1,7 @@
 export function isKnownPreset(query) {
   if (!query) return false;
   return [
-    "latest", "popular", "watched", "favorites", "archives",
+    "latest", "popular", "watched", "favorites", "archives", "toplists",
     "toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime",
   ].includes(query) || /^favorites:\d+$/.test(query);
 }
@@ -10,10 +10,21 @@ export function splitHomeSections(sections = []) {
   return {
     navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group).map((x) => ({
       ...x,
-      type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : "page"),
+      type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : "preset")),
     }))),
     publication: structuredClone(sections.find((x) => x.kind === "publication" && !x.group) || null),
-    facets: structuredClone(sections.filter((x) => x.kind === "facets" && !x.group).map(({ title }) => ({ title }))),
+    facets: structuredClone(sections.filter((x) => x.kind === "facets" && !x.group).map((f) => ({
+      facet_set: f.facet_set || "",
+      title: f.title || "",
+      items: Array.isArray(f.items) ? f.items.map((it) => ({
+        title: it.title || "",
+        query: it.query || "",
+        categories: Array.isArray(it.categories) ? it.categories : [],
+        rating: Number(it.rating) || 0,
+        expunged: Boolean(it.expunged),
+        disable_filters: Array.isArray(it.disable_filters) ? it.disable_filters : [],
+      })) : [],
+    }))),
     groups: structuredClone(sections.filter((x) => x.group).map((x) => {
       if (x.kind === "navigation") {
         let items = Array.isArray(x.items) ? structuredClone(x.items) : [];
@@ -26,7 +37,7 @@ export function splitHomeSections(sections = []) {
         }
         items = items.map((it) => ({
           ...it,
-          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : "page"),
+          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : "preset")),
         }));
         return {
           ...x,
@@ -65,76 +76,44 @@ export function isValidSlug(slug) {
   return /^[a-zA-Z0-9_-]+$/.test(slug);
 }
 
-export function createDefaultHomePages() {
-  const topNav = [
-    { title: "Watched", type: "page", query: "watched" },
-    { title: "Favorites", type: "page", query: "favorites" },
-    { title: "Toplists", type: "page", query: "toplists" },
-    { title: "Archives", type: "page", query: "archives" },
+export function createDefaultGlobalNavigation() {
+  return [
+    { kind: "navigation", group: false, title: "Watched", type: "preset", query: "watched" },
+    { kind: "navigation", group: false, title: "Favorites", type: "preset", query: "favorites" },
+    { kind: "navigation", group: false, title: "Toplists", type: "preset", query: "toplists" },
+    { kind: "navigation", group: false, title: "Archives", type: "preset", query: "archives" },
   ];
+}
 
+export function createDefaultSearchFacets() {
+  return [
+    { title: "Doujinshi", query: "", categories: ["Doujinshi"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Manga", query: "", categories: ["Manga"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Artist CG", query: "", categories: ["Artist CG"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Game CG", query: "", categories: ["Game CG"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Western", query: "", categories: ["Western"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Non-H", query: "", categories: ["Non-H"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Image Set", query: "", categories: ["Image Set"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Cosplay", query: "", categories: ["Cosplay"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Asian Porn", query: "", categories: ["Asian Porn"], rating: 0, expunged: false, disable_filters: [] },
+    { title: "Misc", query: "", categories: ["Misc"], rating: 0, expunged: false, disable_filters: [] },
+  ];
+}
+
+export function createDefaultHomePages() {
   return [
     {
       id: "home",
       title: "Home",
       mode: "groups",
       layout: {
-        navigation: structuredClone(topNav),
+        navigation: [],
         publication: null,
         facets: [],
         groups: [
           { kind: "publication", group: true, title: "Popular", type: "preset", query: "popular", count: 20 },
           { kind: "publication", group: true, title: "Latest", type: "preset", query: "latest", count: 20 },
         ],
-      },
-    },
-    {
-      id: "watched",
-      title: "Watched",
-      mode: "publications",
-      layout: {
-        navigation: structuredClone(topNav),
-        publication: { kind: "publication", group: false, title: "Watched", type: "preset", query: "watched", count: 20 },
-        facets: [{ title: "Categories" }],
-        groups: [],
-      },
-    },
-    {
-      id: "favorites",
-      title: "Favorites",
-      mode: "publications",
-      layout: {
-        navigation: structuredClone(topNav),
-        publication: { kind: "publication", group: false, title: "Favorites", type: "preset", query: "favorites", count: 20 },
-        facets: [{ title: "Folders" }],
-        groups: [],
-      },
-    },
-    {
-      id: "toplists",
-      title: "Toplists",
-      mode: "groups",
-      layout: {
-        navigation: structuredClone(topNav),
-        publication: null,
-        facets: [],
-        groups: [
-          { kind: "publication", group: true, title: "All Time", type: "preset", query: "toplist:alltime", count: 20 },
-          { kind: "publication", group: true, title: "Past Year", type: "preset", query: "toplist:year", count: 20 },
-          { kind: "publication", group: true, title: "Past Month", type: "preset", query: "toplist:month", count: 20 },
-          { kind: "publication", group: true, title: "Yesterday", type: "preset", query: "toplist:yesterday", count: 20 },
-        ],
-      },
-    },
-    {
-      id: "archives",
-      title: "Archives",
-      mode: "publications",
-      layout: {
-        navigation: structuredClone(topNav),
-        publication: { kind: "publication", group: false, title: "Archives", type: "preset", query: "archives", count: 20 },
-        facets: [{ title: "Categories" }],
-        groups: [],
       },
     },
   ];
@@ -164,8 +143,8 @@ export function serializeHomeLayout(layout, mode) {
     kind: "navigation",
     group: false,
     count: null,
-    type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : "page"),
-    query: x.query || (x.type === "preset" ? "latest" : x.type === "search" ? "" : "home"),
+    type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : "preset")),
+    query: x.query || (x.type === "preset" ? "latest" : x.type === "search" ? "" : "latest"),
   }));
   let content = [];
   if (normalizedMode === "groups") {
@@ -173,10 +152,10 @@ export function serializeHomeLayout(layout, mode) {
       if (x.kind === "navigation") {
         const items = (x.items || []).map((it) => ({
           title: it.title || "",
-          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : "page"),
-          query: it.query || (it.type === "preset" ? "latest" : it.type === "search" ? "" : "home"),
+          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : "preset")),
+          query: it.query || (it.type === "preset" ? "latest" : it.type === "search" ? "" : "latest"),
         }));
-        const first = items[0] || { type: "page", query: "home" };
+        const first = items[0] || { type: "preset", query: "latest" };
         return {
           kind: "navigation",
           group: true,
@@ -196,7 +175,29 @@ export function serializeHomeLayout(layout, mode) {
   } else if (normalizedMode === "publications") {
     if (layout.publication) {
       content.push({ ...layout.publication, kind: "publication", group: false, count: layout.publication.count == null || layout.publication.count === "" ? null : Number(layout.publication.count) });
-      for (const facet of (layout.facets || [])) content.push({ kind: "facets", group: false, title: facet.title, type: layout.publication.type, query: layout.publication.query, count: null });
+    }
+    if (Array.isArray(layout.facets) && layout.facets.length > 0) {
+      for (const f of layout.facets) {
+        const sec = {
+          kind: "facets",
+          title: f.title || "",
+          group: false,
+        };
+        if (f.facet_set) {
+          sec.facet_set = f.facet_set;
+        }
+        if (Array.isArray(f.items) && f.items.length > 0) {
+          sec.items = f.items.map((it) => ({
+            title: it.title || "",
+            query: it.query || "",
+            categories: Array.isArray(it.categories) ? it.categories : [],
+            rating: Number(it.rating) || 0,
+            expunged: Boolean(it.expunged),
+            disable_filters: Array.isArray(it.disable_filters) ? it.disable_filters : [],
+          }));
+        }
+        content.push(sec);
+      }
     }
   }
   return [...navigation, ...content];
