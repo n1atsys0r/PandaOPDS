@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/home-layout.test.js src/i18n.test.js src/progression-helper.test.js",
+    "test": "node --test src/home-layout.test.js src/i18n.test.js src/progression-helper.test.js src/reader-swipe.test.js src/reader-zoom.test.js src/reader-spreads.test.js src/reader-prefetch.test.js",
     "test:home-layout": "node --test src/home-layout.test.js",
     "test:i18n": "node --test src/i18n.test.js",
     "format": "prettier --write src"
@@ -15,7 +15,6 @@
     "@lucide/vue": "^1.71.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vueuse/core": "^15.0.0",
-    "@yui540/comimi": "^0.26.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
     "reka-ui": "^2.11.0",

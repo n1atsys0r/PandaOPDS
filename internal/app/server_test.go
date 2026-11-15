@@ -272,7 +272,7 @@ func TestWebUIArchiveBundle(t *testing.T) {
 		"关闭阅读器",
 		"条漫",
 		"翻页",
-		"comimi-root",
+		"reader-pager",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected bundled web UI to contain %q", want)

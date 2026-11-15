@@ -484,6 +484,10 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 	}
 	sections := []home.Section{}
 	for _, sec := range cfg.Sections {
+		if sec.Kind == "navigation" && sec.Group && len(sec.Items) > 0 {
+			sections = append(sections, sec)
+			continue
+		}
 		if home.AuthRequired(sec) && !s.Settings.HasIPB() {
 			continue
 		}
@@ -501,10 +505,39 @@ func (s *Server) rootV20(w http.ResponseWriter, r *http.Request) {
 		title := firstNonEmpty(sec.Title, sec.Query)
 		href := s.builder().Href(home.BuildHref(sec.Type, sec.Query))
 		if sec.Kind == "navigation" {
-			link := map[string]any{"title": title, "href": href, "rel": "subsection", "type": feed.MIMEOPDSAcq}
 			if sec.Group {
-				outGroups = append(outGroups, map[string]any{"metadata": map[string]any{"title": title, "modified": isoNow()}, "navigation": []map[string]any{link}})
+				navLinks := []map[string]any{}
+				items := sec.Items
+				if len(items) == 0 && (sec.Type != "" || sec.Query != "") {
+					items = []home.NavigationItem{{Title: sec.Title, Type: sec.Type, Query: sec.Query}}
+				}
+				for _, it := range items {
+					if home.AuthRequired(home.Section{Type: it.Type, Query: it.Query}) && !s.Settings.HasIPB() {
+						continue
+					}
+					if it.Type == "preset" && it.Query == "archives" && s.Store.ReadyCount() == 0 {
+						continue
+					}
+					itTitle := firstNonEmpty(it.Title, it.Query)
+					itHref := s.builder().Href(home.BuildHref(it.Type, it.Query))
+					navLinks = append(navLinks, map[string]any{
+						"title": itTitle,
+						"href":  itHref,
+						"rel":   "subsection",
+						"type":  feed.MIMEOPDSAcq,
+					})
+				}
+				if len(navLinks) > 0 {
+					outGroups = append(outGroups, map[string]any{
+						"metadata": map[string]any{
+							"title":    firstNonEmpty(sec.Title, "Navigation"),
+							"modified": isoNow(),
+						},
+						"navigation": navLinks,
+					})
+				}
 			} else {
+				link := map[string]any{"title": title, "href": href, "rel": "subsection", "type": feed.MIMEOPDSAcq}
 				rootNav = append(rootNav, link)
 			}
 			continue

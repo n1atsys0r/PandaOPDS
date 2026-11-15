@@ -341,7 +341,15 @@ func (s *Server) homeEditShapeFromSnapshot(exists bool, snapshot []byte) map[str
 		if v.Count != nil {
 			count = *v.Count
 		}
-		sections = append(sections, map[string]any{"group": v.Group, "kind": v.Kind, "title": v.Title, "type": v.Type, "query": v.Query, "count": count})
+		item := map[string]any{"group": v.Group, "kind": v.Kind, "title": v.Title, "type": v.Type, "query": v.Query, "count": count}
+		if len(v.Items) > 0 {
+			items := make([]map[string]any, len(v.Items))
+			for i, it := range v.Items {
+				items[i] = map[string]any{"title": it.Title, "type": it.Type, "query": it.Query}
+			}
+			item["items"] = items
+		}
+		sections = append(sections, item)
 	}
 	out := map[string]any{"path": s.Settings.HomeConfigPath, "using_file": exists}
 	if parseErr == nil { out["sections"] = sections }

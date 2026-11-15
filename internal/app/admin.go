@@ -74,7 +74,25 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = sec.Query
 		}
-		sections = append(sections, map[string]any{"kind": sec.Kind, "title": title, "type": sec.Type, "query": sec.Query, "count": count, "group": sec.Group, "href": home.BuildHref(sec.Type, sec.Query), "auth_required": home.AuthRequired(sec)})
+		secMap := map[string]any{"kind": sec.Kind, "title": title, "type": sec.Type, "query": sec.Query, "count": count, "group": sec.Group, "href": home.BuildHref(sec.Type, sec.Query), "auth_required": home.AuthRequired(sec)}
+		if len(sec.Items) > 0 {
+			items := make([]map[string]any, len(sec.Items))
+			for i, it := range sec.Items {
+				itTitle := it.Title
+				if itTitle == "" {
+					itTitle = it.Query
+				}
+				items[i] = map[string]any{
+					"title":         itTitle,
+					"type":          it.Type,
+					"query":         it.Query,
+					"href":          home.BuildHref(it.Type, it.Query),
+					"auth_required": home.AuthRequired(home.Section{Type: it.Type, Query: it.Query}),
+				}
+			}
+			secMap["items"] = items
+		}
+		sections = append(sections, secMap)
 	}
 	writeJSON(w, 200, map[string]any{"path": s.Settings.HomeConfigPath, "using_file": using, "error": err, "sections": sections})
 }

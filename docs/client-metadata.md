@@ -27,7 +27,7 @@
 | `kind` | `group = false`（默认） | `group = true` |
 |---|---|---|
 | `publication` | 顶层 `publications[]`，最多一个来源 | 独立的 `groups[]` 项，内含一个 `publications[]` 集合 |
-| `navigation` | 顶层 `navigation[]` 中的一个链接 | 独立的 `groups[]` 项，内含一个 `navigation[]` 集合 |
+| `navigation` | 顶层 `navigation[]` 中的一个链接 | 独立的 `groups[]` 项，内含一个 `navigation[]` 集合（可在 items 中配置多个共享组标题的子导航） |
 | `facets` | 顶层 `facets[]` 中的一套筛选 | 无效配置 |
 
 ### 2.1 栏目与分组

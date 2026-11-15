@@ -186,6 +186,27 @@ function handleTypeChange(item) {
   }
   s.homeDirty.value = true;
 }
+
+function handleGroupKindChange(item) {
+  if (item.kind === "navigation") {
+    if (!Array.isArray(item.items) || item.items.length === 0) {
+      item.items = [
+        {
+          title: item.title || "",
+          type: item.type || "preset",
+          query: item.query || "latest",
+        },
+      ];
+    }
+  } else if (item.kind === "publication") {
+    if (!item.query && item.items && item.items.length > 0) {
+      item.type = item.items[0].type || "preset";
+      item.query = item.items[0].query || "latest";
+    }
+    if (item.count == null) item.count = 10;
+  }
+  s.homeDirty.value = true;
+}
 </script>
 
 <template>
@@ -652,7 +673,7 @@ function handleTypeChange(item) {
                       <span
                         class="font-medium text-sm text-foreground truncate max-w-[180px] sm:max-w-[260px]"
                       >
-                        {{ item.title || item.query || t("home_editor.unnamed_group") }}
+                        {{ item.title || (item.kind === 'navigation' ? t("home_editor.unnamed_nav_group") : (item.query || t("home_editor.unnamed_group"))) }}
                       </span>
                       <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
                         <Badge
@@ -665,23 +686,38 @@ function handleTypeChange(item) {
                         >
                           {{ item.kind === "publication" ? t("home_editor.kind_publication") : t("home_editor.kind_navigation") }}
                         </Badge>
-                        <Badge
-                          variant="outline"
-                          class="text-[10px] px-1.5 py-0 h-4.5 font-normal text-muted-foreground border-border/80"
-                        >
-                          {{ item.type === "search" ? t("home_editor.type_search") : t("home_editor.type_preset") }}
-                        </Badge>
-                        <code
-                          class="text-[11px] font-mono bg-muted/80 text-muted-foreground px-1.5 py-0.5 rounded truncate max-w-[140px] sm:max-w-[200px]"
-                        >
-                          {{ item.query || t("home_editor.not_set") }}
-                        </code>
-                        <span
-                          v-if="item.kind === 'publication'"
-                          class="text-[11px] text-muted-foreground/80 font-normal hidden sm:inline"
-                        >
-                          · {{ countLabel(item) }}
-                        </span>
+                        <template v-if="item.kind === 'publication'">
+                          <Badge
+                            variant="outline"
+                            class="text-[10px] px-1.5 py-0 h-4.5 font-normal text-muted-foreground border-border/80"
+                          >
+                            {{ item.type === "search" ? t("home_editor.type_search") : t("home_editor.type_preset") }}
+                          </Badge>
+                          <code
+                            class="text-[11px] font-mono bg-muted/80 text-muted-foreground px-1.5 py-0.5 rounded truncate max-w-[140px] sm:max-w-[200px]"
+                          >
+                            {{ item.query || t("home_editor.not_set") }}
+                          </code>
+                          <span
+                            class="text-[11px] text-muted-foreground/80 font-normal hidden sm:inline"
+                          >
+                            · {{ countLabel(item) }}
+                          </span>
+                        </template>
+                        <template v-else>
+                          <Badge
+                            variant="outline"
+                            class="text-[10px] px-1.5 py-0 h-4.5 font-normal text-muted-foreground border-border/80"
+                          >
+                            {{ t("home_editor.nav_items_count", { count: (item.items || []).length }) }}
+                          </Badge>
+                          <span
+                            v-if="item.items && item.items.length > 0"
+                            class="text-[11px] text-muted-foreground/80 font-normal hidden sm:inline truncate max-w-[160px] sm:max-w-[220px]"
+                          >
+                            · {{ item.items.map((x) => x.title || x.query).slice(0, 3).join(", ") }}{{ item.items.length > 3 ? "..." : "" }}
+                          </span>
+                        </template>
                       </div>
                     </div>
 
@@ -738,9 +774,10 @@ function handleTypeChange(item) {
                   <!-- Expanded Form -->
                   <div
                     v-if="isExpanded(item)"
-                    class="border-t border-border bg-muted/20 px-4 py-3.5"
+                    class="border-t border-border bg-muted/20 px-4 py-3.5 space-y-4"
                   >
-                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <!-- PUBLICATION SECTION FORM -->
+                    <div v-if="item.kind === 'publication'" class="grid grid-cols-1 sm:grid-cols-12 gap-3">
                       <div class="sm:col-span-4 space-y-1.5">
                         <label class="text-xs font-medium text-muted-foreground"
                           >{{ t("home_editor.group_title") }}</label
@@ -759,7 +796,7 @@ function handleTypeChange(item) {
                         <select
                           v-model="item.kind"
                           class="home-select w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-                          @change="s.homeDirty.value = true"
+                          @change="handleGroupKindChange(item)"
                         >
                           <option value="publication">{{ t("home_editor.kind_publication") }}</option>
                           <option value="navigation">{{ t("home_editor.kind_navigation") }}</option>
@@ -778,14 +815,7 @@ function handleTypeChange(item) {
                           <option value="search">{{ t("home_editor.type_search") }}</option>
                         </select>
                       </div>
-                      <div
-                        :class="
-                          item.kind === 'publication'
-                            ? 'sm:col-span-2'
-                            : 'sm:col-span-4'
-                        "
-                        class="space-y-1.5"
-                      >
+                      <div class="sm:col-span-2 space-y-1.5">
                         <label
                           class="text-xs font-medium text-muted-foreground"
                         >
@@ -830,10 +860,7 @@ function handleTypeChange(item) {
                           @update:model-value="s.homeDirty.value = true"
                         />
                       </div>
-                      <div
-                        v-if="item.kind === 'publication'"
-                        class="sm:col-span-2 space-y-1.5"
-                      >
+                      <div class="sm:col-span-2 space-y-1.5">
                         <label class="text-xs font-medium text-muted-foreground"
                           >{{ t("home_editor.preview_count") }}</label
                         >
@@ -845,6 +872,198 @@ function handleTypeChange(item) {
                           class="h-8 text-xs bg-background font-mono"
                           @update:model-value="s.homeDirty.value = true"
                         />
+                      </div>
+                    </div>
+
+                    <!-- NAVIGATION GROUP FORM -->
+                    <div v-else class="space-y-3.5">
+                      <!-- Group Header Row -->
+                      <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        <div class="sm:col-span-9 space-y-1.5">
+                          <label class="text-xs font-medium text-muted-foreground"
+                            >{{ t("home_editor.group_title") }}</label
+                          >
+                          <Input
+                            v-model="item.title"
+                            :placeholder="t('home_editor.nav_group_title_placeholder')"
+                            class="h-8 text-xs bg-background font-medium"
+                            @update:model-value="s.homeDirty.value = true"
+                          />
+                        </div>
+                        <div class="sm:col-span-3 space-y-1.5">
+                          <label class="text-xs font-medium text-muted-foreground"
+                            >{{ t("home_editor.section_type") }}</label
+                          >
+                          <select
+                            v-model="item.kind"
+                            class="home-select w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                            @change="handleGroupKindChange(item)"
+                          >
+                            <option value="navigation">{{ t("home_editor.kind_navigation") }}</option>
+                            <option value="publication">{{ t("home_editor.kind_publication") }}</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <!-- Sub Navigations Panel -->
+                      <div class="rounded-md border border-border/80 bg-background/60 p-3 space-y-2.5">
+                        <!-- Sub Nav Header -->
+                        <div class="flex items-center justify-between pb-0.5">
+                          <div class="flex items-center gap-2">
+                            <Compass class="size-3.5 text-primary" />
+                            <span class="text-xs font-medium text-foreground">
+                              {{ t("home_editor.nav_items_list") }}
+                            </span>
+                            <Badge
+                              variant="secondary"
+                              class="h-4.5 px-1.5 text-[10px] font-mono font-normal"
+                            >
+                              {{ (item.items || []).length }}
+                            </Badge>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            class="h-7 px-2.5 text-xs gap-1"
+                            @click="s.addGroupNavigationItem(i)"
+                          >
+                            <Plus class="size-3" />
+                            <span>{{ t("home_editor.add_nav_item") }}</span>
+                          </Button>
+                        </div>
+
+                        <!-- Sub Nav List -->
+                        <div
+                          v-if="item.items && item.items.length > 0"
+                          class="space-y-2"
+                        >
+                          <div
+                            v-for="(subItem, subIdx) in item.items"
+                            :key="'subnav-' + i + '-' + subIdx"
+                            class="flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-md border border-border bg-card/80 text-xs"
+                          >
+                            <span
+                              class="size-4.5 rounded text-[10px] font-mono font-medium flex items-center justify-center shrink-0 bg-muted text-muted-foreground self-start sm:self-center"
+                            >
+                              {{ subIdx + 1 }}
+                            </span>
+
+                            <!-- Navigation Title -->
+                            <div class="flex-1 min-w-[140px] space-y-1 sm:space-y-0">
+                              <Input
+                                v-model="subItem.title"
+                                :placeholder="t('home_editor.nav_item_title_placeholder')"
+                                class="h-7 text-xs bg-background"
+                                @update:model-value="s.homeDirty.value = true"
+                              />
+                            </div>
+
+                            <!-- Source Type -->
+                            <div class="w-full sm:w-28 shrink-0">
+                              <select
+                                v-model="subItem.type"
+                                class="home-select w-full h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                                @change="handleTypeChange(subItem)"
+                              >
+                                <option value="preset">{{ t("home_editor.type_preset") }}</option>
+                                <option value="search">{{ t("home_editor.type_search") }}</option>
+                              </select>
+                            </div>
+
+                            <!-- Query / Preset Select -->
+                            <div class="w-full sm:w-48 shrink-0">
+                              <select
+                                v-if="subItem.type === 'preset'"
+                                v-model="subItem.query"
+                                class="home-select w-full h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
+                                @change="s.homeDirty.value = true"
+                              >
+                                <option v-if="!subItem.query" value="" disabled>
+                                  {{ t("home_editor.select_preset") }}
+                                </option>
+                                <option
+                                  v-else-if="!isKnownPreset(subItem.query)"
+                                  :value="subItem.query"
+                                >
+                                  {{ t("home_editor.custom_preset", { query: subItem.query }) }}
+                                </option>
+                                <optgroup
+                                  v-for="grp in PRESET_GROUPS"
+                                  :key="grp.label"
+                                  :label="grp.label"
+                                >
+                                  <option
+                                    v-for="opt in grp.options"
+                                    :key="opt.value"
+                                    :value="opt.value"
+                                  >
+                                    {{ opt.label }}
+                                  </option>
+                                </optgroup>
+                              </select>
+                              <Input
+                                v-else
+                                v-model="subItem.query"
+                                :placeholder="t('home_editor.search_placeholder')"
+                                class="h-7 text-xs bg-background font-mono"
+                                @update:model-value="s.homeDirty.value = true"
+                              />
+                            </div>
+
+                            <!-- Actions -->
+                            <div class="flex items-center gap-0.5 self-end sm:self-center shrink-0">
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                class="size-6"
+                                :disabled="subIdx === 0"
+                                :aria-label="t('home_editor.reorder_up')"
+                                :title="t('home_editor.reorder_up')"
+                                @click="s.moveGroupNavigationItem(i, subIdx, -1)"
+                              >
+                                <ChevronUp class="size-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                class="size-6"
+                                :disabled="subIdx === item.items.length - 1"
+                                :aria-label="t('home_editor.reorder_down')"
+                                :title="t('home_editor.reorder_down')"
+                                @click="s.moveGroupNavigationItem(i, subIdx, 1)"
+                              >
+                                <ChevronDown class="size-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                class="size-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                :aria-label="t('home_editor.delete')"
+                                :title="t('home_editor.delete')"
+                                @click="s.removeGroupNavigationItem(i, subIdx)"
+                              >
+                                <Trash2 class="size-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <!-- Empty State in Sub Nav -->
+                        <div
+                          v-else
+                          class="py-4 text-center rounded border border-dashed border-border/70 bg-muted/10 text-xs text-muted-foreground"
+                        >
+                          <p>{{ t("home_editor.empty_nav_items") }}</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            class="h-7 px-2.5 text-xs gap-1 mt-2"
+                            @click="s.addGroupNavigationItem(i)"
+                          >
+                            <Plus class="size-3" />
+                            <span>{{ t("home_editor.add_nav_item") }}</span>
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>

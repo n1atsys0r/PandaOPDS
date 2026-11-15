@@ -422,8 +422,37 @@ function addFacet() {
 }
 function addGroupSection(kind) {
   state.layout.groups.push(kind === "navigation"
-    ? { kind, group: true, title: t("home_editor.latest"), type: "preset", query: "latest" }
+    ? {
+        kind: "navigation",
+        group: true,
+        title: t("home_editor.nav_group_default_title"),
+        items: [
+          { title: t("home_editor.latest"), type: "preset", query: "latest" },
+        ],
+      }
     : { kind: "publication", group: true, title: t("home_editor.popular"), type: "preset", query: "popular", count: 10 });
+  state.homeDirty = true;
+}
+function addGroupNavigationItem(groupIndex) {
+  const grp = state.layout.groups[groupIndex];
+  if (!grp) return;
+  if (!Array.isArray(grp.items)) grp.items = [];
+  grp.items.push({ title: "", type: "preset", query: "latest" });
+  state.homeDirty = true;
+}
+function removeGroupNavigationItem(groupIndex, itemIndex) {
+  const grp = state.layout.groups[groupIndex];
+  if (!grp || !Array.isArray(grp.items)) return;
+  grp.items.splice(itemIndex, 1);
+  state.homeDirty = true;
+}
+function moveGroupNavigationItem(groupIndex, itemIndex, delta) {
+  const grp = state.layout.groups[groupIndex];
+  if (!grp || !Array.isArray(grp.items)) return;
+  const targetIndex = itemIndex + delta;
+  if (targetIndex < 0 || targetIndex >= grp.items.length) return;
+  const [removed] = grp.items.splice(itemIndex, 1);
+  grp.items.splice(targetIndex, 0, removed);
   state.homeDirty = true;
 }
 async function loadArchives() {
@@ -931,6 +960,9 @@ export function useApp() {
     removePublication,
     addFacet,
     addGroupSection,
+    addGroupNavigationItem,
+    removeGroupNavigationItem,
+    moveGroupNavigationItem,
     removeItem,
     moveItem,
     loadArchives,

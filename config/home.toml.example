@@ -2,10 +2,11 @@
 #
 # 每个 [[section]] 声明一个栏目。
 #   kind         = "publication" | "navigation" | "facets"
-#   group        = true 时，publication 或 navigation 形成独立分组；缺省为 false
-#   title        = 栏目标题
-#   type / query = "preset" + 内置预设，或 "search" + 搜索表达式
+#   group        = true 时，publication 形成独立画廊分组，navigation 形成独立导航分组（可在 items 中添加多个子导航）；缺省为 false
+#   title        = 栏目或分组标题
+#   type / query = "preset" + 内置预设，或 "search" + 搜索表达式（navigation 分组时在各 item 中指定）
 #   count        = publication 的预览条数，缺省为 10，填 0 关闭预览
+#   items        = navigation 分组包含的子导航项列表，各子项拥有独立的 title、type 和 query
 #
 # 顶层 publications 与 groups 互斥；顶层 navigation 可与其中任一形式并存。
 # facets 只能与顶层 publication 并用，type 和 query 须与其相同。
@@ -25,13 +26,14 @@ count = 5
 [[section]]
 kind = "navigation"
 group = true
+title = "Rankings"
+
+[[section.items]]
 title = "Toplist: Month"
 type = "preset"
 query = "toplist:month"
 
-[[section]]
-kind = "navigation"
-group = true
+[[section.items]]
 title = "Toplist: Year"
 type = "preset"
 query = "toplist:year"

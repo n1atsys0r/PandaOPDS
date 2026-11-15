@@ -221,3 +221,59 @@ title="Category"
 		t.Fatalf("empty layout fallback missing: %s", fallback.Body.String())
 	}
 }
+
+func TestRootV20NavigationGroupWithMultipleItems(t *testing.T) {
+	homeTOML := `[[section]]
+kind = "navigation"
+group = true
+title = "Rankings Group"
+
+[[section.items]]
+title = "Month"
+type = "preset"
+query = "toplist:month"
+
+[[section.items]]
+title = "Year"
+type = "preset"
+query = "toplist:year"
+`
+	server := newHomePreviewServer(t, homeTOML, homePreviewTransport(func(r *http.Request) (*http.Response, error) {
+		return homePreviewResponse(r, `<html>session</html>`), nil
+	}))
+	rr := httptest.NewRecorder()
+	server.rootV20(rr, httptest.NewRequest(http.MethodGet, "/opds/v2.0", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var doc struct {
+		Groups []struct {
+			Metadata struct {
+				Title string `json:"title"`
+			} `json:"metadata"`
+			Navigation []struct {
+				Title string `json:"title"`
+				Href  string `json:"href"`
+			} `json:"navigation"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("failed to decode JSON: %v, body=%s", err, rr.Body.String())
+	}
+	if len(doc.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(doc.Groups))
+	}
+	grp := doc.Groups[0]
+	if grp.Metadata.Title != "Rankings Group" {
+		t.Fatalf("expected group title 'Rankings Group', got %q", grp.Metadata.Title)
+	}
+	if len(grp.Navigation) != 2 {
+		t.Fatalf("expected 2 navigation items in group, got %d", len(grp.Navigation))
+	}
+	if grp.Navigation[0].Title != "Month" || !strings.Contains(grp.Navigation[0].Href, "period=month") {
+		t.Fatalf("item 0 mismatch: %+v", grp.Navigation[0])
+	}
+	if grp.Navigation[1].Title != "Year" || !strings.Contains(grp.Navigation[1].Href, "period=year") {
+		t.Fatalf("item 1 mismatch: %+v", grp.Navigation[1])
+	}
+}

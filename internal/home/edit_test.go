@@ -128,3 +128,71 @@ func TestValidateTopLevelPublicationAndGroupsAreExclusive(t *testing.T) {
 		t.Fatalf("grouped section should coexist with root navigation: %v", err)
 	}
 }
+
+func TestNavigationGroupWithMultipleItems(t *testing.T) {
+	data := []byte(`[[section]]
+kind = "navigation"
+group = true
+title = "Rankings"
+
+[[section.items]]
+title = "Month"
+type = "preset"
+query = "toplist:month"
+
+[[section.items]]
+title = "Year"
+type = "preset"
+query = "toplist:year"
+`)
+	c, err := DecodeEditor(data)
+	if err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(c.Sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(c.Sections))
+	}
+	sec := c.Sections[0]
+	if !sec.Group || sec.Kind != "navigation" || sec.Title != "Rankings" {
+		t.Fatalf("unexpected section header: %+v", sec)
+	}
+	if len(sec.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(sec.Items))
+	}
+	if sec.Items[0].Title != "Month" || sec.Items[0].Query != "toplist:month" {
+		t.Fatalf("item 0 mismatch: %+v", sec.Items[0])
+	}
+	if sec.Items[1].Title != "Year" || sec.Items[1].Query != "toplist:year" {
+		t.Fatalf("item 1 mismatch: %+v", sec.Items[1])
+	}
+	if err := Validate(c); err != nil {
+		t.Fatalf("validation failed: %v", err)
+	}
+
+	// Test invalid item query fails validation
+	bad := Config{Sections: []Section{{
+		Kind:  "navigation",
+		Group: true,
+		Title: "Bad Group",
+		Items: []NavigationItem{{Title: "Bad", Type: "preset", Query: "invalid_preset"}},
+	}}}
+	if err := Validate(bad); err == nil {
+		t.Fatal("expected validation error for invalid preset in items")
+	}
+
+	// Test strict mode rejects unknown fields in items
+	badStrict := []byte(`[[section]]
+kind = "navigation"
+group = true
+title = "Rankings"
+
+[[section.items]]
+title = "Month"
+type = "preset"
+query = "toplist:month"
+unknown_field = "oops"
+`)
+	if _, err := DecodeEditor(badStrict); err == nil {
+		t.Fatal("expected DecodeEditor to reject unknown field in section.items")
+	}
+}

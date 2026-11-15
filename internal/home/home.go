@@ -10,13 +10,20 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+type NavigationItem struct {
+	Title string `toml:"title" json:"title"`
+	Type  string `toml:"type" json:"type"`
+	Query string `toml:"query" json:"query"`
+}
+
 type Section struct {
-	Group bool   `toml:"group"`
-	Kind  string `toml:"kind"`
-	Title string `toml:"title"`
-	Type  string `toml:"type"`
-	Query string `toml:"query"`
-	Count *int   `toml:"count"`
+	Group bool             `toml:"group" json:"group"`
+	Kind  string           `toml:"kind" json:"kind"`
+	Title string           `toml:"title" json:"title"`
+	Type  string           `toml:"type" json:"type"`
+	Query string           `toml:"query" json:"query"`
+	Count *int             `toml:"count" json:"count"`
+	Items []NavigationItem `toml:"items,omitempty" json:"items,omitempty"`
 }
 type Config struct {
 	Sections []Section `toml:"section"`
@@ -46,15 +53,30 @@ func Validate(c Config) error {
 		if s.Kind != "publication" && s.Kind != "navigation" && s.Kind != "facets" {
 			return fmt.Errorf("invalid section kind %q", s.Kind)
 		}
-		if s.Type != "preset" && s.Type != "search" {
-			return fmt.Errorf("invalid section type %q", s.Type)
-		}
-		if s.Type == "preset" {
-			if _, _, err := ResolvePreset(s.Query); err != nil {
-				return err
+		if s.Kind == "navigation" && s.Group && len(s.Items) > 0 {
+			for _, it := range s.Items {
+				if it.Type != "preset" && it.Type != "search" {
+					return fmt.Errorf("invalid navigation item type %q", it.Type)
+				}
+				if it.Type == "preset" {
+					if _, _, err := ResolvePreset(it.Query); err != nil {
+						return err
+					}
+				} else if it.Query == "" {
+					return fmt.Errorf("navigation item search query cannot be empty")
+				}
 			}
-		} else if s.Query == "" {
-			return fmt.Errorf("search query cannot be empty")
+		} else {
+			if s.Type != "preset" && s.Type != "search" {
+				return fmt.Errorf("invalid section type %q", s.Type)
+			}
+			if s.Type == "preset" {
+				if _, _, err := ResolvePreset(s.Query); err != nil {
+					return err
+				}
+			} else if s.Query == "" {
+				return fmt.Errorf("search query cannot be empty")
+			}
 		}
 		if s.Count != nil && *s.Count < 0 {
 			return fmt.Errorf("section count must be nonnegative")
@@ -152,6 +174,28 @@ func normalize(c Config) Config {
 		if s.Kind == "" {
 			s.Kind = "publication"
 		}
+		if s.Kind == "navigation" && s.Group {
+			if len(s.Items) == 0 && s.Query != "" {
+				s.Items = []NavigationItem{{Title: s.Title, Type: s.Type, Query: s.Query}}
+			}
+			for j := range s.Items {
+				it := &s.Items[j]
+				if it.Type == "" {
+					it.Type = "preset"
+				}
+				if it.Query == "" {
+					it.Query = "latest"
+				}
+			}
+			if len(s.Items) > 0 {
+				if s.Type == "" {
+					s.Type = s.Items[0].Type
+				}
+				if s.Query == "" {
+					s.Query = s.Items[0].Query
+				}
+			}
+		}
 		if s.Type == "" {
 			s.Type = "preset"
 		}
@@ -193,7 +237,15 @@ func decodeHome(b []byte, strict bool) (Config, error) {
 			ID    string `toml:"id"`
 			Title string `toml:"title"`
 		} `toml:"group"`
-		Sections []map[string]any `toml:"section"`
+		Sections []struct {
+			Group any              `toml:"group"`
+			Kind  any              `toml:"kind"`
+			Title any              `toml:"title"`
+			Type  any              `toml:"type"`
+			Query any              `toml:"query"`
+			Count any              `toml:"count"`
+			Items []NavigationItem `toml:"items"`
+		} `toml:"section"`
 	}
 	metadata, err := toml.Decode(string(b), &data)
 	if err != nil {
@@ -204,58 +256,68 @@ func decodeHome(b []byte, strict bool) (Config, error) {
 	}
 	legacy := len(data.Groups) > 0
 	for _, m := range data.Sections {
-		if _, ok := m["group"].(string); ok {
+		if _, ok := m.Group.(string); ok {
 			legacy = true
 		}
 	}
 	c := Config{Sections: make([]Section, 0, len(data.Sections))}
 	for _, m := range data.Sections {
-		if strict {
-			for k := range m {
-				if k != "group" && k != "kind" && k != "title" && k != "type" && k != "query" && k != "count" {
-					return Default(), fmt.Errorf("unknown home configuration field")
+		if m.Group != nil {
+			if _, ok := m.Group.(bool); !ok {
+				if _, legacyString := m.Group.(string); !legacyString {
+					return Default(), fmt.Errorf("invalid group value")
 				}
 			}
 		}
-		for key, value := range m {
-			switch key {
-			case "group":
-				if _, ok := value.(bool); !ok {
-					if _, legacyString := value.(string); !legacyString {
-						return Default(), fmt.Errorf("invalid group value")
-					}
-				}
-			case "kind", "title", "type", "query":
-				if _, ok := value.(string); !ok {
-					return Default(), fmt.Errorf("invalid section field type")
-				}
-			case "count":
-				if _, ok := value.(int64); !ok {
-					return Default(), fmt.Errorf("invalid section count")
-				}
+		if m.Kind != nil {
+			if _, ok := m.Kind.(string); !ok {
+				return Default(), fmt.Errorf("invalid section field type")
+			}
+		}
+		if m.Title != nil {
+			if _, ok := m.Title.(string); !ok {
+				return Default(), fmt.Errorf("invalid section field type")
+			}
+		}
+		if m.Type != nil {
+			if _, ok := m.Type.(string); !ok {
+				return Default(), fmt.Errorf("invalid section field type")
+			}
+		}
+		if m.Query != nil {
+			if _, ok := m.Query.(string); !ok {
+				return Default(), fmt.Errorf("invalid section field type")
+			}
+		}
+		if m.Count != nil {
+			if _, ok := m.Count.(int64); !ok {
+				return Default(), fmt.Errorf("invalid section count")
 			}
 		}
 		s := Section{Kind: "publication", Type: "preset", Query: "latest"}
-		if v, ok := m["kind"].(string); ok {
+		if v, ok := m.Kind.(string); ok {
 			s.Kind = v
 		}
-		if v, ok := m["title"].(string); ok {
+		if v, ok := m.Title.(string); ok {
 			s.Title = v
 		}
-		if v, ok := m["type"].(string); ok {
+		if v, ok := m.Type.(string); ok {
 			s.Type = v
 		}
-		if v, ok := m["query"].(string); ok {
+		if v, ok := m.Query.(string); ok {
 			s.Query = v
 		}
-		if v, ok := m["count"].(int64); ok {
+		if v, ok := m.Count.(int64); ok {
 			n := int(v)
 			s.Count = &n
 		}
-		if v, ok := m["group"].(bool); ok {
+		if len(m.Items) > 0 {
+			s.Items = append(s.Items, m.Items...)
+		}
+		if v, ok := m.Group.(bool); ok {
 			s.Group = v
-		} else if _, ok := m["group"].(string); ok {
-			s.Group = m["group"] != "" || s.Kind == "publication"
+		} else if _, ok := m.Group.(string); ok {
+			s.Group = m.Group != "" || s.Kind == "publication"
 		} else if legacy {
 			s.Group = s.Kind == "publication"
 		}

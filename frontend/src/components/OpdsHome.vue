@@ -928,42 +928,79 @@ const navigationItems = computed(() => {
   });
 });
 
-// Normalized Publication Shelves
-const publicationGroups = computed(() => {
+// Normalized Home Groups (preserving catalog.groups order)
+const homeGroups = computed(() => {
   if (!catalog.value) return [];
   const groups = [];
 
-  // 1. Grouped sections
+  // 1. Grouped sections from catalog.groups in original order
   if (Array.isArray(catalog.value.groups)) {
     catalog.value.groups.forEach((g, index) => {
-      const pubs = (g.publications || []).map((pub) => normalizePublication(pub, catalogFeedHref)).filter(Boolean);
-      if (pubs.length === 0) return;
+      // Navigation group
+      if (Array.isArray(g.navigation) && g.navigation.length > 0) {
+        const items = g.navigation.map((nav) => {
+          let icon = Compass;
+          const hrefLower = (nav.href || "").toLowerCase();
+          const titleLower = (nav.title || "").toLowerCase();
 
-      const selfLink = (g.links || []).find(
-        (l) => l.rel === "self" || l.rel === "http://opds-spec.org/acquisition",
-      );
-      const title = g.metadata?.title || `Section ${index + 1}`;
+          if (hrefLower.includes("watched") || titleLower.includes("watch")) icon = Eye;
+          else if (hrefLower.includes("favorites") || titleLower.includes("fav")) icon = Heart;
+          else if (hrefLower.includes("archives") || titleLower.includes("arch")) icon = Package2;
+          else if (hrefLower.includes("top") || titleLower.includes("rank") || hrefLower.includes("toplist")) icon = Trophy;
+          else if (hrefLower.includes("popular") || titleLower.includes("pop")) icon = Sparkles;
+          else if (hrefLower.includes("query=") || hrefLower.includes("search")) icon = Search;
+          else if (hrefLower.includes("tag=") || titleLower.includes("tag") || titleLower.includes(":")) icon = Tag;
+          else if (titleLower.includes("category") || titleLower.includes("分类")) icon = Layers;
 
-      groups.push({
-        id: `group-${index}`,
-        title,
-        publications: pubs,
-        link: {
+          return {
+            title: nav.title,
+            href: nav.href,
+            icon,
+          };
+        });
+        groups.push({
+          id: `group-nav-${index}`,
+          type: "navigation",
+          title: g.metadata?.title || `Navigation ${index + 1}`,
+          items,
+        });
+        return;
+      }
+
+      // Publication group
+      if (Array.isArray(g.publications)) {
+        const pubs = g.publications.map((pub) => normalizePublication(pub, catalogFeedHref)).filter(Boolean);
+        if (pubs.length === 0) return;
+
+        const selfLink = (g.links || []).find(
+          (l) => l.rel === "self" || l.rel === "http://opds-spec.org/acquisition",
+        );
+        const title = g.metadata?.title || `Section ${index + 1}`;
+
+        groups.push({
+          id: `group-pub-${index}`,
+          type: "publication",
           title,
-          href: selfLink?.href || "",
-        },
-      });
+          publications: pubs,
+          link: {
+            title,
+            href: selfLink?.href || "",
+          },
+        });
+      }
     });
   }
 
-  // 2. Root publications if no groups
-  if (groups.length === 0 && Array.isArray(catalog.value.publications)) {
+  // 2. Root publications if no publication groups in catalog.groups
+  const hasPublicationGroups = groups.some((grp) => grp.type === "publication");
+  if (!hasPublicationGroups && Array.isArray(catalog.value.publications)) {
     const pubs = catalog.value.publications
       .map((pub) => normalizePublication(pub, catalogFeedHref))
       .filter(Boolean);
     if (pubs.length > 0) {
       groups.push({
         id: "root-group",
+        type: "publication",
         title: catalog.value.metadata?.title || t("explore.featured_latest"),
         publications: pubs,
         link: null,
@@ -1707,134 +1744,171 @@ onUnmounted(() => {
         </button>
       </nav>
 
-      <!-- 2. Horizontal Carousel Shelves -->
-      <div
-        v-for="group in publicationGroups"
-        :key="group.id"
-        class="space-y-2.5"
-      >
-        <!-- Shelf Header -->
-        <div class="flex items-center justify-between">
+      <!-- 2. Groups (preserving configured order of publication shelves & navigation groups) -->
+      <template v-for="group in homeGroups" :key="group.id">
+        <!-- Navigation Group -->
+        <div
+          v-if="group.type === 'navigation'"
+          class="space-y-2.5"
+        >
           <div class="flex items-center gap-2">
             <h3 class="text-base font-semibold tracking-tight">
               {{ group.title }}
             </h3>
             <span class="text-xs text-muted-foreground">
-              ({{ group.publications.length }})
+              ({{ group.items.length }})
             </span>
           </div>
-
-          <div class="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-7 rounded-full"
-              :title="t('explore.scroll_left')"
-              @click="scrollShelf(group.id, -1)"
+          <nav class="flex flex-wrap items-center gap-2.5 pt-0.5" :aria-label="group.title">
+            <button
+              v-for="nav in group.items"
+              :key="nav.href"
+              type="button"
+              class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+              @click="drillDown(nav)"
             >
-              <ChevronLeft class="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-7 rounded-full"
-              :title="t('explore.scroll_right')"
-              @click="scrollShelf(group.id, 1)"
-            >
-              <ChevronRight class="size-4" />
-            </Button>
-            <Button
-              v-if="group.link && group.link.href"
-              variant="link"
-              size="sm"
-              class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
-              @click="drillDown(group.link)"
-            >
-              <span>{{ t("common.view_all") }}</span>
-              <ChevronRight class="size-3" />
-            </Button>
-          </div>
-        </div>
-
-        <!-- Horizontal Shelf Track -->
-        <div
-          :ref="(el) => setShelfRef(group.id, el)"
-          class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
-        >
-          <div
-            v-for="pub in group.publications"
-            :key="pub.gid + ':' + pub.token"
-            class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-            @click="openGallery(pub, group.publications)"
-          >
-            <!-- Card Cover -->
-            <div
-              class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
-            >
-              <CoverImage :src="pub.coverUrl" :alt="pub.title" />
-
-              <!-- Overlay Gradient (only covering bottom 1/2) -->
-              <div
-                class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+              <component
+                :is="nav.icon"
+                class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
               />
+              <span class="tracking-tight text-foreground/90 group-hover:text-foreground">
+                {{ nav.title }}
+              </span>
+              <ChevronRight
+                class="size-3.5 text-muted-foreground/40 transition-all duration-200 group-hover:text-foreground/80 group-hover:translate-x-0.5"
+              />
+            </button>
+          </nav>
+        </div>
 
-              <!-- Top Left: Category Badge -->
-              <div
-                v-if="pub.category"
-                class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
-                :style="{ backgroundColor: getCategoryColor(pub.category) }"
-              >
-                {{ pub.category }}
-              </div>
-
-              <!-- Top Right: Archive / Favorite Badge -->
-              <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
-                <Badge
-                  :variant="pub.archiveBadge.variant"
-                  class="text-[10px] px-1.5 py-0 font-medium"
-                >
-                  {{ pub.archiveBadge.label }}
-                </Badge>
-              </div>
-
-              <!-- Bottom info -->
-              <div
-                class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
-              >
-                <div class="flex items-center gap-0.5 shrink-0">
-                  <Star class="size-3 fill-amber-400 text-amber-400" />
-                  <span>{{ pub.rating.toFixed(1) }}</span>
-                </div>
-                <span
-                  v-if="pub.language || pub.pageCount > 0"
-                  class="truncate ml-1.5 text-right drop-shadow-xs"
-                  :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
-                >
-                  <template v-if="pub.language && pub.pageCount > 0">
-                    <span>{{ pub.language }}</span>
-                    <span class="mx-1 opacity-70">·</span>
-                    <span class="font-mono">{{ pub.pageCount }}P</span>
-                  </template>
-                  <template v-else-if="pub.pageCount > 0">
-                    <span class="font-mono">{{ pub.pageCount }}P</span>
-                  </template>
-                  <template v-else>
-                    <span>{{ pub.language }}</span>
-                  </template>
-                </span>
-              </div>
+        <!-- Publication Shelf -->
+        <div
+          v-else-if="group.type === 'publication'"
+          class="space-y-2.5"
+        >
+          <!-- Shelf Header -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <h3 class="text-base font-semibold tracking-tight">
+                {{ group.title }}
+              </h3>
+              <span class="text-xs text-muted-foreground">
+                ({{ group.publications.length }})
+              </span>
             </div>
 
-            <!-- Title -->
+            <div class="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-7 rounded-full"
+                :title="t('explore.scroll_left')"
+                @click="scrollShelf(group.id, -1)"
+              >
+                <ChevronLeft class="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-7 rounded-full"
+                :title="t('explore.scroll_right')"
+                @click="scrollShelf(group.id, 1)"
+              >
+                <ChevronRight class="size-4" />
+              </Button>
+              <Button
+                v-if="group.link && group.link.href"
+                variant="link"
+                size="sm"
+                class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
+                @click="drillDown(group.link)"
+              >
+                <span>{{ t("common.view_all") }}</span>
+                <ChevronRight class="size-3" />
+              </Button>
+            </div>
+          </div>
+
+          <!-- Horizontal Shelf Track -->
+          <div
+            :ref="(el) => setShelfRef(group.id, el)"
+            class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+          >
             <div
-              class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
-              :title="pub.title"
+              v-for="pub in group.publications"
+              :key="pub.gid + ':' + pub.token"
+              class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+              @click="openGallery(pub, group.publications)"
             >
-              {{ pub.title }}
+              <!-- Card Cover -->
+              <div
+                class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+              >
+                <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+
+                <!-- Overlay Gradient (only covering bottom 1/2) -->
+                <div
+                  class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+                />
+
+                <!-- Top Left: Category Badge -->
+                <div
+                  v-if="pub.category"
+                  class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
+                  :style="{ backgroundColor: getCategoryColor(pub.category) }"
+                >
+                  {{ pub.category }}
+                </div>
+
+                <!-- Top Right: Archive / Favorite Badge -->
+                <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+                  <Badge
+                    :variant="pub.archiveBadge.variant"
+                    class="text-[10px] px-1.5 py-0 font-medium"
+                  >
+                    {{ pub.archiveBadge.label }}
+                  </Badge>
+                </div>
+
+                <!-- Bottom info -->
+                <div
+                  class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
+                >
+                  <div class="flex items-center gap-0.5 shrink-0">
+                    <Star class="size-3 fill-amber-400 text-amber-400" />
+                    <span>{{ pub.rating.toFixed(1) }}</span>
+                  </div>
+                  <span
+                    v-if="pub.language || pub.pageCount > 0"
+                    class="truncate ml-1.5 text-right drop-shadow-xs"
+                    :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                  >
+                    <template v-if="pub.language && pub.pageCount > 0">
+                      <span>{{ pub.language }}</span>
+                      <span class="mx-1 opacity-70">·</span>
+                      <span class="font-mono">{{ pub.pageCount }}P</span>
+                    </template>
+                    <template v-else-if="pub.pageCount > 0">
+                      <span class="font-mono">{{ pub.pageCount }}P</span>
+                    </template>
+                    <template v-else>
+                      <span>{{ pub.language }}</span>
+                    </template>
+                  </span>
+                </div>
+              </div>
+
+              <!-- Title -->
+              <div
+                class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
+                :title="pub.title"
+              >
+                {{ pub.title }}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </template>
     </div>
 
     <!-- ================= DRILL-DOWN LIST VIEW ================= -->

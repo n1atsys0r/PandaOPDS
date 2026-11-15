@@ -3,7 +3,23 @@ export function splitHomeSections(sections = []) {
     navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group)),
     publication: structuredClone(sections.find((x) => x.kind === "publication" && !x.group) || null),
     facets: structuredClone(sections.filter((x) => x.kind === "facets" && !x.group).map(({ title }) => ({ title }))),
-    groups: structuredClone(sections.filter((x) => x.group)),
+    groups: structuredClone(sections.filter((x) => x.group).map((x) => {
+      if (x.kind === "navigation") {
+        let items = Array.isArray(x.items) ? structuredClone(x.items) : [];
+        if (items.length === 0 && (x.type || x.query)) {
+          items = [{
+            title: x.title || "",
+            type: x.type || "preset",
+            query: x.query || "latest",
+          }];
+        }
+        return {
+          ...x,
+          items,
+        };
+      }
+      return x;
+    })),
   };
 }
 
@@ -27,7 +43,30 @@ export function serializeHomeLayout(layout, mode) {
   const navigation = layout.navigation.map((x) => ({ ...x, kind: "navigation", group: false, count: null }));
   let content = [];
   if (mode === "groups") {
-    content = layout.groups.map((x) => ({ ...x, group: true, count: x.kind === "publication" ? (x.count == null || x.count === "" ? null : Number(x.count)) : null }));
+    content = layout.groups.map((x) => {
+      if (x.kind === "navigation") {
+        const items = (x.items || []).map((it) => ({
+          title: it.title || "",
+          type: it.type || "preset",
+          query: it.query || "latest",
+        }));
+        const first = items[0] || { type: "preset", query: "latest" };
+        return {
+          kind: "navigation",
+          group: true,
+          title: x.title || "",
+          type: first.type,
+          query: first.query,
+          count: null,
+          items,
+        };
+      }
+      return {
+        ...x,
+        group: true,
+        count: x.kind === "publication" ? (x.count == null || x.count === "" ? null : Number(x.count)) : null,
+      };
+    });
   } else if (mode === "publications") {
     if (layout.publication) {
       content.push({ ...layout.publication, kind: "publication", group: false, count: layout.publication.count == null || layout.publication.count === "" ? null : Number(layout.publication.count) });

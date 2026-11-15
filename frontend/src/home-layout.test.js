@@ -57,3 +57,47 @@ test("facet entries follow the current publication source", () => {
   assert.equal(canUseFacets(drafts.publication), true);
   assert.equal(chooseInitialHomeMode([{ kind: "publication", group: false }, { kind: "publication", group: true }]), "");
 });
+
+test("navigation group with multiple items splits and serializes cleanly", () => {
+  const rawSections = [
+    {
+      kind: "navigation",
+      group: true,
+      title: "Rankings",
+      items: [
+        { title: "Month", type: "preset", query: "toplist:month" },
+        { title: "Year", type: "preset", query: "toplist:year" },
+      ],
+    },
+    {
+      kind: "navigation",
+      group: true,
+      title: "Legacy Nav",
+      type: "preset",
+      query: "latest",
+    },
+  ];
+  const split = splitHomeSections(rawSections);
+  assert.equal(split.groups.length, 2);
+  assert.equal(split.groups[0].title, "Rankings");
+  assert.deepEqual(split.groups[0].items, [
+    { title: "Month", type: "preset", query: "toplist:month" },
+    { title: "Year", type: "preset", query: "toplist:year" },
+  ]);
+  assert.equal(split.groups[1].title, "Legacy Nav");
+  assert.deepEqual(split.groups[1].items, [
+    { title: "Legacy Nav", type: "preset", query: "latest" },
+  ]);
+
+  const serialized = serializeHomeLayout(split, "groups");
+  assert.equal(serialized.length, 2);
+  assert.equal(serialized[0].kind, "navigation");
+  assert.equal(serialized[0].group, true);
+  assert.equal(serialized[0].title, "Rankings");
+  assert.equal(serialized[0].type, "preset");
+  assert.equal(serialized[0].query, "toplist:month");
+  assert.deepEqual(serialized[0].items, [
+    { title: "Month", type: "preset", query: "toplist:month" },
+    { title: "Year", type: "preset", query: "toplist:year" },
+  ]);
+});

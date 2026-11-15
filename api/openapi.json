@@ -5237,6 +5237,36 @@
             ],
             "minimum": 0,
             "description": "Publication preview limit. Null or omitted uses 10; 0 disables the preview."
+          },
+          "items": {
+            "type": "array",
+            "description": "Navigation items for a grouped navigation section sharing the same group title.",
+            "items": {
+              "$ref": "#/components/schemas/HomeNavigationItem"
+            }
+          }
+        }
+      },
+      "HomeNavigationItem": {
+        "type": "object",
+        "required": [
+          "type",
+          "query"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Display title of the navigation item."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "preset",
+              "search"
+            ]
+          },
+          "query": {
+            "type": "string"
           }
         }
       }

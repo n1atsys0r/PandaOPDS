@@ -490,3 +490,42 @@ title="Root"
 		t.Fatalf("repair did not preserve original backup: %v", err)
 	}
 }
+
+func TestHomeEditorNavigationGroupWithItems(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "home.toml")
+	s := &Server{Settings: config.Settings{HomeConfigPath: p}, editKey: []byte("test-only-etag-key")}
+
+	get := httptest.NewRecorder()
+	s.homeEdit(get, httptest.NewRequest(http.MethodGet, "/api/home/edit", nil))
+	tag := get.Header().Get("ETag")
+
+	payload := `{"sections":[{"kind":"navigation","group":true,"title":"Rankings","items":[{"title":"Month","type":"preset","query":"toplist:month"},{"title":"Year","type":"preset","query":"toplist:year"}]}]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/home/edit", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", tag)
+	rr := httptest.NewRecorder()
+	s.homeEdit(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("PUT failed: %d %s", rr.Code, rr.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	sections, ok := res["sections"].([]any)
+	if !ok || len(sections) != 1 {
+		t.Fatalf("unexpected sections: %#v", res["sections"])
+	}
+	sec := sections[0].(map[string]any)
+	if sec["title"] != "Rankings" {
+		t.Fatalf("expected title Rankings, got %v", sec["title"])
+	}
+	items, ok := sec["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("expected 2 items, got %#v", sec["items"])
+	}
+	it0 := items[0].(map[string]any)
+	if it0["title"] != "Month" || it0["query"] != "toplist:month" {
+		t.Fatalf("item 0 mismatch: %#v", it0)
+	}
+}
