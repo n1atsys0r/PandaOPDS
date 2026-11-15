@@ -77,6 +77,8 @@ const loading = ref(false);
 const error = ref("");
 const catalog = ref(null);
 const shelfRefs = {};
+const shelfScrollState = reactive({});
+const shelfHoverState = reactive({});
 
 // Search state & OpenSearch logic
 const searchInput = ref("");
@@ -1000,9 +1002,68 @@ const routeNavItems = computed(() => normalizeNavItems(routeFeed.value?.navigati
 const homeGroups = computed(() => parseCatalogGroups(catalog.value, catalogFeedHref));
 const routeGroups = computed(() => parseCatalogGroups(routeFeed.value, routeFeedHref));
 
-// Shelf horizontal scrolling
+// Shelf horizontal scrolling & scroll visibility state
+let shelfResizeObserver = null;
+
+if (typeof window !== "undefined" && typeof ResizeObserver !== "undefined") {
+  shelfResizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const el = entry.target;
+      const id = el.dataset?.shelfId;
+      if (id) {
+        updateShelfScrollState(id);
+      }
+    }
+  });
+}
+
+function updateShelfScrollState(id) {
+  const el = shelfRefs[id];
+  if (!el) {
+    if (shelfScrollState[id]) {
+      shelfScrollState[id].canScrollLeft = false;
+      shelfScrollState[id].canScrollRight = false;
+    }
+    return;
+  }
+  const { scrollLeft, scrollWidth, clientWidth } = el;
+  const canScrollLeft = scrollLeft > 3;
+  const canScrollRight = scrollLeft + clientWidth < scrollWidth - 3;
+
+  if (!shelfScrollState[id]) {
+    shelfScrollState[id] = { canScrollLeft, canScrollRight };
+  } else {
+    shelfScrollState[id].canScrollLeft = canScrollLeft;
+    shelfScrollState[id].canScrollRight = canScrollRight;
+  }
+}
+
 function setShelfRef(id, el) {
-  if (el) shelfRefs[id] = el;
+  if (el) {
+    shelfRefs[id] = el;
+    el.dataset.shelfId = id;
+    shelfResizeObserver?.observe(el);
+    nextTick(() => {
+      updateShelfScrollState(id);
+    });
+  } else {
+    const oldEl = shelfRefs[id];
+    if (oldEl) {
+      shelfResizeObserver?.unobserve(oldEl);
+    }
+    delete shelfRefs[id];
+    delete shelfScrollState[id];
+    delete shelfHoverState[id];
+  }
+}
+
+function onShelfMouseEnter(id) {
+  shelfHoverState[id] = true;
+  updateShelfScrollState(id);
+}
+
+function onShelfMouseLeave(id) {
+  shelfHoverState[id] = false;
 }
 
 function scrollShelf(id, direction) {
@@ -1010,7 +1071,18 @@ function scrollShelf(id, direction) {
   if (!el) return;
   const distance = Math.max(300, el.clientWidth * 0.75) * direction;
   el.scrollBy({ left: distance, behavior: "smooth" });
+  setTimeout(() => updateShelfScrollState(id), 120);
+  setTimeout(() => updateShelfScrollState(id), 260);
+  setTimeout(() => updateShelfScrollState(id), 420);
 }
+
+watch([catalog, routeFeed], () => {
+  nextTick(() => {
+    Object.keys(shelfRefs).forEach((id) => {
+      updateShelfScrollState(id);
+    });
+  });
+});
 
 // Fetch root catalog
 async function loadCatalog() {
@@ -1645,6 +1717,8 @@ onUnmounted(() => {
   sentinelObserver = null;
   gridObserver?.disconnect();
   gridObserver = null;
+  shelfResizeObserver?.disconnect();
+  shelfResizeObserver = null;
 });
 </script>
 
@@ -1827,115 +1901,145 @@ onUnmounted(() => {
               </span>
             </div>
 
-            <div class="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-7 rounded-full"
-                :title="t('explore.scroll_left')"
-                @click="scrollShelf(group.id, -1)"
-              >
-                <ChevronLeft class="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-7 rounded-full"
-                :title="t('explore.scroll_right')"
-                @click="scrollShelf(group.id, 1)"
-              >
-                <ChevronRight class="size-4" />
-              </Button>
-              <Button
-                v-if="group.link && group.link.href"
-                variant="link"
-                size="sm"
-                class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
-                @click="drillDown(group.link)"
-              >
-                <span>{{ t("common.view_all") }}</span>
-                <ChevronRight class="size-3" />
-              </Button>
-            </div>
+            <Button
+              v-if="group.link && group.link.href"
+              variant="link"
+              size="sm"
+              class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
+              @click="drillDown(group.link)"
+            >
+              <span>{{ t("common.view_all") }}</span>
+              <ChevronRight class="size-3" />
+            </Button>
           </div>
 
-          <!-- Horizontal Shelf Track -->
+          <!-- Track Wrapper with Floating Navigation Buttons -->
           <div
-            :ref="(el) => setShelfRef(group.id, el)"
-            class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+            class="relative"
+            @mouseenter="onShelfMouseEnter(group.id)"
+            @mouseleave="onShelfMouseLeave(group.id)"
           >
-            <div
-              v-for="pub in group.publications"
-              :key="pub.gid + ':' + pub.token"
-              class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-              @click="openGallery(pub, group.publications)"
+            <!-- Left Floating Scroll Button -->
+            <Transition
+              enter-active-class="transition duration-150 ease-out"
+              enter-from-class="opacity-0 scale-90"
+              enter-to-class="opacity-100 scale-100"
+              leave-active-class="transition duration-150 ease-in"
+              leave-from-class="opacity-100 scale-100"
+              leave-to-class="opacity-0 scale-90"
             >
-              <!-- Card Cover -->
-              <div
-                class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+              <button
+                v-if="shelfScrollState[group.id]?.canScrollLeft && shelfHoverState[group.id]"
+                type="button"
+                class="absolute left-1 sm:left-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
+                :title="t('explore.scroll_left')"
+                :aria-label="t('explore.scroll_left')"
+                @click.stop="scrollShelf(group.id, -1)"
               >
-                <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+                <ChevronLeft class="size-4 sm:size-5" />
+              </button>
+            </Transition>
 
-                <!-- Overlay Gradient (only covering bottom 1/2) -->
+            <!-- Horizontal Shelf Track -->
+            <div
+              :ref="(el) => setShelfRef(group.id, el)"
+              class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+              @scroll.passive="updateShelfScrollState(group.id)"
+            >
+              <div
+                v-for="pub in group.publications"
+                :key="pub.gid + ':' + pub.token"
+                class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                @click="openGallery(pub, group.publications)"
+              >
+                <!-- Card Cover -->
                 <div
-                  class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
-                />
-
-                <!-- Top Left: Category Badge -->
-                <div
-                  v-if="pub.category"
-                  class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
-                  :style="{ backgroundColor: getCategoryColor(pub.category) }"
+                  class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
                 >
-                  {{ pub.category }}
-                </div>
+                  <CoverImage :src="pub.coverUrl" :alt="pub.title" />
 
-                <!-- Top Right: Archive / Favorite Badge -->
-                <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
-                  <Badge
-                    :variant="pub.archiveBadge.variant"
-                    class="text-[10px] px-1.5 py-0 font-medium"
+                  <!-- Overlay Gradient (only covering bottom 1/2) -->
+                  <div
+                    class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+                  />
+
+                  <!-- Top Left: Category Badge -->
+                  <div
+                    v-if="pub.category"
+                    class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
+                    :style="{ backgroundColor: getCategoryColor(pub.category) }"
                   >
-                    {{ pub.archiveBadge.label }}
-                  </Badge>
-                </div>
-
-                <!-- Bottom info -->
-                <div
-                  class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
-                >
-                  <div class="flex items-center gap-0.5 shrink-0">
-                    <Star class="size-3 fill-amber-400 text-amber-400" />
-                    <span>{{ pub.rating.toFixed(1) }}</span>
+                    {{ pub.category }}
                   </div>
-                  <span
-                    v-if="pub.language || pub.pageCount > 0"
-                    class="truncate ml-1.5 text-right drop-shadow-xs"
-                    :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
-                  >
-                    <template v-if="pub.language && pub.pageCount > 0">
-                      <span>{{ pub.language }}</span>
-                      <span class="mx-1 opacity-70">·</span>
-                      <span class="font-mono">{{ pub.pageCount }}P</span>
-                    </template>
-                    <template v-else-if="pub.pageCount > 0">
-                      <span class="font-mono">{{ pub.pageCount }}P</span>
-                    </template>
-                    <template v-else>
-                      <span>{{ pub.language }}</span>
-                    </template>
-                  </span>
-                </div>
-              </div>
 
-              <!-- Title -->
-              <div
-                class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
-                :title="pub.title"
-              >
-                {{ pub.title }}
+                  <!-- Top Right: Archive / Favorite Badge -->
+                  <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+                    <Badge
+                      :variant="pub.archiveBadge.variant"
+                      class="text-[10px] px-1.5 py-0 font-medium"
+                    >
+                      {{ pub.archiveBadge.label }}
+                    </Badge>
+                  </div>
+
+                  <!-- Bottom info -->
+                  <div
+                    class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
+                  >
+                    <div class="flex items-center gap-0.5 shrink-0">
+                      <Star class="size-3 fill-amber-400 text-amber-400" />
+                      <span>{{ pub.rating.toFixed(1) }}</span>
+                    </div>
+                    <span
+                      v-if="pub.language || pub.pageCount > 0"
+                      class="truncate ml-1.5 text-right drop-shadow-xs"
+                      :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                    >
+                      <template v-if="pub.language && pub.pageCount > 0">
+                        <span>{{ pub.language }}</span>
+                        <span class="mx-1 opacity-70">·</span>
+                        <span class="font-mono">{{ pub.pageCount }}P</span>
+                      </template>
+                      <template v-else-if="pub.pageCount > 0">
+                        <span class="font-mono">{{ pub.pageCount }}P</span>
+                      </template>
+                      <template v-else>
+                        <span>{{ pub.language }}</span>
+                      </template>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Title -->
+                <div
+                  class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
+                  :title="pub.title"
+                >
+                  {{ pub.title }}
+                </div>
               </div>
             </div>
+
+            <!-- Right Floating Scroll Button -->
+            <Transition
+              enter-active-class="transition duration-150 ease-out"
+              enter-from-class="opacity-0 scale-90"
+              enter-to-class="opacity-100 scale-100"
+              leave-active-class="transition duration-150 ease-in"
+              leave-from-class="opacity-100 scale-100"
+              leave-to-class="opacity-0 scale-90"
+            >
+              <button
+                v-if="shelfScrollState[group.id]?.canScrollRight && shelfHoverState[group.id]"
+                type="button"
+                class="absolute right-1 sm:right-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
+                :title="t('explore.scroll_right')"
+                :aria-label="t('explore.scroll_right')"
+                @click.stop="scrollShelf(group.id, 1)"
+              >
+                <ChevronRight class="size-4 sm:size-5" />
+              </button>
+            </Transition>
           </div>
         </div>
       </template>
@@ -2028,115 +2132,145 @@ onUnmounted(() => {
                 </span>
               </div>
 
-              <div class="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="size-7 rounded-full"
-                  :title="t('explore.scroll_left')"
-                  @click="scrollShelf(group.id, -1)"
-                >
-                  <ChevronLeft class="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="size-7 rounded-full"
-                  :title="t('explore.scroll_right')"
-                  @click="scrollShelf(group.id, 1)"
-                >
-                  <ChevronRight class="size-4" />
-                </Button>
-                <Button
-                  v-if="group.link && group.link.href"
-                  variant="link"
-                  size="sm"
-                  class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
-                  @click="drillDown(group.link)"
-                >
-                  <span>{{ t("common.view_all") }}</span>
-                  <ChevronRight class="size-3" />
-                </Button>
-              </div>
+              <Button
+                v-if="group.link && group.link.href"
+                variant="link"
+                size="sm"
+                class="text-xs font-medium h-7 px-2 text-primary gap-0.5"
+                @click="drillDown(group.link)"
+              >
+                <span>{{ t("common.view_all") }}</span>
+                <ChevronRight class="size-3" />
+              </Button>
             </div>
 
-            <!-- Horizontal Shelf Track -->
+            <!-- Track Wrapper with Floating Navigation Buttons -->
             <div
-              :ref="(el) => setShelfRef(group.id, el)"
-              class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+              class="relative"
+              @mouseenter="onShelfMouseEnter(group.id)"
+              @mouseleave="onShelfMouseLeave(group.id)"
             >
-              <div
-                v-for="pub in group.publications"
-                :key="pub.gid + ':' + pub.token"
-                class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-                @click="openGallery(pub, group.publications)"
+              <!-- Left Floating Scroll Button -->
+              <Transition
+                enter-active-class="transition duration-150 ease-out"
+                enter-from-class="opacity-0 scale-90"
+                enter-to-class="opacity-100 scale-100"
+                leave-active-class="transition duration-150 ease-in"
+                leave-from-class="opacity-100 scale-100"
+                leave-to-class="opacity-0 scale-90"
               >
-                <!-- Card Cover -->
-                <div
-                  class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+                <button
+                  v-if="shelfScrollState[group.id]?.canScrollLeft && shelfHoverState[group.id]"
+                  type="button"
+                  class="absolute left-1 sm:left-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
+                  :title="t('explore.scroll_left')"
+                  :aria-label="t('explore.scroll_left')"
+                  @click.stop="scrollShelf(group.id, -1)"
                 >
-                  <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+                  <ChevronLeft class="size-4 sm:size-5" />
+                </button>
+              </Transition>
 
-                  <!-- Overlay Gradient (only covering bottom 1/2) -->
+              <!-- Horizontal Shelf Track -->
+              <div
+                :ref="(el) => setShelfRef(group.id, el)"
+                class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+                @scroll.passive="updateShelfScrollState(group.id)"
+              >
+                <div
+                  v-for="pub in group.publications"
+                  :key="pub.gid + ':' + pub.token"
+                  class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                  @click="openGallery(pub, group.publications)"
+                >
+                  <!-- Card Cover -->
                   <div
-                    class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
-                  />
-
-                  <!-- Top Left: Category Badge -->
-                  <div
-                    v-if="pub.category"
-                    class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
-                    :style="{ backgroundColor: getCategoryColor(pub.category) }"
+                    class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
                   >
-                    {{ pub.category }}
-                  </div>
+                    <CoverImage :src="pub.coverUrl" :alt="pub.title" />
 
-                  <!-- Top Right: Archive / Favorite Badge -->
-                  <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
-                    <Badge
-                      :variant="pub.archiveBadge.variant"
-                      class="text-[10px] px-1.5 py-0 font-medium"
+                    <!-- Overlay Gradient (only covering bottom 1/2) -->
+                    <div
+                      class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+                    />
+
+                    <!-- Top Left: Category Badge -->
+                    <div
+                      v-if="pub.category"
+                      class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
+                      :style="{ backgroundColor: getCategoryColor(pub.category) }"
                     >
-                      {{ pub.archiveBadge.label }}
-                    </Badge>
-                  </div>
-
-                  <!-- Bottom info -->
-                  <div
-                    class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
-                  >
-                    <div class="flex items-center gap-0.5 shrink-0">
-                      <Star class="size-3 fill-amber-400 text-amber-400" />
-                      <span>{{ pub.rating.toFixed(1) }}</span>
+                      {{ pub.category }}
                     </div>
-                    <span
-                      v-if="pub.language || pub.pageCount > 0"
-                      class="truncate ml-1.5 text-right drop-shadow-xs"
-                      :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
-                    >
-                      <template v-if="pub.language && pub.pageCount > 0">
-                        <span>{{ pub.language }}</span>
-                        <span class="mx-1 opacity-70">·</span>
-                        <span class="font-mono">{{ pub.pageCount }}P</span>
-                      </template>
-                      <template v-else-if="pub.pageCount > 0">
-                        <span class="font-mono">{{ pub.pageCount }}P</span>
-                      </template>
-                      <template v-else>
-                        <span>{{ pub.language }}</span>
-                      </template>
-                    </span>
-                  </div>
-                </div>
 
-                <!-- Title -->
-                <div
-                  class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
-                  :title="pub.title"
-                >
-                  {{ pub.title }}
+                    <!-- Top Right: Archive / Favorite Badge -->
+                    <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+                      <Badge
+                        :variant="pub.archiveBadge.variant"
+                        class="text-[10px] px-1.5 py-0 font-medium"
+                      >
+                        {{ pub.archiveBadge.label }}
+                      </Badge>
+                    </div>
+
+                    <!-- Bottom info -->
+                    <div
+                      class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
+                    >
+                      <div class="flex items-center gap-0.5 shrink-0">
+                        <Star class="size-3 fill-amber-400 text-amber-400" />
+                        <span>{{ pub.rating.toFixed(1) }}</span>
+                      </div>
+                      <span
+                        v-if="pub.language || pub.pageCount > 0"
+                        class="truncate ml-1.5 text-right drop-shadow-xs"
+                        :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                      >
+                        <template v-if="pub.language && pub.pageCount > 0">
+                          <span>{{ pub.language }}</span>
+                          <span class="mx-1 opacity-70">·</span>
+                          <span class="font-mono">{{ pub.pageCount }}P</span>
+                        </template>
+                        <template v-else-if="pub.pageCount > 0">
+                          <span class="font-mono">{{ pub.pageCount }}P</span>
+                        </template>
+                        <template v-else>
+                          <span>{{ pub.language }}</span>
+                        </template>
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Title -->
+                  <div
+                    class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
+                    :title="pub.title"
+                  >
+                    {{ pub.title }}
+                  </div>
                 </div>
               </div>
+
+              <!-- Right Floating Scroll Button -->
+              <Transition
+                enter-active-class="transition duration-150 ease-out"
+                enter-from-class="opacity-0 scale-90"
+                enter-to-class="opacity-100 scale-100"
+                leave-active-class="transition duration-150 ease-in"
+                leave-from-class="opacity-100 scale-100"
+                leave-to-class="opacity-0 scale-90"
+              >
+                <button
+                  v-if="shelfScrollState[group.id]?.canScrollRight && shelfHoverState[group.id]"
+                  type="button"
+                  class="absolute right-1 sm:right-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
+                  :title="t('explore.scroll_right')"
+                  :aria-label="t('explore.scroll_right')"
+                  @click.stop="scrollShelf(group.id, 1)"
+                >
+                  <ChevronRight class="size-4 sm:size-5" />
+                </button>
+              </Transition>
             </div>
           </div>
         </template>
