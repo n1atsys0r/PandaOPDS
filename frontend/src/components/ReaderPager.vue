@@ -57,8 +57,6 @@ const readingRTL = ref(
         props.rtl ? "rtl" : "ltr",
       ) === "rtl",
 );
-const status = ref("loading");
-const src = ref("");
 const pageUrls = ref({});
 const pageErrors = ref({});
 const pageMode = ref(
@@ -194,13 +192,6 @@ async function loadCurrent() {
   const currentIndex = displayIndex.value;
   const cachedUrl =
     pageUrls.value[currentIndex] || preloadedUrls.get(currentIndex);
-  const cachedReady = Boolean(cachedUrl && decodedImageUrls.has(cachedUrl));
-  if (cachedReady) {
-    src.value = cachedUrl;
-    status.value = "loaded";
-  } else {
-    status.value = "loading";
-  }
   const currentRequest = cachedUrl
     ? Promise.resolve(cachedUrl)
     : props.resolvePage(displayIndex.value, true);
@@ -244,14 +235,14 @@ async function loadCurrent() {
       Math.max(1, deadline - performance.now()),
     );
     if (id !== requestId) return;
-    src.value = url;
     setPageUrl(displayIndex.value, url);
     const { [displayIndex.value]: _removed, ...remainingErrors } =
       pageErrors.value;
     pageErrors.value = remainingErrors;
-    status.value = "loaded";
   } catch {
-    if (id === requestId) status.value = "error";
+    if (id === requestId) {
+      pageErrors.value = { ...pageErrors.value, [displayIndex.value]: true };
+    }
   }
 }
 
@@ -416,12 +407,11 @@ function waitForImage(url, timeoutMs = 12000) {
   return ready;
 }
 async function retrySpreadPage(index) {
+  const { [index]: _removed, ...errors } = pageErrors.value;
+  pageErrors.value = errors;
+  removePageUrl(index);
   try {
     const url = await props.resolvePage(index, true);
-    removePageUrl(index);
-    await nextTick();
-    const { [index]: _removed, ...errors } = pageErrors.value;
-    pageErrors.value = errors;
     setPageUrl(index, url);
     await nextTick();
     await waitForImage(url);
@@ -430,9 +420,7 @@ async function retrySpreadPage(index) {
   }
 }
 function retryCurrentPage() {
-  removePageUrl(displayIndex.value);
-  src.value = "";
-  loadCurrent();
+  retrySpreadPage(displayIndex.value);
 }
 function commit(idx) {
   cancelPendingTurn();
@@ -840,8 +828,7 @@ defineExpose({
               :alt="`${t('explore.page_no')} ${idx + 1}`"
               class="reader-page-image select-none object-contain"
               :class="
-                spreads[spreadIndex].filter((value) => value !== null).length >
-                1
+                spreads[spreadIndex].length > 1
                   ? `reader-page-image--half ${seamClass(spreadIndex, idx)}`
                   : ''
               "
@@ -850,14 +837,16 @@ defineExpose({
             />
             <div
               v-else-if="idx !== null && pageErrors[idx]"
-              class="flex h-full w-1/2 flex-col items-center justify-center gap-2 text-center text-muted-foreground"
+              class="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground select-none"
+              :class="spreads[spreadIndex].length > 1 ? 'w-1/2' : 'w-full'"
             >
-              <span class="text-xs">{{
+              <span class="text-xs font-medium text-destructive/90">{{
                 t("reader.page_load_failed", { page: idx + 1 })
               }}</span>
               <Button
                 variant="outline"
                 size="sm"
+                class="h-8 gap-1.5 rounded-full px-3 text-xs"
                 @click.stop="retrySpreadPage(idx)"
               >
                 <RotateCcw class="size-3.5" /> {{ t("common.retry") }}
@@ -865,43 +854,19 @@ defineExpose({
             </div>
             <div
               v-else-if="idx !== null"
-              class="flex h-full items-center justify-center text-muted-foreground"
-              :class="
-                spreads[spreadIndex].filter((value) => value !== null).length >
-                1
-                  ? 'w-1/2'
-                  : 'w-full'
-              "
+              class="flex h-full flex-col items-center justify-center gap-2.5 text-muted-foreground select-none"
+              :class="spreads[spreadIndex].length > 1 ? 'w-1/2' : 'w-full'"
             >
-              <Loader2 class="size-5 animate-spin" />
+              <Loader2 class="size-7 animate-spin text-primary/70" />
+              <span
+                class="text-xs font-medium tabular-nums tracking-wide text-muted-foreground/60"
+              >
+                {{ idx + 1 }} / {{ pageCount }}
+              </span>
             </div>
             <div v-else class="h-full w-1/2" />
           </template>
         </div>
-      </div>
-      <div
-        v-if="status === 'error'"
-        class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/70 text-muted-foreground"
-      >
-        <span>{{
-          t("reader.page_load_failed", { page: displayIndex + 1 })
-        }}</span>
-        <Button variant="outline" size="sm" @click="retryCurrentPage">
-          <RotateCcw class="size-3.5" /> {{ t("common.retry") }}
-        </Button>
-      </div>
-      <div
-        v-else-if="status === 'loading' && !src"
-        class="flex items-center gap-2 text-muted-foreground"
-      >
-        <Loader2 class="size-5 animate-spin" />{{ displayIndex + 1 }} /
-        {{ pageCount }}
-      </div>
-      <div
-        v-if="status === 'loading' && src"
-        class="absolute right-4 top-4 rounded bg-background/70 p-1"
-      >
-        <Loader2 class="size-4 animate-spin" />
       </div>
     </section>
   </main>
