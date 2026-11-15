@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, reactive } from "vue";
 import { useApp } from "@/state.js";
 import { t } from "@/i18n.js";
 import { Button } from "@/components/ui/button";
@@ -176,6 +176,7 @@ let routeFeedHref = window.location.href;
 
 // Gallery detail drawer
 const detailOpen = ref(false);
+const isPreparingReader = ref(false);
 const selectedPub = ref(null);
 const detailSubView = ref("main"); // "main" | "reviews" | "thumbnails"
 
@@ -1523,23 +1524,64 @@ function openGallery(pub, list = null) {
 }
 
 async function handleRead(pub, startPage = null, options = {}) {
+  if (!pub?.gid || !pub?.token) return;
   const selectedAtClick = pub;
-  const detailedPub = await ensurePublicationDetails(pub);
-  if (!detailedPub?.pageCount || !detailOpen.value || selectedPub.value !== selectedAtClick) return;
+
+  // 1. If publication details are already fully loaded:
+  if (pub.detailLoaded && pub.pageCount > 0) {
+    detailOpen.value = false;
+    const payload = {
+      gid: pub.gid,
+      token: pub.token,
+      title: pub.title,
+      page_count: pub.pageCount,
+      reading_order: pub.readingOrder || [],
+      incognito: Boolean(options.incognito),
+    };
+    if (typeof startPage === "number" && startPage >= 0) {
+      payload.start_page = startPage;
+      payload.initial_page_index = startPage;
+    }
+    emit("read-gallery", payload);
+    return;
+  }
+
+  // 2. If details are still fetching in background:
+  // Immediately close detail modal and launch reader with a reactive loading payload
+  isPreparingReader.value = true;
   detailOpen.value = false;
-  const payload = {
-    gid: detailedPub.gid,
-    token: detailedPub.token,
-    title: detailedPub.title,
-    page_count: detailedPub.pageCount || 0,
-    reading_order: detailedPub.readingOrder || [],
+  const payload = reactive({
+    gid: pub.gid,
+    token: pub.token,
+    title: pub.title,
+    page_count: pub.pageCount || 0,
+    reading_order: pub.readingOrder || [],
     incognito: Boolean(options.incognito),
-  };
+    loading: true,
+  });
   if (typeof startPage === "number" && startPage >= 0) {
     payload.start_page = startPage;
     payload.initial_page_index = startPage;
   }
   emit("read-gallery", payload);
+
+  try {
+    const detailedPub = await ensurePublicationDetails(pub);
+    if (detailedPub && detailedPub.pageCount > 0) {
+      payload.title = detailedPub.title || payload.title;
+      payload.page_count = detailedPub.pageCount;
+      payload.reading_order = detailedPub.readingOrder || [];
+      payload.loading = false;
+    } else {
+      payload.error = true;
+      payload.loading = false;
+    }
+  } catch {
+    payload.error = true;
+    payload.loading = false;
+  } finally {
+    isPreparingReader.value = false;
+  }
 }
 
 const currentProgress = computed(() => {
@@ -2206,9 +2248,11 @@ onUnmounted(() => {
                   >
                     <!-- Primary Button: Read Now / Continue Reading / Read Again (Text only) -->
                     <Button
-                      class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-medium text-xs sm:text-sm h-9 px-6 sm:px-8 flex-initial w-auto min-w-36 max-w-[220px] sm:max-w-none sm:min-w-44 shadow-md transition-all active:scale-95"
+                      :disabled="isPreparingReader"
+                      class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-medium text-xs sm:text-sm h-9 px-6 sm:px-8 flex-initial w-auto min-w-36 max-w-[220px] sm:max-w-none sm:min-w-44 shadow-md transition-all active:scale-95 disabled:opacity-70 gap-2"
                       @click="handlePrimaryRead"
                     >
+                      <Loader2 v-if="isPreparingReader" class="size-3.5 animate-spin shrink-0" />
                       <span>{{ primaryReadButtonLabel }}</span>
                     </Button>
 

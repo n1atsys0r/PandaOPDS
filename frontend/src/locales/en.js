@@ -378,6 +378,8 @@ export default {
     direction_ltr: "Left to right",
     zoom_in: "Zoom in",
     reset_zoom: "Reset zoom",
+    loading_manifest: "Loading gallery contents...",
+    load_manifest_failed: "Failed to load gallery metadata",
   },
   home_editor: {
     header_small: "OPDS Entry",

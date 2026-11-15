@@ -378,6 +378,8 @@ export default {
     direction_ltr: "从左向右",
     zoom_in: "放大",
     reset_zoom: "重置缩放",
+    loading_manifest: "正在载入画册内容...",
+    load_manifest_failed: "画册元数据载入失败",
   },
   home_editor: {
     header_small: "OPDS 入口",
