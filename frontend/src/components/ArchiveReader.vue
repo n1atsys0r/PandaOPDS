@@ -25,6 +25,7 @@ import {
   getReadingThreshold,
   shouldRecordProgress,
 } from "@/progression-helper.js";
+import { createScrollLocker } from "@/reader-scroll-lock.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -646,15 +647,9 @@ function onKeydown(e) {
   }
 }
 
-let savedBodyOverflow = "";
+const scrollLocker = createScrollLocker();
 function lockBodyScroll(lock) {
-  if (typeof document === "undefined") return;
-  if (lock) {
-    savedBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-  } else {
-    document.body.style.overflow = savedBodyOverflow;
-  }
+  scrollLocker.sync(Boolean(lock));
 }
 
 async function startSession() {
