@@ -463,19 +463,24 @@ func (c *Client) ToplistURL(period string, page int) string {
 func (c *Client) ListURL(query, next string, extra url.Values) string {
 	host := c.BaseURL()
 	var p string
-	switch query {
-	case "popular":
+	switch {
+	case query == "popular":
 		p = "/popular"
-	case "watched":
+	case query == "watched" || strings.HasPrefix(query, "watched "):
 		p = "/watched"
-	case "favorites":
+	case query == "favorites":
 		p = "/favorites.php"
 	default:
 		p = "/"
 	}
 	u, _ := url.Parse(host + p)
 	q := u.Query()
-	if query != "popular" && query != "watched" && query != "favorites" && query != "" {
+	if query == "watched" || strings.HasPrefix(query, "watched ") {
+		searchTerm := strings.TrimSpace(strings.TrimPrefix(query, "watched"))
+		if searchTerm != "" {
+			q.Set("f_search", searchTerm)
+		}
+	} else if query != "popular" && query != "favorites" && query != "" {
 		q.Set("f_search", query)
 	}
 	if next != "" {

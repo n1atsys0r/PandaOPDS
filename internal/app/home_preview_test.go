@@ -346,6 +346,21 @@ count=1
 	if !doujinLinkFound {
 		t.Fatalf("Doujinshi link not found in gallery facets: %+v", galleryDoc.Facets)
 	}
+
+	// 3. gallery20 with search within watched (query=watched touhou)
+	searchWatchedReq := httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery?query=watched+touhou&f_cats=1021", nil)
+	searchWatchedRR := httptest.NewRecorder()
+	server.gallery20(searchWatchedRR, searchWatchedReq)
+	if searchWatchedRR.Code != http.StatusOK {
+		t.Fatalf("gallery20 search-watched status=%d", searchWatchedRR.Code)
+	}
+	swBody := searchWatchedRR.Body.String()
+	if !strings.Contains(swBody, "Watched — touhou") {
+		t.Fatalf("expected title with search term, got %s", swBody)
+	}
+	if !strings.Contains(swBody, "query=watched+touhou") && !strings.Contains(swBody, "query=watched%20touhou") {
+		t.Fatalf("expected facets in watched search to retain query, got %s", swBody)
+	}
 }
 
 func TestPageWithCustomFacetSetAndGalleryParams(t *testing.T) {

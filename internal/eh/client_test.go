@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,5 +177,18 @@ func TestListURLUsesExactlyOneExtendedLayoutParameter(t *testing.T) {
 	}
 	if got := toplist.Query()["inline_set"]; len(got) != 1 || got[0] != "dm_e" {
 		t.Fatalf("toplist inline_set=%v, want exactly [dm_e]", got)
+	}
+}
+
+func TestListURLWatchedWithSearchTerm(t *testing.T) {
+	cfg := config.Settings{EHSite: "e-hentai"}
+	client := NewClient(cfg, nil, NewThrottle(cfg))
+	u1 := client.ListURL("watched", "", nil)
+	if !strings.Contains(u1, "e-hentai.org/watched") || strings.Contains(u1, "f_search") {
+		t.Fatalf("unexpected u1: %s", u1)
+	}
+	u2 := client.ListURL("watched touhou", "", url.Values{"f_cats": {"1021"}})
+	if !strings.Contains(u2, "e-hentai.org/watched") || !strings.Contains(u2, "f_search=touhou") || !strings.Contains(u2, "f_cats=1021") {
+		t.Fatalf("unexpected u2: %s", u2)
 	}
 }

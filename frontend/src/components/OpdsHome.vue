@@ -73,13 +73,6 @@ function getCategoryColor(category) {
   return c ? c.color : "#9e9e9e";
 }
 
-function getCategoryIndicatorColor(title) {
-  const c = EH_CATEGORIES.find(
-    (x) => x.key.toLowerCase() === (title || "").toLowerCase(),
-  );
-  return c ? c.color : null;
-}
-
 // State
 const loading = ref(false);
 const error = ref("");
@@ -2137,11 +2130,6 @@ onUnmounted(() => {
               :aria-pressed="link.isActive"
               @click="onFacetClick(link)"
             >
-              <span
-                v-if="getCategoryIndicatorColor(link.title)"
-                class="size-2 rounded-full shrink-0 ring-1 ring-background/30"
-                :style="{ backgroundColor: getCategoryIndicatorColor(link.title) }"
-              />
               <span class="tracking-tight whitespace-nowrap">
                 {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
               </span>
@@ -2368,11 +2356,6 @@ onUnmounted(() => {
                 :aria-pressed="link.isActive"
                 @click="onFacetClick(link)"
               >
-                <span
-                  v-if="getCategoryIndicatorColor(link.title)"
-                  class="size-2 rounded-full shrink-0 ring-1 ring-background/30"
-                  :style="{ backgroundColor: getCategoryIndicatorColor(link.title) }"
-                />
                 <span class="tracking-tight whitespace-nowrap">
                   {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
                 </span>
@@ -2601,11 +2584,6 @@ onUnmounted(() => {
                 :aria-pressed="link.isActive"
                 @click="onFacetClick(link)"
               >
-                <span
-                  v-if="getCategoryIndicatorColor(link.title)"
-                  class="size-2 rounded-full shrink-0 ring-1 ring-background/30"
-                  :style="{ backgroundColor: getCategoryIndicatorColor(link.title) }"
-                />
                 <span class="tracking-tight whitespace-nowrap">
                   {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
                 </span>

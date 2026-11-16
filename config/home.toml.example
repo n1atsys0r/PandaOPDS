@@ -129,7 +129,7 @@ count = 20
 [[page.section]]
 kind = "facets"
 group = false
-title = "Categories"
+title = "Filter"
 type = "preset"
 query = "watched"
 

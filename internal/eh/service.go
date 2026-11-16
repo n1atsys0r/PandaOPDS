@@ -205,7 +205,10 @@ func (s *Service) Popular(ctx context.Context, next string) (GalleryPageInfo, er
 	return s.GetList(ctx, "popular", next, nil, false)
 }
 func (s *Service) Watched(ctx context.Context, next string, extra url.Values) (GalleryPageInfo, error) {
-	return s.GetList(ctx, "watched", next, extra, false)
+	return s.WatchedQuery(ctx, "watched", next, extra)
+}
+func (s *Service) WatchedQuery(ctx context.Context, query, next string, extra url.Values) (GalleryPageInfo, error) {
+	return s.GetList(ctx, query, next, extra, false)
 }
 func (s *Service) Favorites(ctx context.Context, next string, favcat string) (GalleryPageInfo, error) {
 	query := "favorites"

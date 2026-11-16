@@ -346,8 +346,8 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case query == "popular":
 		info, e = s.Service.Popular(ctx, next)
-	case query == "watched":
-		info, e = s.Service.Watched(ctx, next, extra)
+	case query == "watched" || strings.HasPrefix(query, "watched "):
+		info, e = s.Service.WatchedQuery(ctx, query, next, extra)
 	case query == "favorites" || strings.HasPrefix(query, "favorites:"):
 		cat := favcat
 		if strings.HasPrefix(query, "favorites:") {
@@ -383,11 +383,16 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(query, "favorites:") {
 		name = "Favorites " + strings.TrimPrefix(query, "favorites:")
 	}
-	switch query {
-	case "":
+	switch {
+	case query == "":
 		name = "Latest"
-	case "popular", "watched", "favorites":
+	case query == "popular", query == "favorites":
 		name = strings.ToUpper(query[:1]) + query[1:]
+	case query == "watched" || strings.HasPrefix(query, "watched "):
+		name = "Watched"
+		if term := strings.TrimSpace(strings.TrimPrefix(query, "watched")); term != "" {
+			name += " — " + term
+		}
 	}
 	if category != "" {
 		name += " — " + category
@@ -854,8 +859,6 @@ func (s *Server) customFacetLinks(items []home.NavigationItem, baseType, baseQue
 	targetRoute := "/opds/v2.0/gallery"
 	if baseType == "preset" && (baseQuery == "latest" || baseQuery == "") {
 		baseQuery = ""
-	} else if baseQuery == "watched" {
-		baseQuery = "watched"
 	}
 
 	var activeIndex int = -1
