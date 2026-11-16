@@ -103,7 +103,9 @@ function createNavigationHarness() {
       const rawHash = (windowObj.location.hash || "").replace(/^#\/?/, "");
       const parts = rawHash.split("/");
       const rootPage = parts[0] || "dashboard";
-      if (["dashboard", "explore", "archive", "config", "home"].includes(rootPage)) {
+      if (
+        ["dashboard", "explore", "archive", "config", "home"].includes(rootPage)
+      ) {
         state.page = rootPage;
       }
       if (rootPage !== "explore" || !parts[1]) {
@@ -124,7 +126,10 @@ function createNavigationHarness() {
   function canReadOnline(a) {
     if (!a) return false;
     if (a.loading) return true;
-    const pageCount = Math.max(0, Number(a?.page_count || a?.metadata?.filecount || 0));
+    const pageCount = Math.max(
+      0,
+      Number(a?.page_count || a?.metadata?.filecount || 0),
+    );
     if (pageCount <= 0) return false;
     if (!a.status) return true;
     return ["ready", "unarchived", "failed"].includes(a.status);
@@ -149,7 +154,12 @@ function createNavigationHarness() {
     if (!readerArchive && !isClosingReader) return;
     const hadArchive = Boolean(readerArchive);
     readerArchive = null;
-    if (!fromHistory && !isClosingReader && hadArchive && history.state?.reader) {
+    if (
+      !fromHistory &&
+      !isClosingReader &&
+      hadArchive &&
+      history.state?.reader
+    ) {
       isClosingReader = true;
       try {
         history.back();
@@ -211,7 +221,10 @@ test("exploring and drilling down pushes subroute and allows clean browser back"
   h.route("explore", "replace");
 
   // Drill down into category
-  h.enterExploreSubRoute({ title: "Doujinshi", href: "/opds/v2.0/category/doujinshi" });
+  h.enterExploreSubRoute({
+    title: "Doujinshi",
+    href: "/opds/v2.0/category/doujinshi",
+  });
   assert.equal(h.state.page, "explore");
   assert.equal(h.state.exploreSubRoute?.title, "Doujinshi");
   assert.equal(h.history.stack.length, 2);
@@ -230,7 +243,13 @@ test("canReadOnline accepts loading archive so history state is pushed immediate
   h.route("explore", "replace");
   h.enterExploreSubRoute({ title: "Manga", href: "/opds/v2.0/category/manga" });
 
-  const loadingArchive = { gid: 123, token: "abc", title: "Loading Pub", page_count: 0, loading: true };
+  const loadingArchive = {
+    gid: 123,
+    token: "abc",
+    title: "Loading Pub",
+    page_count: 0,
+    loading: true,
+  };
   assert.equal(h.canReadOnline(loadingArchive), true);
 
   h.openReader(loadingArchive);
@@ -242,7 +261,10 @@ test("canReadOnline accepts loading archive so history state is pushed immediate
 test("closing reader via X button unwinds reader without double-popping subroute", () => {
   const h = createNavigationHarness();
   h.route("explore", "replace");
-  h.enterExploreSubRoute({ title: "Doujinshi", href: "/opds/v2.0/category/doujinshi" });
+  h.enterExploreSubRoute({
+    title: "Doujinshi",
+    href: "/opds/v2.0/category/doujinshi",
+  });
 
   h.openReader({ gid: 456, token: "def", title: "Book A", page_count: 10 });
   assert.equal(h.getReaderArchive()?.title, "Book A");
@@ -260,7 +282,10 @@ test("closing reader via X button unwinds reader without double-popping subroute
 test("closing reader via browser back unwinds reader and keeps subroute intact", () => {
   const h = createNavigationHarness();
   h.route("explore", "replace");
-  h.enterExploreSubRoute({ title: "Doujinshi", href: "/opds/v2.0/category/doujinshi" });
+  h.enterExploreSubRoute({
+    title: "Doujinshi",
+    href: "/opds/v2.0/category/doujinshi",
+  });
 
   h.openReader({ gid: 789, token: "ghi", title: "Book B", page_count: 15 });
   assert.equal(h.getReaderArchive()?.title, "Book B");
@@ -283,7 +308,10 @@ test("closing reader via browser back unwinds reader and keeps subroute intact",
 test("breadcrumb exitExploreSubRoute pops back cleanly to Explore Home", () => {
   const h = createNavigationHarness();
   h.route("explore", "replace");
-  h.enterExploreSubRoute({ title: "Doujinshi", href: "/opds/v2.0/category/doujinshi" });
+  h.enterExploreSubRoute({
+    title: "Doujinshi",
+    href: "/opds/v2.0/category/doujinshi",
+  });
   assert.equal(h.history.index, 1);
 
   // Click breadcrumb "探索"

@@ -2,7 +2,7 @@
 import { cn } from "cn";
 import { useId } from "reka-ui";
 import { computed } from "vue";
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from "@/components/ui/skeleton";
 
 const props = defineProps({
   showIcon: { type: Boolean, required: false },

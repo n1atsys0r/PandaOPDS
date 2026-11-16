@@ -15,15 +15,27 @@ import {
 test("navigation-only and empty layouts serialize in publication mode", () => {
   const empty = { navigation: [], publication: null, facets: [], groups: [] };
   assert.deepEqual(serializeHomeLayout(empty, "publications"), []);
-  const navOnly = { ...empty, navigation: [{ title: "Recent", type: "preset", query: "latest" }] };
+  const navOnly = {
+    ...empty,
+    navigation: [{ title: "Recent", type: "preset", query: "latest" }],
+  };
   assert.deepEqual(serializeHomeLayout(navOnly, "publications"), [
-    { title: "Recent", type: "preset", query: "latest", kind: "navigation", group: false, count: null },
+    {
+      title: "Recent",
+      type: "preset",
+      query: "latest",
+      kind: "navigation",
+      group: false,
+      count: null,
+    },
   ]);
 });
 
 test("saved alternate mode is called out before replacement", () => {
   const savedGroups = [{ kind: "publication", group: true, query: "popular" }];
-  const savedPublication = [{ kind: "publication", group: false, query: "latest" }];
+  const savedPublication = [
+    { kind: "publication", group: false, query: "latest" },
+  ];
   assert.equal(replacesAlternateMode(savedGroups, "publications"), true);
   assert.equal(replacesAlternateMode(savedPublication, "groups"), true);
   assert.equal(replacesAlternateMode(savedGroups, "groups"), false);
@@ -31,46 +43,101 @@ test("saved alternate mode is called out before replacement", () => {
 
 test("switching layout modes retains both drafts", () => {
   const drafts = {
-    navigation: [{ kind: "navigation", title: "Top", type: "preset", query: "popular" }],
-    publication: { kind: "publication", title: "Search", type: "search", query: "cats", count: 4 },
+    navigation: [
+      { kind: "navigation", title: "Top", type: "preset", query: "popular" },
+    ],
+    publication: {
+      kind: "publication",
+      title: "Search",
+      type: "search",
+      query: "cats",
+      count: 4,
+    },
     facets: [{ title: "Category" }],
-    groups: [{ kind: "publication", group: true, title: "Group", type: "preset", query: "latest", count: 2 }],
+    groups: [
+      {
+        kind: "publication",
+        group: true,
+        title: "Group",
+        type: "preset",
+        query: "latest",
+        count: 2,
+      },
+    ],
   };
   const before = structuredClone(drafts);
   const grouped = serializeHomeLayout(drafts, "groups");
   const publication = serializeHomeLayout(drafts, "publications");
-  assert.equal(grouped.some((x) => x.group), true);
-  assert.equal(publication.some((x) => x.group), false);
+  assert.equal(
+    grouped.some((x) => x.group),
+    true,
+  );
+  assert.equal(
+    publication.some((x) => x.group),
+    false,
+  );
   assert.deepEqual(drafts, before);
 });
 
 test("publication layout serializes clean publication entity", () => {
   const drafts = {
     navigation: [],
-    publication: { kind: "publication", type: "search", query: "language:japanese", count: 5 },
+    publication: {
+      kind: "publication",
+      type: "search",
+      query: "language:japanese",
+      count: 5,
+    },
     facets: [],
     groups: [],
   };
-  const pub = serializeHomeLayout(drafts, "publications").find((x) => x.kind === "publication");
+  const pub = serializeHomeLayout(drafts, "publications").find(
+    (x) => x.kind === "publication",
+  );
   assert.equal(pub.type, "search");
   assert.equal(pub.query, "language:japanese");
   assert.equal(canUseFacets(drafts.publication), true);
   assert.equal(canUseFacets({ type: "preset", query: "watched" }), true);
   assert.equal(canUseFacets({ type: "preset", query: "archives" }), true);
   assert.equal(canUseFacets({ type: "preset", query: "history" }), true);
-  assert.equal(chooseInitialHomeMode([{ kind: "publication", group: false }, { kind: "publication", group: true }]), "");
+  assert.equal(
+    chooseInitialHomeMode([
+      { kind: "publication", group: false },
+      { kind: "publication", group: true },
+    ]),
+    "",
+  );
 });
 
 test("custom facet sets split and serialize cleanly", () => {
   const layout = {
     navigation: [],
-    publication: { kind: "publication", type: "search", query: "touhou", count: 10 },
+    publication: {
+      kind: "publication",
+      type: "search",
+      query: "touhou",
+      count: 10,
+    },
     facets: [
       {
         title: "精选",
         items: [
-          { title: "全部", query: "", categories: [], rating: 0, expunged: false, disable_filters: [] },
-          { title: "4星汉化同人", query: "language:chinese", categories: ["Doujinshi"], rating: 4, expunged: true, disable_filters: ["language"] },
+          {
+            title: "全部",
+            query: "",
+            categories: [],
+            rating: 0,
+            expunged: false,
+            disable_filters: [],
+          },
+          {
+            title: "4星汉化同人",
+            query: "language:chinese",
+            categories: ["Doujinshi"],
+            rating: 4,
+            expunged: true,
+            disable_filters: ["language"],
+          },
         ],
       },
     ],
@@ -99,7 +166,12 @@ test("custom facet sets split and serialize cleanly", () => {
 test("referenced facet sets split and serialize cleanly", () => {
   const layout = {
     navigation: [],
-    publication: { kind: "publication", type: "search", query: "touhou", count: 10 },
+    publication: {
+      kind: "publication",
+      type: "search",
+      query: "touhou",
+      count: 10,
+    },
     facets: [
       {
         facet_set: "chinese_manga",
@@ -242,9 +314,18 @@ test("navigation items support preset, search, and page types cleanly", () => {
 test("createDefaultGlobalNavigation and createDefaultHomePages decouple top navigation from pages", () => {
   const globalNav = createDefaultGlobalNavigation();
   assert.equal(globalNav.length, 5);
-  assert.deepEqual(globalNav.map((n) => n.query), ["home", "watched", "favorites", "toplists", "archives"]);
-  assert.equal(globalNav.every((n) => n.kind === "navigation" && !n.group), true);
-  assert.deepEqual(globalNav.map((n) => n.type), ["page", "preset", "preset", "page", "preset"]);
+  assert.deepEqual(
+    globalNav.map((n) => n.query),
+    ["home", "watched", "favorites", "toplists", "archives"],
+  );
+  assert.equal(
+    globalNav.every((n) => n.kind === "navigation" && !n.group),
+    true,
+  );
+  assert.deepEqual(
+    globalNav.map((n) => n.type),
+    ["page", "preset", "preset", "page", "preset"],
+  );
   assert.equal(globalNav[0].title, "");
   assert.equal(globalNav[3].title, "");
   assert.equal(isKnownPreset("toplists"), false);
@@ -257,7 +338,7 @@ test("createDefaultGlobalNavigation and createDefaultHomePages decouple top navi
   assert.equal(pages[0].layout.groups.length, 3);
   assert.deepEqual(
     pages[0].layout.groups.map((g) => g.query),
-    ["popular", "latest", "history"]
+    ["popular", "latest", "history"],
   );
   assert.deepEqual(pages[0].layout.navigation, []);
 
@@ -266,12 +347,18 @@ test("createDefaultGlobalNavigation and createDefaultHomePages decouple top navi
   assert.equal(pages[1].layout.groups.length, 4);
   assert.deepEqual(
     pages[1].layout.groups.map((g) => g.query),
-    ["toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime"]
+    ["toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime"],
   );
 
   // Legacy preset:toplists navigation auto-migrates to page:toplists
   const legacySections = [
-    { kind: "navigation", group: false, title: "Toplists", type: "preset", query: "toplists" },
+    {
+      kind: "navigation",
+      group: false,
+      title: "Toplists",
+      type: "preset",
+      query: "toplists",
+    },
   ];
   const split = splitHomeSections(legacySections);
   assert.equal(split.navigation[0].type, "page");
@@ -283,8 +370,16 @@ test("createDefaultSearchFacets returns 10 editable categories", () => {
   assert.equal(facets.length, 10);
 
   const categories = [
-    "Doujinshi", "Manga", "Artist CG", "Game CG", "Western",
-    "Non-H", "Image Set", "Cosplay", "Asian Porn", "Misc",
+    "Doujinshi",
+    "Manga",
+    "Artist CG",
+    "Game CG",
+    "Western",
+    "Non-H",
+    "Image Set",
+    "Cosplay",
+    "Asian Porn",
+    "Misc",
   ];
   for (let i = 0; i < categories.length; i++) {
     const item = facets[i];

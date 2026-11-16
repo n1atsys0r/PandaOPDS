@@ -22,10 +22,16 @@ test("i18n switches to en and resolves english translations", () => {
 
 test("i18n interpolates variables properly", () => {
   setLocale("zh");
-  assert.equal(t("archive.scan_banner_result", { imported: 3, skipped: 1, conflicts: 0 }), "扫描完成：已导入 3 本，跳过 1 本，冲突 0 本");
+  assert.equal(
+    t("archive.scan_banner_result", { imported: 3, skipped: 1, conflicts: 0 }),
+    "扫描完成：已导入 3 本，跳过 1 本，冲突 0 本",
+  );
 
   setLocale("en");
-  assert.equal(t("archive.scan_banner_result", { imported: 3, skipped: 1, conflicts: 0 }), "Scan complete: imported 3, skipped 1, conflicts 0");
+  assert.equal(
+    t("archive.scan_banner_result", { imported: 3, skipped: 1, conflicts: 0 }),
+    "Scan complete: imported 3, skipped 1, conflicts 0",
+  );
 });
 
 test("toggleLocale cycles between zh and en", () => {

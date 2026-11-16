@@ -1,9 +1,9 @@
 <script setup>
 import { cn } from "cn";
-import { Sheet, SheetContent } from '@/components/ui/sheet';
-import SheetDescription from '@/components/ui/sheet/SheetDescription.vue';
-import SheetHeader from '@/components/ui/sheet/SheetHeader.vue';
-import SheetTitle from '@/components/ui/sheet/SheetTitle.vue';
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import SheetDescription from "@/components/ui/sheet/SheetDescription.vue";
+import SheetHeader from "@/components/ui/sheet/SheetHeader.vue";
+import SheetTitle from "@/components/ui/sheet/SheetTitle.vue";
 import { SIDEBAR_WIDTH_MOBILE, useSidebar } from "./utils";
 
 defineOptions({ inheritAttrs: false });

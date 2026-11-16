@@ -11,7 +11,9 @@ const props = defineProps({
   <component
     :is="props.as"
     data-slot="breadcrumb-link"
-    :class="cn('transition-colors hover:text-foreground cursor-pointer', props.class)"
+    :class="
+      cn('transition-colors hover:text-foreground cursor-pointer', props.class)
+    "
   >
     <slot />
   </component>

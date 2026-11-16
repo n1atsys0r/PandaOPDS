@@ -1,10 +1,26 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, reactive } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onUnmounted,
+  nextTick,
+  reactive,
+} from "vue";
 import { useApp } from "@/state.js";
 import { t } from "@/i18n.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +39,7 @@ import {
   RefreshCwIcon as RefreshCw,
   BookOpenIcon as BookOpen,
   BookmarkIcon as Bookmark,
+  BookmarkXIcon as BookmarkX,
   DownloadIcon as Download,
   ExternalLinkIcon as ExternalLink,
   StarIcon as Star,
@@ -43,6 +60,7 @@ import {
   GridIcon as Grid,
   RotateCcwIcon as RotateCcw,
   PanelsTopLeftIcon as PanelsTopLeft,
+  CircleAlertIcon as CircleAlert,
 } from "@lucide/vue";
 
 const emit = defineEmits([
@@ -189,6 +207,19 @@ const isPreparingReader = ref(false);
 const selectedPub = ref(null);
 const detailSubView = ref("main"); // "main" | "reviews" | "thumbnails"
 
+// Active archive in-progress statuses
+const ACTIVE_ARCHIVE_STATUSES = [
+  "pending",
+  "submitting",
+  "staging",
+  "downloading",
+  "zipping",
+];
+
+function isArchiveDownloading(status) {
+  return ACTIVE_ARCHIVE_STATUSES.includes(status);
+}
+
 // Local archive lookup
 const archivesMap = computed(() => {
   const map = new Map();
@@ -206,33 +237,90 @@ const currentArchiveItem = computed(() => {
   const gid = selectedPub.value.gid;
   const token = selectedPub.value.token;
   if (!gid || !token) return selectedPub.value.archiveItem || null;
-  return archivesMap.value.get(`${gid}:${token}`) || selectedPub.value.archiveItem || null;
+  return (
+    archivesMap.value.get(`${gid}:${token}`) ||
+    selectedPub.value.archiveItem ||
+    null
+  );
 });
 
 const currentArchiveBadge = computed(() => {
+  const pub = selectedPub.value;
+  if (!pub) return null;
+  const key = `${pub.gid}:${pub.token}`;
+  const override = s.favoriteOverrides?.value?.[key];
   const item = currentArchiveItem.value;
-  const rawMeta = selectedPub.value?.raw?.metadata || {};
-  const isFavoritedFromMeta = Boolean(
+  const rawMeta = pub.raw?.metadata || {};
+  let isFavoritedFromMeta = Boolean(
     rawMeta.belongsTo?.collection ||
     rawMeta["x:favorite"] ||
-    rawMeta["x:is_favorited"]
+    rawMeta["x:is_favorited"],
   );
+  if (override != null) {
+    isFavoritedFromMeta = override.isFavorited;
+  }
   if (item) {
-    const isFavorited = Boolean(item.is_favorited || item.status === "unarchived" || isFavoritedFromMeta);
+    let isFavorited = Boolean(
+      item.is_favorited || item.status === "unarchived" || isFavoritedFromMeta,
+    );
+    if (override != null) {
+      isFavorited = override.isFavorited;
+    }
     if (item.status === "ready") {
-      return { label: t("explore.badge_archived"), variant: "default", isReady: true, isFavorited };
-    } else if (item.status === "downloading" || item.status === "staging") {
-      return { label: t("explore.badge_downloading"), variant: "secondary", isDownloading: true, isFavorited };
+      return {
+        label: t("explore.badge_archived"),
+        variant: "default",
+        isReady: true,
+        isFavorited,
+      };
+    } else if (isArchiveDownloading(item.status)) {
+      return {
+        label:
+          item.status === "pending" || item.status === "submitting"
+            ? t("explore.badge_pending", t("explore.badge_downloading"))
+            : t("explore.badge_downloading"),
+        variant: "secondary",
+        isDownloading: true,
+        isFavorited,
+      };
     } else if (item.status === "failed") {
-      return { label: t("explore.badge_failed"), variant: "destructive", isFailed: true, isFavorited };
+      return {
+        label: t("explore.badge_failed"),
+        variant: "destructive",
+        isFailed: true,
+        isFavorited,
+      };
     } else if (isFavorited) {
-      return { label: t("explore.badge_fav"), variant: "outline", isFavorited: true };
+      return {
+        label: t("explore.badge_fav"),
+        variant: "outline",
+        isFavorited: true,
+      };
     }
   }
   if (isFavoritedFromMeta) {
-    return { label: t("explore.badge_favorited"), variant: "outline", isFavorited: true };
+    return {
+      label: t("explore.badge_favorited"),
+      variant: "outline",
+      isFavorited: true,
+    };
   }
-  return selectedPub.value?.archiveBadge || null;
+  if (pub.archiveBadge) {
+    if (override != null) {
+      return {
+        ...pub.archiveBadge,
+        isFavorited: override.isFavorited,
+      };
+    }
+    return pub.archiveBadge;
+  }
+  return null;
+});
+
+const isArchiveQuoteBusy = computed(() => {
+  if (!s.busy.value || !selectedPub.value) return false;
+  const input = `${selectedPub.value.gid} ${selectedPub.value.token}`.trim();
+  return String(s.archiveInput.value || "").trim() === input;
 });
 
 function formatFileSize(bytes) {
@@ -271,7 +359,11 @@ const currentRating = computed(() => {
   const meta = pub.raw?.metadata || {};
   const item = currentArchiveItem.value;
   const itemRating = Number(item?.metadata?.rating || item?.rating);
-  if (Number.isFinite(itemRating) && itemRating > 0 && itemRating !== Math.floor(itemRating * 2) / 2) {
+  if (
+    Number.isFinite(itemRating) &&
+    itemRating > 0 &&
+    itemRating !== Math.floor(itemRating * 2) / 2
+  ) {
     return itemRating;
   }
   const rawRating = Number(meta["x:rating"] || pub.rating);
@@ -285,16 +377,56 @@ const currentRating = computed(() => {
 });
 
 const FAVCAT_PALETTE = [
-  { bg: "rgba(158, 158, 158, 0.22)", border: "rgba(158, 158, 158, 0.45)", text: "#e5e5e5" }, // 0: 灰
-  { bg: "rgba(239, 68, 68, 0.22)", border: "rgba(239, 68, 68, 0.45)", text: "#fca5a5" },     // 1: 红
-  { bg: "rgba(249, 115, 22, 0.22)", border: "rgba(249, 115, 22, 0.45)", text: "#fdba74" },   // 2: 橙
-  { bg: "rgba(234, 179, 8, 0.22)", border: "rgba(234, 179, 8, 0.45)", text: "#fde047" },     // 3: 黄
-  { bg: "rgba(34, 197, 94, 0.22)", border: "rgba(34, 197, 94, 0.45)", text: "#86efac" },     // 4: 绿
-  { bg: "rgba(132, 204, 22, 0.22)", border: "rgba(132, 204, 22, 0.45)", text: "#bef264" },   // 5: 黄绿
-  { bg: "rgba(6, 182, 212, 0.22)", border: "rgba(6, 182, 212, 0.45)", text: "#67e8f9" },     // 6: 青
-  { bg: "rgba(59, 130, 246, 0.22)", border: "rgba(59, 130, 246, 0.45)", text: "#93c5fd" },   // 7: 蓝
-  { bg: "rgba(168, 85, 247, 0.22)", border: "rgba(168, 85, 247, 0.45)", text: "#d8b4fe" },   // 8: 紫
-  { bg: "rgba(236, 72, 153, 0.22)", border: "rgba(236, 72, 153, 0.45)", text: "#f472b6" },   // 9: 粉
+  {
+    bg: "rgba(158, 158, 158, 0.22)",
+    border: "rgba(158, 158, 158, 0.45)",
+    text: "#e5e5e5",
+  }, // 0: 灰
+  {
+    bg: "rgba(239, 68, 68, 0.22)",
+    border: "rgba(239, 68, 68, 0.45)",
+    text: "#fca5a5",
+  }, // 1: 红
+  {
+    bg: "rgba(249, 115, 22, 0.22)",
+    border: "rgba(249, 115, 22, 0.45)",
+    text: "#fdba74",
+  }, // 2: 橙
+  {
+    bg: "rgba(234, 179, 8, 0.22)",
+    border: "rgba(234, 179, 8, 0.45)",
+    text: "#fde047",
+  }, // 3: 黄
+  {
+    bg: "rgba(34, 197, 94, 0.22)",
+    border: "rgba(34, 197, 94, 0.45)",
+    text: "#86efac",
+  }, // 4: 绿
+  {
+    bg: "rgba(132, 204, 22, 0.22)",
+    border: "rgba(132, 204, 22, 0.45)",
+    text: "#bef264",
+  }, // 5: 黄绿
+  {
+    bg: "rgba(6, 182, 212, 0.22)",
+    border: "rgba(6, 182, 212, 0.45)",
+    text: "#67e8f9",
+  }, // 6: 青
+  {
+    bg: "rgba(59, 130, 246, 0.22)",
+    border: "rgba(59, 130, 246, 0.45)",
+    text: "#93c5fd",
+  }, // 7: 蓝
+  {
+    bg: "rgba(168, 85, 247, 0.22)",
+    border: "rgba(168, 85, 247, 0.45)",
+    text: "#d8b4fe",
+  }, // 8: 紫
+  {
+    bg: "rgba(236, 72, 153, 0.22)",
+    border: "rgba(236, 72, 153, 0.45)",
+    text: "#f472b6",
+  }, // 9: 粉
 ];
 
 const FAVCAT_SOLID_COLORS = [
@@ -318,7 +450,29 @@ function getFavcatDiamondStyle(favcatId) {
 }
 
 const currentFavcatInfo = computed(() => {
-  const meta = selectedPub.value?.raw?.metadata || {};
+  const pub = selectedPub.value;
+  if (!pub) return null;
+  const key = `${pub.gid}:${pub.token}`;
+  const override = s.favoriteOverrides?.value?.[key];
+  if (override != null) {
+    if (!override.isFavorited) return null;
+    const favcatId =
+      override.favcat != null && override.favcat >= 0 && override.favcat <= 9
+        ? override.favcat
+        : 0;
+    const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
+    const name =
+      override.favcatName ||
+      found?.name ||
+      t("archive.favcat_default", { id: favcatId });
+    return {
+      name,
+      href: `/opds/v2.0/gallery?favcat=${favcatId}&query=favorites`,
+      favcatId,
+    };
+  }
+
+  const meta = pub.raw?.metadata || {};
   const belongs = meta.belongsTo;
   let coll = belongs?.collection;
   if (Array.isArray(coll)) {
@@ -334,7 +488,9 @@ const currentFavcatInfo = computed(() => {
     const rawLink = Array.isArray(coll.links) ? coll.links[0]?.href : coll.href;
     if (rawLink) {
       href = localApiUrl(rawLink, selectedPub.value?.feedHref) || rawLink;
-      const m = String(rawLink).match(/[?&]favcat=(\d+)/) || String(href).match(/[?&]favcat=(\d+)/);
+      const m =
+        String(rawLink).match(/[?&]favcat=(\d+)/) ||
+        String(href).match(/[?&]favcat=(\d+)/);
       if (m) favcatId = parseInt(m[1], 10);
     }
   } else if (typeof coll === "string" && coll.trim()) {
@@ -355,7 +511,9 @@ const currentFavcatInfo = computed(() => {
       favcatId = Number(item.favcat);
     }
     if (!name && favcatId != null) {
-      const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
+      const found = (s.favcats.value || []).find(
+        (c) => Number(c.id) === favcatId,
+      );
       name = found?.name || t("archive.favcat_default", { id: favcatId });
     }
     if (!href && favcatId != null) {
@@ -365,15 +523,22 @@ const currentFavcatInfo = computed(() => {
 
   // If we have a name but no favcatId yet, try to match by name from s.favcats
   if (favcatId == null && name) {
-    const found = (s.favcats.value || []).find((c) => c.name && c.name.trim() === name);
+    const found = (s.favcats.value || []).find(
+      (c) => c.name && c.name.trim() === name,
+    );
     if (found && found.id != null) {
       favcatId = Number(found.id);
     }
   }
 
   // If we have favcatId but empty or generic name, resolve name from s.favcats
-  if (favcatId != null && (!name || name === `收藏夹 ${favcatId}` || name === `Favorites ${favcatId}`)) {
-    const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
+  if (
+    favcatId != null &&
+    (!name || name === `收藏夹 ${favcatId}` || name === `Favorites ${favcatId}`)
+  ) {
+    const found = (s.favcats.value || []).find(
+      (c) => Number(c.id) === favcatId,
+    );
     if (found?.name) {
       name = found.name;
     }
@@ -407,95 +572,117 @@ function handleFavcatClick() {
   }
 }
 
+const favcatList = computed(() => {
+  const cats = s.favcats.value || [];
+  const list = [];
+  for (let i = 0; i < 10; i++) {
+    const found = cats.find((c) => Number(c.id) === i);
+    list.push({
+      id: i,
+      name: found?.name || t("archive.favcat_default", { id: i }),
+    });
+  }
+  return list;
+});
+
+const isCurrentFavorited = computed(() =>
+  Boolean(currentArchiveBadge.value?.isFavorited),
+);
+
+const currentFavcatId = computed(() => {
+  if (!isCurrentFavorited.value) return null;
+  return currentFavcatInfo.value?.favcatId ?? null;
+});
+
 const LANGUAGE_DISPLAY_NAMES = {
   // Japanese
   japanese: "日本语",
   ja: "日本语",
-  "日文": "日本语",
-  "日语": "日本语",
-  "日本語": "日本语",
-  "日本语": "日本语",
+  日文: "日本语",
+  日语: "日本语",
+  日本語: "日本语",
+  日本语: "日本语",
 
   // English
   english: "English",
   en: "English",
-  "英文": "English",
-  "英语": "English",
+  英文: "English",
+  英语: "English",
 
   // Chinese
   chinese: "中文",
   zh: "中文",
-  "中文": "中文",
-  "汉语": "中文",
-  "國語": "中文",
-  "国语": "中文",
+  中文: "中文",
+  汉语: "中文",
+  國語: "中文",
+  国语: "中文",
 
   // Korean
   korean: "韩语",
   ko: "韩语",
-  "韩文": "韩语",
-  "韩语": "韩语",
-  "한국어": "韩语",
+  韩文: "韩语",
+  韩语: "韩语",
+  한국어: "韩语",
 
   // European languages
   spanish: "Español",
   es: "Español",
-  "西班牙语": "Español",
+  西班牙语: "Español",
 
   french: "Français",
   fr: "Français",
-  "法语": "Français",
+  法语: "Français",
 
   german: "Deutsch",
   de: "Deutsch",
-  "德语": "Deutsch",
+  德语: "Deutsch",
 
   russian: "Русский",
   ru: "Русский",
-  "俄语": "Русский",
+  俄语: "Русский",
 
   italian: "Italiano",
   it: "Italiano",
-  "意大利语": "Italiano",
+  意大利语: "Italiano",
 
   portuguese: "Português",
   pt: "Português",
-  "葡萄牙语": "Português",
+  葡萄牙语: "Português",
   "pt-br": "Português",
   brazilian: "Português",
 
   // Other languages
   thai: "ไทย",
   th: "ไทย",
-  "泰语": "ไทย",
+  泰语: "ไทย",
 
   vietnamese: "Tiếng Việt",
   vi: "Tiếng Việt",
-  "越南语": "Tiếng Việt",
+  越南语: "Tiếng Việt",
 
   indonesian: "Indonesia",
   id: "Indonesia",
-  "印尼语": "Indonesia",
+  印尼语: "Indonesia",
 
   polish: "Polski",
   pl: "Polski",
-  "波兰语": "Polski",
+  波兰语: "Polski",
 
   dutch: "Nederlands",
   nl: "Nederlands",
-  "荷兰语": "Nederlands",
+  荷兰语: "Nederlands",
 
   swedish: "Svenska",
   sv: "Svenska",
-  "瑞典语": "Svenska",
+  瑞典语: "Svenska",
 
   turkish: "Türkçe",
   tr: "Türkçe",
-  "土耳其语": "Türkçe",
+  土耳其语: "Türkçe",
 
   ukrainian: "Українська",
   uk: "Українська",
-  "乌克兰语": "Українська",
+  乌克兰语: "Українська",
 };
 
 function extractLanguage(meta) {
@@ -598,59 +785,67 @@ function normalizePublication(pub, feedHref = window.location.href) {
   const key = `${gid}:${token}`;
   const archiveItem = archivesMap.value.get(key);
   const isFavoritedFromMeta = Boolean(
-    meta.belongsTo?.collection ||
-    meta["x:favorite"] ||
-    meta["x:is_favorited"]
+    meta.belongsTo?.collection || meta["x:favorite"] || meta["x:is_favorited"],
   );
 
   let archiveBadge = null;
   const isFavorited = Boolean(
     isFavoritedFromMeta ||
     archiveItem?.is_favorited ||
-    archiveItem?.status === "unarchived"
+    archiveItem?.status === "unarchived",
   );
   if (archiveItem) {
     if (archiveItem.status === "ready") {
       archiveBadge = {
         labelKey: "explore.badge_archived",
-        get label() { return t(this.labelKey); },
+        get label() {
+          return t(this.labelKey);
+        },
         variant: "default",
         isReady: true,
-        isFavorited
+        isFavorited,
       };
-    } else if (
-      archiveItem.status === "downloading" ||
-      archiveItem.status === "staging"
-    ) {
+    } else if (isArchiveDownloading(archiveItem.status)) {
       archiveBadge = {
-        labelKey: "explore.badge_downloading",
-        get label() { return t(this.labelKey); },
+        labelKey:
+          archiveItem.status === "pending" || archiveItem.status === "submitting"
+            ? "explore.badge_pending"
+            : "explore.badge_downloading",
+        get label() {
+          return t(this.labelKey, t("explore.badge_downloading"));
+        },
         variant: "secondary",
         isDownloading: true,
-        isFavorited
+        isFavorited,
       };
     } else if (archiveItem.status === "failed") {
       archiveBadge = {
         labelKey: "explore.badge_failed",
-        get label() { return t(this.labelKey); },
+        get label() {
+          return t(this.labelKey);
+        },
         variant: "destructive",
         isFailed: true,
-        isFavorited
+        isFavorited,
       };
     } else if (isFavorited) {
       archiveBadge = {
         labelKey: "explore.badge_fav",
-        get label() { return t(this.labelKey); },
+        get label() {
+          return t(this.labelKey);
+        },
         variant: "outline",
-        isFavorited: true
+        isFavorited: true,
       };
     }
   } else if (isFavoritedFromMeta) {
     archiveBadge = {
       labelKey: "explore.badge_favorited",
-      get label() { return t(this.labelKey); },
+      get label() {
+        return t(this.labelKey);
+      },
       variant: "outline",
-      isFavorited: true
+      isFavorited: true,
     };
   }
 
@@ -669,11 +864,11 @@ function normalizePublication(pub, feedHref = window.location.href) {
 
   const sizeBytes = Number(
     meta["x:sizeBytes"] ||
-    meta.filesize ||
-    archiveItem?.archive_size ||
-    archiveItem?.metadata?.filesize ||
-    archiveItem?.filesize ||
-    0,
+      meta.filesize ||
+      archiveItem?.archive_size ||
+      archiveItem?.metadata?.filesize ||
+      archiveItem?.filesize ||
+      0,
   );
 
   return {
@@ -701,6 +896,80 @@ function normalizePublication(pub, feedHref = window.location.href) {
   };
 }
 
+function getPubBadge(pub) {
+  if (!pub) return null;
+  const key = `${pub.gid}:${pub.token}`;
+  const override = s.favoriteOverrides?.value?.[key];
+  const archiveItem = archivesMap.value.get(key) || pub.archiveItem;
+  const rawMeta = pub.raw?.metadata || {};
+  let isFavoritedFromMeta = Boolean(
+    rawMeta.belongsTo?.collection ||
+    rawMeta["x:favorite"] ||
+    rawMeta["x:is_favorited"],
+  );
+  if (override != null) {
+    isFavoritedFromMeta = override.isFavorited;
+  }
+
+  const isFavorited = Boolean(
+    isFavoritedFromMeta ||
+    archiveItem?.is_favorited ||
+    archiveItem?.status === "unarchived",
+  );
+
+  if (archiveItem) {
+    if (archiveItem.status === "ready") {
+      return {
+        label: t("explore.badge_archived"),
+        variant: "default",
+        isReady: true,
+        isFavorited,
+      };
+    } else if (isArchiveDownloading(archiveItem.status)) {
+      return {
+        label:
+          archiveItem.status === "pending" || archiveItem.status === "submitting"
+            ? t("explore.badge_pending", t("explore.badge_downloading"))
+            : t("explore.badge_downloading"),
+        variant: "secondary",
+        isDownloading: true,
+        isFavorited,
+      };
+    } else if (archiveItem.status === "failed") {
+      return {
+        label: t("explore.badge_failed"),
+        variant: "destructive",
+        isFailed: true,
+        isFavorited,
+      };
+    } else if (isFavorited) {
+      return {
+        label: t("explore.badge_fav"),
+        variant: "outline",
+        isFavorited: true,
+      };
+    }
+  }
+
+  if (isFavoritedFromMeta) {
+    return {
+      label: t("explore.badge_favorited"),
+      variant: "outline",
+      isFavorited: true,
+    };
+  }
+  if (pub.archiveBadge) {
+    if (override != null) {
+      return {
+        ...pub.archiveBadge,
+        isFavorited: override.isFavorited,
+      };
+    }
+    return pub.archiveBadge;
+  }
+  return null;
+}
+
 function localApiUrl(href, base = window.location.href) {
   if (!href) return "";
   try {
@@ -722,77 +991,101 @@ function ensurePublicationDetails(pub) {
   const href = pub.detailHref;
   let task = detailRequests.get(href);
   if (!task) {
-    task = s.api(href, {
-      headers: {
-        Accept: "application/divina+json, application/opds+json",
-        "Cache-Control": "no-cache",
-      },
-    })
+    task = s
+      .api(href, {
+        headers: {
+          Accept: "application/divina+json, application/opds+json",
+          "Cache-Control": "no-cache",
+        },
+      })
       .then(({ data }) => data)
       .finally(() => detailRequests.delete(href));
     detailRequests.set(href, task);
   }
-  return task.then((data) => {
-    if (pub.detailLoaded) return pub;
-    const metadata = data?.metadata || {};
-    const subjects = [...(pub.subjects || [])];
-    for (const subject of Array.isArray(metadata.subject) ? metadata.subject : []) {
-      if (!subject?.name) continue;
-      const index = subjects.findIndex((item) => item?.name === subject.name);
-      if (index < 0) {
-        subjects.push(subject);
-      } else {
-        const mergedStyle = subject["x:style"] || subjects[index]["x:style"];
-        subjects[index] = {
-          ...subjects[index],
-          ...subject,
-          ...(mergedStyle ? { "x:style": mergedStyle } : {}),
-        };
+  return task
+    .then((data) => {
+      if (pub.detailLoaded) return pub;
+      const metadata = data?.metadata || {};
+      const subjects = [...(pub.subjects || [])];
+      for (const subject of Array.isArray(metadata.subject)
+        ? metadata.subject
+        : []) {
+        if (!subject?.name) continue;
+        const index = subjects.findIndex((item) => item?.name === subject.name);
+        if (index < 0) {
+          subjects.push(subject);
+        } else {
+          const mergedStyle = subject["x:style"] || subjects[index]["x:style"];
+          subjects[index] = {
+            ...subjects[index],
+            ...subject,
+            ...(mergedStyle ? { "x:style": mergedStyle } : {}),
+          };
+        }
       }
-    }
-    const sourceLinks = [...(data.links || [])];
-    for (const link of pub.raw?.links || []) {
-      if (!sourceLinks.some((item) => item.rel === link.rel && item.href === link.href)) {
-        sourceLinks.push(link);
+      const sourceLinks = [...(data.links || [])];
+      for (const link of pub.raw?.links || []) {
+        if (
+          !sourceLinks.some(
+            (item) => item.rel === link.rel && item.href === link.href,
+          )
+        ) {
+          sourceLinks.push(link);
+        }
       }
-    }
-    const normalized = normalizePublication(
-      {
-        metadata: { ...pub.raw?.metadata, ...metadata },
-        links: sourceLinks,
-        images: pub.raw?.images || [],
-      },
-      href,
-    );
-    const rawPages = Array.isArray(data.readingOrder) ? data.readingOrder : [];
-    const pages = rawPages.map((page, index) => ({
-      pageNumber: index + 1,
-      href: localApiUrl(page?.href, href),
-      thumbnailHref: localApiUrl(page?.properties?.["x:thumbnail"]?.href, href),
-    }));
-    const validPages = pages.length > 0 && pages.every((page) => page.href);
-    const reviews = Array.isArray(metadata["x:reviews"])
-      ? metadata["x:reviews"]
-      : (normalized.reviews || pub.reviews || []);
-    Object.assign(pub, normalized, {
-      subjects,
-      reviews,
-      detailLoaded: true,
-      readingOrder: validPages ? pages : [],
-      pageCount: validPages ? pages.length : (normalized.pageCount || pub.pageCount),
-      rating: (normalized.rating && normalized.rating > 0) ? normalized.rating : (pub.rating || 0),
-    });
-    if (normalized.rating && normalized.rating > 0) {
-      pub.rating = normalized.rating;
-    }
-    if (selectedPub.value && (selectedPub.value === pub || (selectedPub.value.gid === pub.gid && selectedPub.value.token === pub.token))) {
-      Object.assign(selectedPub.value, pub);
+      const normalized = normalizePublication(
+        {
+          metadata: { ...pub.raw?.metadata, ...metadata },
+          links: sourceLinks,
+          images: pub.raw?.images || [],
+        },
+        href,
+      );
+      const rawPages = Array.isArray(data.readingOrder)
+        ? data.readingOrder
+        : [];
+      const pages = rawPages.map((page, index) => ({
+        pageNumber: index + 1,
+        href: localApiUrl(page?.href, href),
+        thumbnailHref: localApiUrl(
+          page?.properties?.["x:thumbnail"]?.href,
+          href,
+        ),
+      }));
+      const validPages = pages.length > 0 && pages.every((page) => page.href);
+      const reviews = Array.isArray(metadata["x:reviews"])
+        ? metadata["x:reviews"]
+        : normalized.reviews || pub.reviews || [];
+      Object.assign(pub, normalized, {
+        subjects,
+        reviews,
+        detailLoaded: true,
+        readingOrder: validPages ? pages : [],
+        pageCount: validPages
+          ? pages.length
+          : normalized.pageCount || pub.pageCount,
+        rating:
+          normalized.rating && normalized.rating > 0
+            ? normalized.rating
+            : pub.rating || 0,
+      });
       if (normalized.rating && normalized.rating > 0) {
-        selectedPub.value.rating = normalized.rating;
+        pub.rating = normalized.rating;
       }
-    }
-    return pub;
-  }).catch(() => {
+      if (
+        selectedPub.value &&
+        (selectedPub.value === pub ||
+          (selectedPub.value.gid === pub.gid &&
+            selectedPub.value.token === pub.token))
+      ) {
+        Object.assign(selectedPub.value, pub);
+        if (normalized.rating && normalized.rating > 0) {
+          selectedPub.value.rating = normalized.rating;
+        }
+      }
+      return pub;
+    })
+    .catch(() => {
       return pub;
     });
 }
@@ -823,7 +1116,9 @@ function stripHtmlToSnippet(html, maxLength = 120) {
   }
   const tmp = document.createElement("div");
   tmp.innerHTML = html;
-  const text = (tmp.textContent || tmp.innerText || "").trim().replace(/\s+/g, " ");
+  const text = (tmp.textContent || tmp.innerText || "")
+    .trim()
+    .replace(/\s+/g, " ");
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + "…";
 }
@@ -917,10 +1212,7 @@ watch(detailSubView, (subView) => {
 
 function handleQuickJump() {
   const total = selectedPub.value?.readingOrder?.length || 1;
-  const target = Math.max(
-    1,
-    Math.min(Number(pageJumpInput.value) || 1, total),
-  );
+  const target = Math.max(1, Math.min(Number(pageJumpInput.value) || 1, total));
   thumbnailRenderLimit.value = Math.max(
     thumbnailRenderLimit.value,
     target + 32,
@@ -940,15 +1232,37 @@ function normalizeNavItems(navs) {
     const hrefLower = (nav.href || "").toLowerCase();
     const titleLower = (nav.title || "").toLowerCase();
 
-    if (hrefLower.endsWith("/opds/v2.0") || hrefLower.endsWith("/page/home") || titleLower === "home" || titleLower === "首页") icon = Home;
-    else if (hrefLower.includes("watched") || titleLower.includes("watch")) icon = Eye;
-    else if (hrefLower.includes("favorites") || titleLower.includes("fav")) icon = Heart;
-    else if (hrefLower.includes("archives") || titleLower.includes("arch")) icon = Package2;
-    else if (hrefLower.includes("top") || titleLower.includes("rank") || hrefLower.includes("toplist")) icon = Trophy;
-    else if (hrefLower.includes("popular") || titleLower.includes("pop")) icon = Sparkles;
-    else if (hrefLower.includes("query=") || hrefLower.includes("search")) icon = Search;
-    else if (hrefLower.includes("tag=") || titleLower.includes("tag") || titleLower.includes(":")) icon = Tag;
-    else if (titleLower.includes("category") || titleLower.includes("分类")) icon = Layers;
+    if (
+      hrefLower.endsWith("/opds/v2.0") ||
+      hrefLower.endsWith("/page/home") ||
+      titleLower === "home" ||
+      titleLower === "首页"
+    )
+      icon = Home;
+    else if (hrefLower.includes("watched") || titleLower.includes("watch"))
+      icon = Eye;
+    else if (hrefLower.includes("favorites") || titleLower.includes("fav"))
+      icon = Heart;
+    else if (hrefLower.includes("archives") || titleLower.includes("arch"))
+      icon = Package2;
+    else if (
+      hrefLower.includes("top") ||
+      titleLower.includes("rank") ||
+      hrefLower.includes("toplist")
+    )
+      icon = Trophy;
+    else if (hrefLower.includes("popular") || titleLower.includes("pop"))
+      icon = Sparkles;
+    else if (hrefLower.includes("query=") || hrefLower.includes("search"))
+      icon = Search;
+    else if (
+      hrefLower.includes("tag=") ||
+      titleLower.includes("tag") ||
+      titleLower.includes(":")
+    )
+      icon = Tag;
+    else if (titleLower.includes("category") || titleLower.includes("分类"))
+      icon = Layers;
     else if (hrefLower.includes("/page/")) icon = PanelsTopLeft;
 
     return {
@@ -979,11 +1293,14 @@ function parseCatalogGroups(doc, feedHref, allowRootFallback = false) {
 
       // Publication group
       if (Array.isArray(g.publications)) {
-        const pubs = g.publications.map((pub) => normalizePublication(pub, feedHref)).filter(Boolean);
+        const pubs = g.publications
+          .map((pub) => normalizePublication(pub, feedHref))
+          .filter(Boolean);
         if (pubs.length === 0) return;
 
         const selfLink = (g.links || []).find(
-          (l) => l.rel === "self" || l.rel === "http://opds-spec.org/acquisition",
+          (l) =>
+            l.rel === "self" || l.rel === "http://opds-spec.org/acquisition",
         );
         const title = g.metadata?.title || `Section ${index + 1}`;
 
@@ -1003,7 +1320,9 @@ function parseCatalogGroups(doc, feedHref, allowRootFallback = false) {
 
   // Root publications if no publication groups in doc.groups (ONLY for root catalog fallback)
   if (allowRootFallback) {
-    const hasPublicationGroups = groups.some((grp) => grp.type === "publication");
+    const hasPublicationGroups = groups.some(
+      (grp) => grp.type === "publication",
+    );
     if (!hasPublicationGroups && Array.isArray(doc.publications)) {
       const pubs = doc.publications
         .map((pub) => normalizePublication(pub, feedHref))
@@ -1026,7 +1345,10 @@ function parseCatalogGroups(doc, feedHref, allowRootFallback = false) {
 function normalizeFacetUrl(href) {
   if (!href) return null;
   try {
-    const u = new URL(href, typeof window !== "undefined" ? window.location.href : "http://localhost");
+    const u = new URL(
+      href,
+      typeof window !== "undefined" ? window.location.href : "http://localhost",
+    );
     u.searchParams.delete("next");
     u.searchParams.delete("page");
     u.searchParams.delete("_t");
@@ -1041,7 +1363,8 @@ function areUrlsMatching(hrefA, hrefB) {
   const uA = normalizeFacetUrl(hrefA);
   const uB = normalizeFacetUrl(hrefB);
   if (!uA || !uB) return hrefA === hrefB;
-  if (uA.pathname.replace(/\/+$/, "") !== uB.pathname.replace(/\/+$/, "")) return false;
+  if (uA.pathname.replace(/\/+$/, "") !== uB.pathname.replace(/\/+$/, ""))
+    return false;
 
   const ignored = new Set(["next", "page", "_t"]);
   const paramsA = new Map();
@@ -1067,26 +1390,42 @@ function normalizeFacetGroups(facets, currentFeedHref) {
       const rawLinks = Array.isArray(grp?.links) ? grp.links : [];
       if (rawLinks.length === 0) return null;
 
-      let activeIndex = rawLinks.findIndex((l) => l.active === true || l.rel === "self");
+      let activeIndex = rawLinks.findIndex(
+        (l) => l.active === true || l.rel === "self",
+      );
 
       if (activeIndex === -1 && currentFeedHref) {
-        activeIndex = rawLinks.findIndex((l) => areUrlsMatching(l.href, currentFeedHref));
+        activeIndex = rawLinks.findIndex((l) =>
+          areUrlsMatching(l.href, currentFeedHref),
+        );
       }
 
       const isFavoritesGroup =
         title.toLowerCase().includes("favorite") ||
         title.toLowerCase().includes("folder") ||
         title.includes("收藏") ||
-        rawLinks.some((l) => /[?&]favcat=\d+/.test(l.href || "") || /favorites:\d+/.test(l.href || ""));
+        rawLinks.some(
+          (l) =>
+            /[?&]favcat=\d+/.test(l.href || "") ||
+            /favorites:\d+/.test(l.href || ""),
+        );
 
       const links = rawLinks.map((l, lIdx) => {
         let favcatId = null;
-        if (isFavoritesGroup || /[?&]favcat=\d+/.test(l.href || "") || /favorites:\d+/.test(l.href || "")) {
-          const m = String(l.href || "").match(/[?&]favcat=(\d+)/) || String(l.href || "").match(/favorites:(\d+)/);
+        if (
+          isFavoritesGroup ||
+          /[?&]favcat=\d+/.test(l.href || "") ||
+          /favorites:\d+/.test(l.href || "")
+        ) {
+          const m =
+            String(l.href || "").match(/[?&]favcat=(\d+)/) ||
+            String(l.href || "").match(/favorites:(\d+)/);
           if (m) {
             favcatId = parseInt(m[1], 10);
           } else {
-            const mTitle = String(l.title || "").match(/^(?:favorites|收藏夹)\s*(\d+)$/i);
+            const mTitle = String(l.title || "").match(
+              /^(?:favorites|收藏夹)\s*(\d+)$/i,
+            );
             if (mTitle) {
               favcatId = parseInt(mTitle[1], 10);
             } else if (lIdx >= 0 && lIdx <= 9 && rawLinks.length === 10) {
@@ -1098,7 +1437,10 @@ function normalizeFacetGroups(facets, currentFeedHref) {
           title: l.title || l.href || "",
           href: l.href,
           isActive: lIdx === activeIndex,
-          favcatId: favcatId != null && favcatId >= 0 && favcatId <= 9 ? favcatId : null,
+          favcatId:
+            favcatId != null && favcatId >= 0 && favcatId <= 9
+              ? favcatId
+              : null,
         };
       });
 
@@ -1148,10 +1490,16 @@ watch(
 
 // Unified Global Navigation Pills
 const globalNavItems = computed(() => {
-  if (Array.isArray(catalog.value?.navigation) && catalog.value.navigation.length > 0) {
+  if (
+    Array.isArray(catalog.value?.navigation) &&
+    catalog.value.navigation.length > 0
+  ) {
     return normalizeNavItems(catalog.value.navigation);
   }
-  if (Array.isArray(routeFeed.value?.navigation) && routeFeed.value.navigation.length > 0) {
+  if (
+    Array.isArray(routeFeed.value?.navigation) &&
+    routeFeed.value.navigation.length > 0
+  ) {
     return normalizeNavItems(routeFeed.value.navigation);
   }
   if (cachedRouteNav.value.length > 0) {
@@ -1193,9 +1541,14 @@ function isNavActive(nav) {
 }
 
 // Normalized Facets
-const homeFacets = computed(() => normalizeFacetGroups(catalog.value?.facets, catalogFeedHref));
+const homeFacets = computed(() =>
+  normalizeFacetGroups(catalog.value?.facets, catalogFeedHref),
+);
 const currentFeedFacets = computed(() => {
-  if (Array.isArray(routeFeed.value?.facets) && routeFeed.value.facets.length > 0) {
+  if (
+    Array.isArray(routeFeed.value?.facets) &&
+    routeFeed.value.facets.length > 0
+  ) {
     return routeFeed.value.facets;
   }
   if (cachedRouteFacets.value.length > 0) {
@@ -1204,12 +1557,19 @@ const currentFeedFacets = computed(() => {
   return catalog.value?.facets || [];
 });
 const routeFacets = computed(() =>
-  normalizeFacetGroups(currentFeedFacets.value, activeRoute.value?.href || routeFeedHref),
+  normalizeFacetGroups(
+    currentFeedFacets.value,
+    activeRoute.value?.href || routeFeedHref,
+  ),
 );
 
 // Normalized Groups (preserving catalog.groups order)
-const homeGroups = computed(() => parseCatalogGroups(catalog.value, catalogFeedHref, true));
-const routeGroups = computed(() => parseCatalogGroups(routeFeed.value, routeFeedHref, false));
+const homeGroups = computed(() =>
+  parseCatalogGroups(catalog.value, catalogFeedHref, true),
+);
+const routeGroups = computed(() =>
+  parseCatalogGroups(routeFeed.value, routeFeedHref, false),
+);
 
 // Shelf horizontal scrolling & scroll visibility state
 let shelfResizeObserver = null;
@@ -1335,7 +1695,8 @@ function drillDown(navItem) {
   const currentHref = activeRoute.value?.href;
   s.enterExploreSubRoute(
     {
-      title: navItem.title || activeRoute.value?.title || t("notice.gallery_list"),
+      title:
+        navItem.title || activeRoute.value?.title || t("notice.gallery_list"),
       href: navItem.href,
     },
     true,
@@ -1429,7 +1790,7 @@ function getPubId(pub) {
       token = match[2];
     }
   }
-  return gid && token ? `${gid}:${token}` : (meta.identifier || "");
+  return gid && token ? `${gid}:${token}` : meta.identifier || "";
 }
 
 async function loadRouteFeed(url) {
@@ -1446,17 +1807,23 @@ async function loadRouteFeed(url) {
     routeFeedHref = localApiUrl(url) || url;
     routeFeed.value = res.data;
     if (res.data?.metadata?.title && s.exploreSubRoute.value) {
-      if (!s.exploreSubRoute.value.title || s.exploreSubRoute.value.title === t("notice.gallery_list")) {
+      if (
+        !s.exploreSubRoute.value.title ||
+        s.exploreSubRoute.value.title === t("notice.gallery_list")
+      ) {
         s.exploreSubRoute.value.title = res.data.metadata.title;
       }
     }
-    const pubs = Array.isArray(res.data?.publications) ? res.data.publications : [];
+    const pubs = Array.isArray(res.data?.publications)
+      ? res.data.publications
+      : [];
     rawRoutePublications.value = pubs.map((pub) => ({
       pub,
       feedHref: routeFeedHref,
     }));
   } catch (err) {
-    routeError.value = err.message || t("explore.loading_more_failed", { err: "" });
+    routeError.value =
+      err.message || t("explore.loading_more_failed", { err: "" });
   } finally {
     routeLoading.value = false;
   }
@@ -1490,7 +1857,8 @@ async function loadNextPage() {
     }
     rawRoutePublications.value = [...rawRoutePublications.value, ...newItems];
   } catch (err) {
-    loadingMoreError.value = err.message || t("explore.loading_more_failed", { err: "" });
+    loadingMoreError.value =
+      err.message || t("explore.loading_more_failed", { err: "" });
   } finally {
     loadingMore.value = false;
   }
@@ -1572,9 +1940,8 @@ const nextLink = computed(() => {
 const prevLink = computed(() => {
   if (!routeFeed.value || !Array.isArray(routeFeed.value.links)) return null;
   return (
-    routeFeed.value.links.find(
-      (l) => l.rel === "previous" || l.rel === "prev",
-    )?.href || null
+    routeFeed.value.links.find((l) => l.rel === "previous" || l.rel === "prev")
+      ?.href || null
   );
 });
 
@@ -1655,7 +2022,8 @@ const currentPubList = ref([]);
 const currentIndex = computed(() => {
   if (!selectedPub.value || !currentPubList.value.length) return -1;
   return currentPubList.value.findIndex(
-    (p) => p.gid === selectedPub.value.gid && p.token === selectedPub.value.token,
+    (p) =>
+      p.gid === selectedPub.value.gid && p.token === selectedPub.value.token,
   );
 });
 
@@ -1728,7 +2096,9 @@ const NAMESPACE_WEIGHTS = {
 };
 
 function getNamespaceWeight(ns) {
-  const lower = String(ns || "").trim().toLowerCase();
+  const lower = String(ns || "")
+    .trim()
+    .toLowerCase();
   return NAMESPACE_WEIGHTS[lower] ?? 99;
 }
 
@@ -1740,8 +2110,15 @@ function parseTagStyle(rawStyle) {
     if (rawStyle.borderColor || rawStyle["border-color"]) {
       style.borderColor = rawStyle.borderColor || rawStyle["border-color"];
     }
-    if (rawStyle.background || rawStyle.backgroundColor || rawStyle["background-color"]) {
-      style.background = rawStyle.background || rawStyle.backgroundColor || rawStyle["background-color"];
+    if (
+      rawStyle.background ||
+      rawStyle.backgroundColor ||
+      rawStyle["background-color"]
+    ) {
+      style.background =
+        rawStyle.background ||
+        rawStyle.backgroundColor ||
+        rawStyle["background-color"];
     }
   } else if (typeof rawStyle === "string") {
     for (const part of rawStyle.split(";")) {
@@ -1750,8 +2127,10 @@ function parseTagStyle(rawStyle) {
       const cleanV = v.replace(/!important/g, "").trim();
       const lk = k.toLowerCase();
       if (lk === "color") style.color = cleanV;
-      else if (lk === "border-color" || lk === "bordercolor") style.borderColor = cleanV;
-      else if (lk === "background" || lk === "background-color") style.background = cleanV;
+      else if (lk === "border-color" || lk === "bordercolor")
+        style.borderColor = cleanV;
+      else if (lk === "background" || lk === "background-color")
+        style.background = cleanV;
     }
   }
   return Object.keys(style).length > 0 ? style : null;
@@ -1783,14 +2162,14 @@ const groupedTags = computed(() => {
     }
 
     const rawStyle =
-      typeof item === "object" ? (item["x:style"] || item.style || null) : null;
+      typeof item === "object" ? item["x:style"] || item.style || null : null;
     const tagStyle = parseTagStyle(rawStyle);
     const hasCustomStyle = Boolean(tagStyle);
     const isWeak =
       typeof item === "object" &&
       (String(item.status || "").includes("skepticism") ||
-       String(item["x:style"] || "").includes("dash") ||
-       String(item["x:style"] || "").includes("weak"));
+        String(item["x:style"] || "").includes("dash") ||
+        String(item["x:style"] || "").includes("weak"));
 
     if (!map.has(ns)) {
       map.set(ns, {
@@ -1834,7 +2213,10 @@ const groupedTags = computed(() => {
 function handleCategoryClick(category) {
   if (!category) return;
   detailOpen.value = false;
-  executeSearch(category, t("explore.search_title_category", { cat: category }));
+  executeSearch(
+    category,
+    t("explore.search_title_category", { cat: category }),
+  );
 }
 
 function handleAuthorClick(author) {
@@ -1847,7 +2229,10 @@ function handleAuthorClick(author) {
 function handleUploaderClick(uploader) {
   if (!uploader) return;
   detailOpen.value = false;
-  executeSearch(`uploader:${uploader}`, t("explore.search_title_uploader", { uploader }));
+  executeSearch(
+    `uploader:${uploader}`,
+    t("explore.search_title_uploader", { uploader }),
+  );
 }
 
 function handleKeyDown(e) {
@@ -1986,20 +2371,38 @@ function handleArchive(pub) {
   emit("archive-gallery", pub);
 }
 
-function handleFavorite(pub) {
-  emit("favorite-gallery", pub);
+function handleSelectFavcat(catId) {
+  if (!selectedPub.value) return;
+  const isFavorited = isCurrentFavorited.value;
+  const currentId = currentFavcatId.value;
+  if (isFavorited && currentId === catId) {
+    return;
+  }
+  emit("favorite-gallery", {
+    pub: selectedPub.value,
+    action: isFavorited ? "move" : "add",
+    favcat: catId,
+  });
+}
+
+function handleRemoveFavorite() {
+  if (!selectedPub.value) return;
+  emit("favorite-gallery", {
+    pub: selectedPub.value,
+    action: "remove",
+  });
 }
 
 // Watch for home config changes saved in the HomeEditor drawer
-watch(
-  [() => s.homeTag.value, () => s.home.value],
-  () => {
-    loadCatalog();
-  },
-);
+watch([() => s.homeTag.value, () => s.home.value], () => {
+  loadCatalog();
+});
 
 onMounted(() => {
   s.loadArchives();
+  if (s.status.value?.site?.has_ipb) {
+    s.loadCategories();
+  }
   loadCatalog();
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("scroll", handleWindowScroll, { passive: true });
@@ -2020,7 +2423,9 @@ onUnmounted(() => {
 <template>
   <div class="space-y-6">
     <!-- Top Action Bar -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div
+      class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+    >
       <!-- Title & Back Button -->
       <div class="flex items-center gap-2 min-w-0">
         <Button
@@ -2042,7 +2447,9 @@ onUnmounted(() => {
       <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
         <!-- Search Input with OpenSearch trigger -->
         <div class="relative flex items-center w-full sm:w-60 md:w-72">
-          <Search class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none" />
+          <Search
+            class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none"
+          />
           <Input
             v-model="searchInput"
             :placeholder="t('explore.search_placeholder')"
@@ -2075,7 +2482,9 @@ onUnmounted(() => {
             size="sm"
             class="h-8 gap-1.5"
             :disabled="loading || routeLoading"
-            @click="activeRoute ? loadRouteFeed(activeRoute.href) : loadCatalog()"
+            @click="
+              activeRoute ? loadRouteFeed(activeRoute.href) : loadCatalog()
+            "
           >
             <RefreshCw
               :class="['size-3.5', (loading || routeLoading) && 'animate-spin']"
@@ -2109,15 +2518,21 @@ onUnmounted(() => {
           :key="nav.href"
           type="button"
           class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs sm:text-sm font-medium rounded-full transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98]"
-          :class="isNavActive(nav)
-            ? 'bg-background text-foreground shadow-xs font-semibold'
-            : 'text-muted-foreground hover:text-foreground hover:bg-background/40'"
+          :class="
+            isNavActive(nav)
+              ? 'bg-background text-foreground shadow-xs font-semibold'
+              : 'text-muted-foreground hover:text-foreground hover:bg-background/40'
+          "
           @click="drillDown(nav)"
         >
           <component
             :is="nav.icon"
             class="size-4 shrink-0 transition-colors"
-            :class="isNavActive(nav) ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'"
+            :class="
+              isNavActive(nav)
+                ? 'text-foreground'
+                : 'text-muted-foreground group-hover:text-foreground'
+            "
           />
           <span class="tracking-tight">
             {{ nav.title }}
@@ -2153,15 +2568,8 @@ onUnmounted(() => {
     <!-- ================= CATALOG HOME VIEW ================= -->
     <div v-else-if="!activeRoute" class="space-y-8">
       <!-- Facet Filter Rails (Root Catalog) -->
-      <div
-        v-if="homeFacets.length"
-        class="space-y-2 -mt-1 mb-5"
-      >
-        <div
-          v-for="grp in homeFacets"
-          :key="grp.id"
-          class="overflow-hidden"
-        >
+      <div v-if="homeFacets.length" class="space-y-2 -mt-1 mb-5">
+        <div v-for="grp in homeFacets" :key="grp.id" class="overflow-hidden">
           <div
             class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
             :aria-label="grp.title || t('explore.facets_label')"
@@ -2171,9 +2579,11 @@ onUnmounted(() => {
               :key="link.title || link.href"
               type="button"
               class="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
-              :class="link.isActive
-                ? 'bg-muted text-foreground font-medium border border-transparent'
-                : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'"
+              :class="
+                link.isActive
+                  ? 'bg-muted text-foreground font-medium border border-transparent'
+                  : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'
+              "
               :aria-pressed="link.isActive"
               @click="onFacetClick(link)"
             >
@@ -2184,7 +2594,11 @@ onUnmounted(() => {
                 aria-hidden="true"
               />
               <span class="tracking-tight whitespace-nowrap">
-                {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
+                {{
+                  link.title.toLowerCase() === "all"
+                    ? t("common.all")
+                    : link.title
+                }}
               </span>
             </button>
           </div>
@@ -2194,14 +2608,14 @@ onUnmounted(() => {
       <!-- 2. Groups (preserving configured order of publication shelves & navigation groups) -->
       <template v-for="group in homeGroups" :key="group.id">
         <!-- Navigation Group (Subtle Tags) -->
-        <div
-          v-if="group.type === 'navigation'"
-          class="space-y-2.5"
-        >
+        <div v-if="group.type === 'navigation'" class="space-y-2.5">
           <h3 class="text-base font-semibold tracking-tight text-foreground">
             {{ group.title }}
           </h3>
-          <nav class="flex flex-wrap items-center gap-2 pt-0.5" :aria-label="group.title">
+          <nav
+            class="flex flex-wrap items-center gap-2 pt-0.5"
+            :aria-label="group.title"
+          >
             <button
               v-for="nav in group.items"
               :key="nav.href"
@@ -2220,21 +2634,30 @@ onUnmounted(() => {
         </div>
 
         <!-- Publication Shelf -->
-        <div
-          v-else-if="group.type === 'publication'"
-          class="space-y-2.5"
-        >
+        <div v-else-if="group.type === 'publication'" class="space-y-2.5">
           <!-- Shelf Header -->
           <div
             class="flex items-center justify-between py-0.5 select-none"
-            :class="group.link && group.link.href ? 'cursor-pointer group/shelf-header focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm' : ''"
+            :class="
+              group.link && group.link.href
+                ? 'cursor-pointer group/shelf-header focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm'
+                : ''
+            "
             :role="group.link && group.link.href ? 'button' : undefined"
             :tabindex="group.link && group.link.href ? 0 : undefined"
-            :aria-label="group.link && group.link.href ? `${group.title} - ${t('common.view_all')}` : undefined"
+            :aria-label="
+              group.link && group.link.href
+                ? `${group.title} - ${t('common.view_all')}`
+                : undefined
+            "
             @click="group.link && group.link.href && drillDown(group.link)"
-            @keydown.enter.prevent="group.link && group.link.href && drillDown(group.link)"
+            @keydown.enter.prevent="
+              group.link && group.link.href && drillDown(group.link)
+            "
           >
-            <h3 class="text-base font-semibold tracking-tight text-foreground inline-flex items-center gap-1.5 transition-colors group-hover/shelf-header:text-primary">
+            <h3
+              class="text-base font-semibold tracking-tight text-foreground inline-flex items-center gap-1.5 transition-colors group-hover/shelf-header:text-primary"
+            >
               <span>{{ group.title }}</span>
               <ChevronRight
                 v-if="group.link && group.link.href"
@@ -2259,7 +2682,10 @@ onUnmounted(() => {
               leave-to-class="opacity-0 scale-90"
             >
               <button
-                v-if="shelfScrollState[group.id]?.canScrollLeft && shelfHoverState[group.id]"
+                v-if="
+                  shelfScrollState[group.id]?.canScrollLeft &&
+                  shelfHoverState[group.id]
+                "
                 type="button"
                 class="absolute left-1 sm:left-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
                 :title="t('explore.scroll_left')"
@@ -2303,12 +2729,15 @@ onUnmounted(() => {
                   </div>
 
                   <!-- Top Right: Archive / Favorite Badge -->
-                  <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+                  <div
+                    v-if="getPubBadge(pub)"
+                    class="absolute top-1.5 right-1.5"
+                  >
                     <Badge
-                      :variant="pub.archiveBadge.variant"
+                      :variant="getPubBadge(pub).variant"
                       class="text-[10px] px-1.5 py-0 font-medium"
                     >
-                      {{ pub.archiveBadge.label }}
+                      {{ getPubBadge(pub).label }}
                     </Badge>
                   </div>
 
@@ -2323,7 +2752,11 @@ onUnmounted(() => {
                     <span
                       v-if="pub.language || pub.pageCount > 0"
                       class="truncate ml-1.5 text-right drop-shadow-xs"
-                      :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                      :title="
+                        pub.language && pub.pageCount > 0
+                          ? `${pub.language} · ${pub.pageCount}P`
+                          : pub.language || `${pub.pageCount}P`
+                      "
                     >
                       <template v-if="pub.language && pub.pageCount > 0">
                         <span>{{ pub.language }}</span>
@@ -2360,7 +2793,10 @@ onUnmounted(() => {
               leave-to-class="opacity-0 scale-90"
             >
               <button
-                v-if="shelfScrollState[group.id]?.canScrollRight && shelfHoverState[group.id]"
+                v-if="
+                  shelfScrollState[group.id]?.canScrollRight &&
+                  shelfHoverState[group.id]
+                "
                 type="button"
                 class="absolute right-1 sm:right-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
                 :title="t('explore.scroll_right')"
@@ -2377,22 +2813,22 @@ onUnmounted(() => {
 
     <!-- ================= DRILL-DOWN VIEW ================= -->
     <div v-else :class="routeFacets.length ? 'space-y-5 -mt-1' : 'space-y-6'">
-      <div v-if="!routeFeed && routeLoading" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse">
-        <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
+      <div
+        v-if="!routeFeed && routeLoading"
+        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse"
+      >
+        <div
+          v-for="i in 12"
+          :key="i"
+          class="aspect-[1/1.414] bg-muted rounded-lg"
+        />
       </div>
 
       <!-- A: Custom Page with Groups -->
       <template v-else-if="routeGroups.length > 0">
         <!-- Route Facets for Groups Mode (if present) -->
-        <div
-          v-if="routeFacets.length"
-          class="space-y-2"
-        >
-          <div
-            v-for="grp in routeFacets"
-            :key="grp.id"
-            class="overflow-hidden"
-          >
+        <div v-if="routeFacets.length" class="space-y-2">
+          <div v-for="grp in routeFacets" :key="grp.id" class="overflow-hidden">
             <div
               class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
               :aria-label="grp.title || t('explore.facets_label')"
@@ -2402,9 +2838,11 @@ onUnmounted(() => {
                 :key="link.title || link.href"
                 type="button"
                 class="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
-                :class="link.isActive
-                  ? 'bg-muted text-foreground font-medium border border-transparent'
-                  : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'"
+                :class="
+                  link.isActive
+                    ? 'bg-muted text-foreground font-medium border border-transparent'
+                    : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'
+                "
                 :aria-pressed="link.isActive"
                 @click="onFacetClick(link)"
               >
@@ -2415,7 +2853,11 @@ onUnmounted(() => {
                   aria-hidden="true"
                 />
                 <span class="tracking-tight whitespace-nowrap">
-                  {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
+                  {{
+                    link.title.toLowerCase() === "all"
+                      ? t("common.all")
+                      : link.title
+                  }}
                 </span>
               </button>
             </div>
@@ -2427,205 +2869,228 @@ onUnmounted(() => {
           v-if="routeLoading"
           class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse"
         >
-          <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
+          <div
+            v-for="i in 12"
+            :key="i"
+            class="aspect-[1/1.414] bg-muted rounded-lg"
+          />
         </div>
         <template v-else>
           <template v-for="group in routeGroups" :key="group.id">
-          <!-- Navigation Group (Subtle Tags) -->
-          <div
-            v-if="group.type === 'navigation'"
-            class="space-y-2.5"
-          >
-            <h3 class="text-base font-semibold tracking-tight text-foreground">
-              {{ group.title }}
-            </h3>
-            <nav class="flex flex-wrap items-center gap-2 pt-0.5" :aria-label="group.title">
-              <button
-                v-for="nav in group.items"
-                :key="nav.href"
-                type="button"
-                class="group inline-flex items-center gap-2 h-8 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/50 bg-muted/40 hover:bg-muted/80 hover:border-border/70 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] cursor-pointer select-none"
-                @click="drillDown(nav)"
+            <!-- Navigation Group (Subtle Tags) -->
+            <div v-if="group.type === 'navigation'" class="space-y-2.5">
+              <h3
+                class="text-base font-semibold tracking-tight text-foreground"
               >
-                <span class="tracking-tight">
-                  {{ nav.title }}
-                </span>
-                <ChevronRight
-                  class="size-3.5 text-muted-foreground/40 transition-transform duration-150 group-hover:text-foreground/70 group-hover:translate-x-0.5"
-                />
-              </button>
-            </nav>
-          </div>
-
-          <!-- Publication Shelf -->
-          <div
-            v-else-if="group.type === 'publication'"
-            class="space-y-2.5"
-          >
-            <!-- Shelf Header -->
-            <div
-              class="flex items-center justify-between py-0.5 select-none"
-              :class="group.link && group.link.href ? 'cursor-pointer group/shelf-header focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm' : ''"
-              :role="group.link && group.link.href ? 'button' : undefined"
-              :tabindex="group.link && group.link.href ? 0 : undefined"
-              :aria-label="group.link && group.link.href ? `${group.title} - ${t('common.view_all')}` : undefined"
-              @click="group.link && group.link.href && drillDown(group.link)"
-              @keydown.enter.prevent="group.link && group.link.href && drillDown(group.link)"
-            >
-              <h3 class="text-base font-semibold tracking-tight text-foreground inline-flex items-center gap-1.5 transition-colors group-hover/shelf-header:text-primary">
-                <span>{{ group.title }}</span>
-                <ChevronRight
-                  v-if="group.link && group.link.href"
-                  class="size-4 text-muted-foreground/60 transition-transform duration-200 group-hover/shelf-header:translate-x-0.5 group-hover/shelf-header:text-primary"
-                />
+                {{ group.title }}
               </h3>
-            </div>
-
-            <!-- Track Wrapper with Floating Navigation Buttons -->
-            <div
-              class="relative"
-              @mouseenter="onShelfMouseEnter(group.id)"
-              @mouseleave="onShelfMouseLeave(group.id)"
-            >
-              <!-- Left Floating Scroll Button -->
-              <Transition
-                enter-active-class="transition duration-150 ease-out"
-                enter-from-class="opacity-0 scale-90"
-                enter-to-class="opacity-100 scale-100"
-                leave-active-class="transition duration-150 ease-in"
-                leave-from-class="opacity-100 scale-100"
-                leave-to-class="opacity-0 scale-90"
+              <nav
+                class="flex flex-wrap items-center gap-2 pt-0.5"
+                :aria-label="group.title"
               >
                 <button
-                  v-if="shelfScrollState[group.id]?.canScrollLeft && shelfHoverState[group.id]"
+                  v-for="nav in group.items"
+                  :key="nav.href"
                   type="button"
-                  class="absolute left-1 sm:left-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
-                  :title="t('explore.scroll_left')"
-                  :aria-label="t('explore.scroll_left')"
-                  @click.stop="scrollShelf(group.id, -1)"
+                  class="group inline-flex items-center gap-2 h-8 px-3.5 text-xs sm:text-sm font-medium rounded-full border border-border/50 bg-muted/40 hover:bg-muted/80 hover:border-border/70 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] cursor-pointer select-none"
+                  @click="drillDown(nav)"
                 >
-                  <ChevronLeft class="size-4 sm:size-5" />
+                  <span class="tracking-tight">
+                    {{ nav.title }}
+                  </span>
+                  <ChevronRight
+                    class="size-3.5 text-muted-foreground/40 transition-transform duration-150 group-hover:text-foreground/70 group-hover:translate-x-0.5"
+                  />
                 </button>
-              </Transition>
+              </nav>
+            </div>
 
-              <!-- Horizontal Shelf Track -->
+            <!-- Publication Shelf -->
+            <div v-else-if="group.type === 'publication'" class="space-y-2.5">
+              <!-- Shelf Header -->
               <div
-                :ref="(el) => setShelfRef(group.id, el)"
-                class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
-                @scroll.passive="updateShelfScrollState(group.id)"
+                class="flex items-center justify-between py-0.5 select-none"
+                :class="
+                  group.link && group.link.href
+                    ? 'cursor-pointer group/shelf-header focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm'
+                    : ''
+                "
+                :role="group.link && group.link.href ? 'button' : undefined"
+                :tabindex="group.link && group.link.href ? 0 : undefined"
+                :aria-label="
+                  group.link && group.link.href
+                    ? `${group.title} - ${t('common.view_all')}`
+                    : undefined
+                "
+                @click="group.link && group.link.href && drillDown(group.link)"
+                @keydown.enter.prevent="
+                  group.link && group.link.href && drillDown(group.link)
+                "
               >
-                <div
-                  v-for="pub in group.publications"
-                  :key="pub.gid + ':' + pub.token"
-                  class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-                  @click="openGallery(pub, group.publications)"
+                <h3
+                  class="text-base font-semibold tracking-tight text-foreground inline-flex items-center gap-1.5 transition-colors group-hover/shelf-header:text-primary"
                 >
-                  <!-- Card Cover -->
-                  <div
-                    class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
-                  >
-                    <CoverImage :src="pub.coverUrl" :alt="pub.title" />
-
-                    <!-- Overlay Gradient (only covering bottom 1/2) -->
-                    <div
-                      class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
-                    />
-
-                    <!-- Top Left: Category Badge -->
-                    <div
-                      v-if="pub.category"
-                      class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
-                      :style="{ backgroundColor: getCategoryColor(pub.category) }"
-                    >
-                      {{ pub.category }}
-                    </div>
-
-                    <!-- Top Right: Archive / Favorite Badge -->
-                    <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
-                      <Badge
-                        :variant="pub.archiveBadge.variant"
-                        class="text-[10px] px-1.5 py-0 font-medium"
-                      >
-                        {{ pub.archiveBadge.label }}
-                      </Badge>
-                    </div>
-
-                    <!-- Bottom info -->
-                    <div
-                      class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
-                    >
-                      <div class="flex items-center gap-0.5 shrink-0">
-                        <Star class="size-3 fill-amber-400 text-amber-400" />
-                        <span>{{ pub.rating.toFixed(1) }}</span>
-                      </div>
-                      <span
-                        v-if="pub.language || pub.pageCount > 0"
-                        class="truncate ml-1.5 text-right drop-shadow-xs"
-                        :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
-                      >
-                        <template v-if="pub.language && pub.pageCount > 0">
-                          <span>{{ pub.language }}</span>
-                          <span class="mx-1 opacity-70">·</span>
-                          <span class="font-mono">{{ pub.pageCount }}P</span>
-                        </template>
-                        <template v-else-if="pub.pageCount > 0">
-                          <span class="font-mono">{{ pub.pageCount }}P</span>
-                        </template>
-                        <template v-else>
-                          <span>{{ pub.language }}</span>
-                        </template>
-                      </span>
-                    </div>
-                  </div>
-
-                  <!-- Title -->
-                  <div
-                    class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
-                    :title="pub.title"
-                  >
-                    {{ pub.title }}
-                  </div>
-                </div>
+                  <span>{{ group.title }}</span>
+                  <ChevronRight
+                    v-if="group.link && group.link.href"
+                    class="size-4 text-muted-foreground/60 transition-transform duration-200 group-hover/shelf-header:translate-x-0.5 group-hover/shelf-header:text-primary"
+                  />
+                </h3>
               </div>
 
-              <!-- Right Floating Scroll Button -->
-              <Transition
-                enter-active-class="transition duration-150 ease-out"
-                enter-from-class="opacity-0 scale-90"
-                enter-to-class="opacity-100 scale-100"
-                leave-active-class="transition duration-150 ease-in"
-                leave-from-class="opacity-100 scale-100"
-                leave-to-class="opacity-0 scale-90"
+              <!-- Track Wrapper with Floating Navigation Buttons -->
+              <div
+                class="relative"
+                @mouseenter="onShelfMouseEnter(group.id)"
+                @mouseleave="onShelfMouseLeave(group.id)"
               >
-                <button
-                  v-if="shelfScrollState[group.id]?.canScrollRight && shelfHoverState[group.id]"
-                  type="button"
-                  class="absolute right-1 sm:right-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
-                  :title="t('explore.scroll_right')"
-                  :aria-label="t('explore.scroll_right')"
-                  @click.stop="scrollShelf(group.id, 1)"
+                <!-- Left Floating Scroll Button -->
+                <Transition
+                  enter-active-class="transition duration-150 ease-out"
+                  enter-from-class="opacity-0 scale-90"
+                  enter-to-class="opacity-100 scale-100"
+                  leave-active-class="transition duration-150 ease-in"
+                  leave-from-class="opacity-100 scale-100"
+                  leave-to-class="opacity-0 scale-90"
                 >
-                  <ChevronRight class="size-4 sm:size-5" />
-                </button>
-              </Transition>
+                  <button
+                    v-if="
+                      shelfScrollState[group.id]?.canScrollLeft &&
+                      shelfHoverState[group.id]
+                    "
+                    type="button"
+                    class="absolute left-1 sm:left-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
+                    :title="t('explore.scroll_left')"
+                    :aria-label="t('explore.scroll_left')"
+                    @click.stop="scrollShelf(group.id, -1)"
+                  >
+                    <ChevronLeft class="size-4 sm:size-5" />
+                  </button>
+                </Transition>
+
+                <!-- Horizontal Shelf Track -->
+                <div
+                  :ref="(el) => setShelfRef(group.id, el)"
+                  class="flex gap-3.5 overflow-x-auto scroll-smooth py-1 no-scrollbar select-none"
+                  @scroll.passive="updateShelfScrollState(group.id)"
+                >
+                  <div
+                    v-for="pub in group.publications"
+                    :key="pub.gid + ':' + pub.token"
+                    class="group relative w-[148px] sm:w-[164px] md:w-[180px] shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                    @click="openGallery(pub, group.publications)"
+                  >
+                    <!-- Card Cover -->
+                    <div
+                      class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
+                    >
+                      <CoverImage :src="pub.coverUrl" :alt="pub.title" />
+
+                      <!-- Overlay Gradient (only covering bottom 1/2) -->
+                      <div
+                        class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
+                      />
+
+                      <!-- Top Left: Category Badge -->
+                      <div
+                        v-if="pub.category"
+                        class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
+                        :style="{
+                          backgroundColor: getCategoryColor(pub.category),
+                        }"
+                      >
+                        {{ pub.category }}
+                      </div>
+
+                      <!-- Top Right: Archive / Favorite Badge -->
+                      <div
+                        v-if="getPubBadge(pub)"
+                        class="absolute top-1.5 right-1.5"
+                      >
+                        <Badge
+                          :variant="getPubBadge(pub).variant"
+                          class="text-[10px] px-1.5 py-0 font-medium"
+                        >
+                          {{ getPubBadge(pub).label }}
+                        </Badge>
+                      </div>
+
+                      <!-- Bottom info -->
+                      <div
+                        class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
+                      >
+                        <div class="flex items-center gap-0.5 shrink-0">
+                          <Star class="size-3 fill-amber-400 text-amber-400" />
+                          <span>{{ pub.rating.toFixed(1) }}</span>
+                        </div>
+                        <span
+                          v-if="pub.language || pub.pageCount > 0"
+                          class="truncate ml-1.5 text-right drop-shadow-xs"
+                          :title="
+                            pub.language && pub.pageCount > 0
+                              ? `${pub.language} · ${pub.pageCount}P`
+                              : pub.language || `${pub.pageCount}P`
+                          "
+                        >
+                          <template v-if="pub.language && pub.pageCount > 0">
+                            <span>{{ pub.language }}</span>
+                            <span class="mx-1 opacity-70">·</span>
+                            <span class="font-mono">{{ pub.pageCount }}P</span>
+                          </template>
+                          <template v-else-if="pub.pageCount > 0">
+                            <span class="font-mono">{{ pub.pageCount }}P</span>
+                          </template>
+                          <template v-else>
+                            <span>{{ pub.language }}</span>
+                          </template>
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Title -->
+                    <div
+                      class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
+                      :title="pub.title"
+                    >
+                      {{ pub.title }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Right Floating Scroll Button -->
+                <Transition
+                  enter-active-class="transition duration-150 ease-out"
+                  enter-from-class="opacity-0 scale-90"
+                  enter-to-class="opacity-100 scale-100"
+                  leave-active-class="transition duration-150 ease-in"
+                  leave-from-class="opacity-100 scale-100"
+                  leave-to-class="opacity-0 scale-90"
+                >
+                  <button
+                    v-if="
+                      shelfScrollState[group.id]?.canScrollRight &&
+                      shelfHoverState[group.id]
+                    "
+                    type="button"
+                    class="absolute right-1 sm:right-2 top-[calc(50%-14px)] -translate-y-1/2 z-20 w-7 sm:w-8 h-12 sm:h-14 rounded-full bg-background/85 dark:bg-background/80 hover:bg-background text-foreground/80 hover:text-foreground backdrop-blur-md border border-border/70 shadow-lg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
+                    :title="t('explore.scroll_right')"
+                    :aria-label="t('explore.scroll_right')"
+                    @click.stop="scrollShelf(group.id, 1)"
+                  >
+                    <ChevronRight class="size-4 sm:size-5" />
+                  </button>
+                </Transition>
+              </div>
             </div>
-          </div>
-        </template>
+          </template>
         </template>
       </template>
 
       <!-- B: Publications Stream Mode or Regular Feed -->
       <template v-else>
         <!-- Route Facet Rails (Interactive Pill Filter Rail) -->
-        <div
-          v-if="routeFacets.length"
-          class="space-y-2"
-        >
-          <div
-            v-for="grp in routeFacets"
-            :key="grp.id"
-            class="overflow-hidden"
-          >
+        <div v-if="routeFacets.length" class="space-y-2">
+          <div v-for="grp in routeFacets" :key="grp.id" class="overflow-hidden">
             <div
               class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
               :aria-label="grp.title || t('explore.facets_label')"
@@ -2635,9 +3100,11 @@ onUnmounted(() => {
                 :key="link.title || link.href"
                 type="button"
                 class="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
-                :class="link.isActive
-                  ? 'bg-muted text-foreground font-medium border border-transparent'
-                  : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'"
+                :class="
+                  link.isActive
+                    ? 'bg-muted text-foreground font-medium border border-transparent'
+                    : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'
+                "
                 :aria-pressed="link.isActive"
                 @click="onFacetClick(link)"
               >
@@ -2648,7 +3115,11 @@ onUnmounted(() => {
                   aria-hidden="true"
                 />
                 <span class="tracking-tight whitespace-nowrap">
-                  {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
+                  {{
+                    link.title.toLowerCase() === "all"
+                      ? t("common.all")
+                      : link.title
+                  }}
                 </span>
               </button>
             </div>
@@ -2660,7 +3131,11 @@ onUnmounted(() => {
           v-if="routeLoading"
           class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse"
         >
-          <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
+          <div
+            v-for="i in 12"
+            :key="i"
+            class="aspect-[1/1.414] bg-muted rounded-lg"
+          />
         </div>
 
         <div
@@ -2705,12 +3180,12 @@ onUnmounted(() => {
               </div>
 
               <!-- Archive Badge -->
-              <div v-if="pub.archiveBadge" class="absolute top-1.5 right-1.5">
+              <div v-if="getPubBadge(pub)" class="absolute top-1.5 right-1.5">
                 <Badge
-                  :variant="pub.archiveBadge.variant"
+                  :variant="getPubBadge(pub).variant"
                   class="text-[10px] px-1.5 py-0 font-medium"
                 >
-                  {{ pub.archiveBadge.label }}
+                  {{ getPubBadge(pub).label }}
                 </Badge>
               </div>
 
@@ -2725,7 +3200,11 @@ onUnmounted(() => {
                 <span
                   v-if="pub.language || pub.pageCount > 0"
                   class="truncate ml-1.5 text-right drop-shadow-xs"
-                  :title="pub.language && pub.pageCount > 0 ? `${pub.language} · ${pub.pageCount}P` : (pub.language || `${pub.pageCount}P`)"
+                  :title="
+                    pub.language && pub.pageCount > 0
+                      ? `${pub.language} · ${pub.pageCount}P`
+                      : pub.language || `${pub.pageCount}P`
+                  "
                 >
                   <template v-if="pub.language && pub.pageCount > 0">
                     <span>{{ pub.language }}</span>
@@ -2776,7 +3255,9 @@ onUnmounted(() => {
             v-else-if="loadingMoreError"
             class="flex flex-col sm:flex-row items-center justify-center gap-3 py-6 text-sm text-destructive"
           >
-            <span>{{ t("explore.loading_more_failed", { err: loadingMoreError }) }}</span>
+            <span>{{
+              t("explore.loading_more_failed", { err: loadingMoreError })
+            }}</span>
             <Button
               variant="outline"
               size="sm"
@@ -2793,7 +3274,9 @@ onUnmounted(() => {
             class="flex items-center justify-center gap-3 py-8 text-xs text-muted-foreground/60 select-none"
           >
             <div class="h-px w-12 sm:w-20 bg-border/60" />
-            <span>{{ t("explore.all_loaded", { count: drillDownPublications.length }) }}</span>
+            <span>{{
+              t("explore.all_loaded", { count: drillDownPublications.length })
+            }}</span>
             <div class="h-px w-12 sm:w-20 bg-border/60" />
           </div>
         </div>
@@ -2805,7 +3288,14 @@ onUnmounted(() => {
       <DialogContent
         :show-close-button="false"
         class="w-full max-w-[calc(100%-1.5rem)] sm:max-w-3xl md:max-w-4xl h-[88vh] max-h-[90vh] p-0 rounded-2xl sm:rounded-3xl border border-border/50 shadow-2xl overflow-hidden bg-background flex flex-col"
-        @escape-key-down="(e) => { if (detailSubView !== 'main') { e.preventDefault(); detailSubView = 'main'; } }"
+        @escape-key-down="
+          (e) => {
+            if (detailSubView !== 'main') {
+              e.preventDefault();
+              detailSubView = 'main';
+            }
+          }
+        "
         @open-auto-focus="(e) => e.preventDefault()"
       >
         <!-- BASE VIEW: Main Gallery Details (always mounted, preserving scroll position) -->
@@ -2821,7 +3311,8 @@ onUnmounted(() => {
             <div
               class="absolute -top-24 -left-24 size-96 rounded-full blur-3xl opacity-25 pointer-events-none transition-colors duration-500"
               :style="{
-                backgroundColor: getCategoryColor(selectedPub?.category) || '#6366f1',
+                backgroundColor:
+                  getCategoryColor(selectedPub?.category) || '#6366f1',
               }"
             />
 
@@ -2838,26 +3329,41 @@ onUnmounted(() => {
             </DialogClose>
 
             <!-- Hero Main Info: Cover + Typography + Actions -->
-            <div class="flex flex-col sm:flex-row gap-5 sm:gap-7 items-start relative z-10">
+            <div
+              class="flex flex-col sm:flex-row gap-5 sm:gap-7 items-start relative z-10"
+            >
               <!-- Left: Prominent Book Cover -->
               <div
                 v-if="selectedPub"
                 class="relative aspect-[1/1.414] w-36 sm:w-44 md:w-48 shrink-0 mx-auto sm:mx-0 overflow-hidden rounded-xl border border-white/20 shadow-2xl shadow-black/70 bg-black/40 group"
               >
-                <CoverImage :src="selectedPub.coverUrl" :alt="selectedPub.title" />
+                <CoverImage
+                  :src="selectedPub.coverUrl"
+                  :alt="selectedPub.title"
+                />
               </div>
 
               <!-- Right: Metadata & Action Buttons -->
-              <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch space-y-4 sm:space-y-5">
+              <div
+                class="flex-1 min-w-0 flex flex-col justify-between self-stretch space-y-4 sm:space-y-5"
+              >
                 <!-- Upper: Category, Title, Rating & Favcat -->
-                <div class="space-y-2 sm:space-y-2.5 text-center sm:text-left sm:pr-10">
+                <div
+                  class="space-y-2 sm:space-y-2.5 text-center sm:text-left sm:pr-10"
+                >
                   <!-- Category Link with Chevron -->
-                  <div class="flex items-center justify-center sm:justify-start">
+                  <div
+                    class="flex items-center justify-center sm:justify-start"
+                  >
                     <span
                       v-if="selectedPub?.category"
                       class="inline-flex items-center gap-0.5 text-xs font-semibold tracking-wide text-white/80 hover:text-white transition-colors cursor-pointer"
                       @click="handleCategoryClick(selectedPub.category)"
-                      :title="t('explore.search_category', { cat: selectedPub.category })"
+                      :title="
+                        t('explore.search_category', {
+                          cat: selectedPub.category,
+                        })
+                      "
                     >
                       <span>{{ selectedPub.category }}</span>
                       <ChevronRight class="size-3 opacity-60" />
@@ -2865,15 +3371,23 @@ onUnmounted(() => {
                   </div>
 
                   <!-- Title -->
-                  <DialogTitle class="text-lg sm:text-2xl font-bold text-white leading-snug line-clamp-2 break-words max-w-[360px] sm:max-w-none mx-auto sm:mx-0 text-balance">
+                  <DialogTitle
+                    class="text-lg sm:text-2xl font-bold text-white leading-snug line-clamp-2 break-words max-w-[360px] sm:max-w-none mx-auto sm:mx-0 text-balance"
+                  >
                     {{ selectedPub?.title }}
                   </DialogTitle>
 
                   <!-- Rating & Favcat Row -->
-                  <div class="flex items-center justify-center sm:justify-start gap-2 text-xs pt-0.5 min-h-[1.5rem]">
-                    <div class="flex items-center gap-1 text-amber-300 font-semibold">
+                  <div
+                    class="flex items-center justify-center sm:justify-start gap-2 text-xs pt-0.5 min-h-[1.5rem]"
+                  >
+                    <div
+                      class="flex items-center gap-1 text-amber-300 font-semibold"
+                    >
                       <Star class="size-3.5 fill-amber-300 text-amber-300" />
-                      <span class="transition-opacity duration-300">{{ currentRating.toFixed(2) }}</span>
+                      <span class="transition-opacity duration-300">{{
+                        currentRating.toFixed(2)
+                      }}</span>
                     </div>
 
                     <Transition
@@ -2888,7 +3402,9 @@ onUnmounted(() => {
                         v-if="currentFavcatInfo?.name"
                         class="inline-flex items-center gap-2"
                       >
-                        <span class="opacity-30 text-white/70 select-none">·</span>
+                        <span class="opacity-30 text-white/70 select-none"
+                          >·</span
+                        >
                         <span
                           class="inline-flex items-center text-[10px] sm:text-[11px] font-medium px-2 py-0.5 rounded-full border shadow-2xs transition-all select-none"
                           :style="{
@@ -2896,8 +3412,17 @@ onUnmounted(() => {
                             borderColor: currentFavcatStyle.border,
                             color: currentFavcatStyle.text,
                           }"
-                          :class="currentFavcatInfo.href ? 'cursor-pointer hover:brightness-125 active:scale-95' : ''"
-                          :title="currentFavcatInfo.name + (currentFavcatInfo.href ? t('explore.click_favcat_filter') : '')"
+                          :class="
+                            currentFavcatInfo.href
+                              ? 'cursor-pointer hover:brightness-125 active:scale-95'
+                              : ''
+                          "
+                          :title="
+                            currentFavcatInfo.name +
+                            (currentFavcatInfo.href
+                              ? t('explore.click_favcat_filter')
+                              : '')
+                          "
                           @click="handleFavcatClick"
                         >
                           {{ currentFavcatInfo.name }}
@@ -2910,10 +3435,22 @@ onUnmounted(() => {
                 <!-- Lower: Metadata Form Grid + Action Buttons -->
                 <div class="space-y-3.5 sm:space-y-4">
                   <!-- Metadata Form Grid (One per row: Key: Value) -->
-                  <div class="grid grid-cols-[auto_1fr] items-center gap-x-6 sm:gap-x-7 gap-y-1.5 sm:gap-y-2 text-xs text-left w-fit mx-auto sm:mx-0">
-                    <span class="text-white/50 select-none">{{ t("explore.page_count") }}</span>
-                    <span class="text-white/95 font-medium truncate inline-flex items-center">
-                      <span>{{ selectedPub?.pageCount ? t("common.page_count", { count: selectedPub.pageCount }) : t("common.unknown") }}</span>
+                  <div
+                    class="grid grid-cols-[auto_1fr] items-center gap-x-6 sm:gap-x-7 gap-y-1.5 sm:gap-y-2 text-xs text-left w-fit mx-auto sm:mx-0"
+                  >
+                    <span class="text-white/50 select-none">{{
+                      t("explore.page_count")
+                    }}</span>
+                    <span
+                      class="text-white/95 font-medium truncate inline-flex items-center"
+                    >
+                      <span>{{
+                        selectedPub?.pageCount
+                          ? t("common.page_count", {
+                              count: selectedPub.pageCount,
+                            })
+                          : t("common.unknown")
+                      }}</span>
                       <Transition
                         enter-active-class="transition-opacity duration-300 ease-out"
                         enter-from-class="opacity-0"
@@ -2925,20 +3462,32 @@ onUnmounted(() => {
                         <span
                           v-if="currentFileSize"
                           class="font-mono text-[11.5px] text-white/80 inline-block align-baseline"
-                        >（{{ currentFileSize }}）</span>
+                          >（{{ currentFileSize }}）</span
+                        >
                       </Transition>
                     </span>
 
                     <template v-if="selectedPub?.publishTime">
-                      <span class="text-white/50 select-none">{{ t("explore.posted_date") }}</span>
-                      <span class="text-white/95 font-medium font-mono text-[11.5px] truncate">{{ formatDisplayDate(selectedPub.publishTime) }}</span>
+                      <span class="text-white/50 select-none">{{
+                        t("explore.posted_date")
+                      }}</span>
+                      <span
+                        class="text-white/95 font-medium font-mono text-[11.5px] truncate"
+                        >{{ formatDisplayDate(selectedPub.publishTime) }}</span
+                      >
                     </template>
 
                     <template v-if="selectedPub?.uploader">
-                      <span class="text-white/50 select-none">{{ t("explore.uploader") }}</span>
+                      <span class="text-white/50 select-none">{{
+                        t("explore.uploader")
+                      }}</span>
                       <span
                         class="text-white/95 font-medium hover:text-white underline decoration-white/30 underline-offset-2 cursor-pointer transition-colors truncate"
-                        :title="t('explore.search_uploader', { uploader: selectedPub.uploader })"
+                        :title="
+                          t('explore.search_uploader', {
+                            uploader: selectedPub.uploader,
+                          })
+                        "
                         @click="handleUploaderClick(selectedPub.uploader)"
                       >
                         {{ selectedPub.uploader }}
@@ -2957,7 +3506,10 @@ onUnmounted(() => {
                       class="rounded-full bg-white text-neutral-900 hover:bg-white/90 font-medium text-xs sm:text-sm h-9 px-6 sm:px-8 flex-initial w-auto min-w-36 max-w-[220px] sm:max-w-none sm:min-w-44 shadow-md transition-all active:scale-95 disabled:opacity-70 gap-2"
                       @click="handlePrimaryRead"
                     >
-                      <Loader2 v-if="isPreparingReader" class="size-3.5 animate-spin shrink-0" />
+                      <Loader2
+                        v-if="isPreparingReader"
+                        class="size-3.5 animate-spin shrink-0"
+                      />
                       <span>{{ primaryReadButtonLabel }}</span>
                     </Button>
 
@@ -2972,73 +3524,185 @@ onUnmounted(() => {
                       <HatGlasses class="size-4" />
                     </Button>
 
-                  <!-- Secondary Icon Button: Favorite (SF Symbol fill boolean style) -->
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
-                    :class="currentArchiveBadge?.isFavorited
-                      ? 'bg-amber-400/15 hover:bg-amber-400/25 border-amber-400/35 text-amber-400'
-                      : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'"
-                    :title="currentArchiveBadge?.isFavorited ? t('explore.favorite_remove') : t('explore.favorite_add')"
-                    @click="handleFavorite(selectedPub)"
-                  >
-                    <Bookmark
-                      class="size-4 transition-transform"
-                      :class="currentArchiveBadge?.isFavorited ? 'fill-amber-400 text-amber-400' : ''"
-                    />
-                  </Button>
+                    <!-- Secondary Icon Button: Favorite (Category selection dropdown) -->
+                    <DropdownMenu>
+                      <DropdownMenuTrigger as-child>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                          :class="
+                            isCurrentFavorited
+                              ? 'bg-amber-400/15 hover:bg-amber-400/25 border-amber-400/35 text-amber-400'
+                              : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'
+                          "
+                          :title="
+                            !s.status.value?.site?.has_ipb
+                              ? t('archive.dialog_new_no_ipb')
+                              : isCurrentFavorited
+                                ? currentFavcatInfo?.name
+                                  ? `${t('common.favorited')}: ${currentFavcatInfo.name}`
+                                  : t('explore.favorite_move')
+                                : t('explore.favorite_select')
+                          "
+                          :disabled="
+                            !s.status.value?.site?.has_ipb || s.busy.value
+                          "
+                        >
+                          <Bookmark
+                            class="size-4 transition-transform"
+                            :class="
+                              isCurrentFavorited
+                                ? 'fill-amber-400 text-amber-400'
+                                : ''
+                            "
+                          />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        class="w-56 max-h-[70vh] overflow-y-auto no-scrollbar"
+                      >
+                        <div
+                          class="px-2.5 py-1.5 text-xs font-semibold text-muted-foreground select-none"
+                        >
+                          {{
+                            isCurrentFavorited
+                              ? t("explore.favorite_move")
+                              : t("explore.favorite_select")
+                          }}
+                        </div>
+                        <DropdownMenuSeparator />
 
-                  <!-- Secondary Icon Button: Archive (State-aware icon variant) -->
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
-                    :class="currentArchiveBadge?.isReady
-                      ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/35 text-emerald-400'
-                      : currentArchiveBadge?.isDownloading
-                      ? 'bg-white/20 border-white/30 text-white cursor-wait'
-                      : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'"
-                    :title="currentArchiveBadge?.isReady ? t('explore.status_archived') : currentArchiveBadge?.isDownloading ? t('explore.status_downloading') : currentArchiveBadge?.isFailed ? t('explore.status_failed') : t('explore.status_unarchived')"
-                    @click="handleArchive(selectedPub)"
-                  >
-                    <Loader2
-                      v-if="currentArchiveBadge?.isDownloading"
-                      class="size-4 animate-spin text-white"
-                    />
-                    <Check
-                      v-else-if="currentArchiveBadge?.isReady"
-                      class="size-4 text-emerald-400 stroke-[2.5]"
-                    />
-                    <Download
-                      v-else
-                      class="size-4"
-                      :class="currentArchiveBadge?.isFailed ? 'text-rose-400' : ''"
-                    />
-                  </Button>
+                        <DropdownMenuItem
+                          v-for="cat in favcatList"
+                          :key="cat.id"
+                          class="flex items-center justify-between cursor-pointer py-1.5"
+                          @click="handleSelectFavcat(cat.id)"
+                        >
+                          <div class="flex items-center gap-2 min-w-0">
+                            <span
+                              class="size-2.5 rounded-full shrink-0"
+                              :style="{
+                                backgroundColor: FAVCAT_SOLID_COLORS[cat.id],
+                              }"
+                            />
+                            <span class="truncate text-xs"
+                              >{{ cat.id }}: {{ cat.name }}</span
+                            >
+                          </div>
+                          <Check
+                            v-if="
+                              isCurrentFavorited && currentFavcatId === cat.id
+                            "
+                            class="size-3.5 text-amber-400 shrink-0 ml-1.5 stroke-[2.5]"
+                          />
+                        </DropdownMenuItem>
 
-                  <!-- Tertiary Icon Button: Upstream External Link -->
-                  <Button
-                    v-if="selectedPub?.upstreamUrl"
-                    variant="ghost"
-                    size="icon"
-                    as="a"
-                    :href="selectedPub.upstreamUrl"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="size-9 rounded-full border border-white/20 bg-white/15 hover:bg-white/25 text-white transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
-                    :title="t('explore.open_original')"
-                  >
-                    <ExternalLink class="size-4" />
-                  </Button>
+                        <template v-if="isCurrentFavorited">
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            class="cursor-pointer gap-2 py-1.5 text-xs text-rose-500 focus:text-rose-500 focus:bg-rose-500/10"
+                            @click="handleRemoveFavorite"
+                          >
+                            <BookmarkX class="size-3.5 text-rose-500" />
+                            <span>{{ t("archive.remove_fav") }}</span>
+                          </DropdownMenuItem>
+                        </template>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <!-- Secondary Icon Button: Archive (State-aware icon variant) -->
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                      :class="
+                        currentArchiveBadge?.isReady
+                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/35 text-emerald-400'
+                          : currentArchiveBadge?.isDownloading ||
+                              isArchiveQuoteBusy
+                            ? 'bg-white/20 border-white/30 text-white cursor-wait'
+                            : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'
+                      "
+                      :title="
+                        currentArchiveBadge?.isReady
+                          ? t('explore.status_archived')
+                          : currentArchiveBadge?.isDownloading
+                            ? t('explore.status_downloading')
+                            : currentArchiveBadge?.isFailed
+                              ? t('explore.status_failed')
+                              : t('explore.status_unarchived')
+                      "
+                      :disabled="
+                        Boolean(
+                          currentArchiveBadge?.isDownloading ||
+                          isArchiveQuoteBusy,
+                        )
+                      "
+                      @click="handleArchive(selectedPub)"
+                    >
+                      <Loader2
+                        v-if="
+                          currentArchiveBadge?.isDownloading ||
+                          isArchiveQuoteBusy
+                        "
+                        class="size-4 animate-spin text-white"
+                      />
+                      <Check
+                        v-else-if="currentArchiveBadge?.isReady"
+                        class="size-4 text-emerald-400 stroke-[2.5]"
+                      />
+                      <Download
+                        v-else
+                        class="size-4"
+                        :class="
+                          currentArchiveBadge?.isFailed ? 'text-rose-400' : ''
+                        "
+                      />
+                    </Button>
+
+                    <!-- Tertiary Icon Button: Upstream External Link -->
+                    <Button
+                      v-if="selectedPub?.upstreamUrl"
+                      variant="ghost"
+                      size="icon"
+                      as="a"
+                      :href="selectedPub.upstreamUrl"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="size-9 rounded-full border border-white/20 bg-white/15 hover:bg-white/25 text-white transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                      :title="t('explore.open_original')"
+                    >
+                      <ExternalLink class="size-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
           <!-- 2. BODY CONTENT (White/Dark Theme Adaptable) -->
-          <div class="p-5 sm:p-7 space-y-6 flex-1 bg-background text-foreground">
+          <div
+            class="p-5 sm:p-7 space-y-6 flex-1 bg-background text-foreground"
+          >
+            <!-- In-dialog Error Alert -->
+            <Alert v-if="s.error.value" variant="destructive" class="relative">
+              <CircleAlert class="size-4" />
+              <AlertDescription class="text-sm pr-6">{{
+                s.error.value
+              }}</AlertDescription>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                class="absolute top-2.5 right-2.5 text-destructive hover:bg-destructive/10"
+                :aria-label="t('common.close_error')"
+                @click="s.error.value = ''"
+              >
+                <X class="size-3.5" />
+              </Button>
+            </Alert>
             <!-- Section A: Namespace Tag Groups (NO local scrollview, flows naturally) -->
             <Transition
               enter-active-class="transition-opacity duration-300 ease-out"
@@ -3055,11 +3719,7 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Tags Layout: left-aligned, no quote mark, no indent -->
-                <TransitionGroup
-                  name="tag-group"
-                  tag="div"
-                  class="space-y-2"
-                >
+                <TransitionGroup name="tag-group" tag="div" class="space-y-2">
                   <div
                     v-for="grp in groupedTags"
                     :key="grp.namespace"
@@ -3084,14 +3744,18 @@ onUnmounted(() => {
                         :style="tag.tagStyle"
                         :class="[
                           'text-[11px] sm:text-xs font-normal px-2.5 py-0.5 rounded-md cursor-pointer select-none transition-all duration-150 inline-flex items-center gap-1 active:scale-95',
-                          tag.isWeak ? 'border border-dashed' : 'border border-solid',
+                          tag.isWeak
+                            ? 'border border-dashed'
+                            : 'border border-solid',
                           tag.hasCustomStyle
                             ? 'shadow-2xs hover:brightness-110 hover:shadow-xs'
                             : tag.isWeak
                               ? 'border-border/70 text-foreground/80 bg-muted/20 hover:bg-primary hover:text-primary-foreground hover:border-solid hover:border-primary'
                               : 'border-border text-foreground/90 bg-muted/30 hover:bg-primary hover:text-primary-foreground hover:border-primary',
                         ]"
-                        :title="t('explore.search_tag', { tag: tag.searchName })"
+                        :title="
+                          t('explore.search_tag', { tag: tag.searchName })
+                        "
                         @click="handleTagClick(tag.searchName)"
                       >
                         {{ tag.displayName }}
@@ -3112,31 +3776,56 @@ onUnmounted(() => {
                 class="flex items-center justify-between cursor-pointer group/sec select-none"
                 @click="detailSubView = 'thumbnails'"
               >
-                <span class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors">
+                <span
+                  class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors"
+                >
                   {{ t("explore.modal_preview") }}
-                  <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
+                  <ChevronRight
+                    class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform"
+                  />
                 </span>
-                <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
-                  {{ t("explore.modal_pages_total", { count: selectedPub.pageCount || selectedPub.readingOrder.length }) }}
+                <span
+                  class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors"
+                >
+                  {{
+                    t("explore.modal_pages_total", {
+                      count:
+                        selectedPub.pageCount ||
+                        selectedPub.readingOrder.length,
+                    })
+                  }}
                 </span>
               </div>
 
               <!-- Horizontal Thumbnails Track -->
-              <div class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none">
+              <div
+                class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none"
+              >
                 <div
                   v-for="(page, idx) in previewPages"
                   :key="page.href || idx"
                   class="group/thumb relative w-24 sm:w-28 shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
                   @click="handleRead(selectedPub, idx)"
                 >
-                  <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm group-hover/thumb:shadow-md group-hover/thumb:border-primary/50 transition-all">
-                    <CoverImage :src="page.thumbnailHref || page.href" :alt="t('common.page_n', { n: idx + 1 })" />
+                  <div
+                    class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm group-hover/thumb:shadow-md group-hover/thumb:border-primary/50 transition-all"
+                  >
+                    <CoverImage
+                      :src="page.thumbnailHref || page.href"
+                      :alt="t('common.page_n', { n: idx + 1 })"
+                    />
                     <!-- Hover overlay with read icon -->
-                    <div class="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/25 transition-colors flex items-center justify-center">
-                      <BookOpen class="size-5 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity drop-shadow" />
+                    <div
+                      class="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/25 transition-colors flex items-center justify-center"
+                    >
+                      <BookOpen
+                        class="size-5 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity drop-shadow"
+                      />
                     </div>
                   </div>
-                  <p class="text-[10px] text-center text-muted-foreground mt-1 group-hover/thumb:text-foreground transition-colors">
+                  <p
+                    class="text-[10px] text-center text-muted-foreground mt-1 group-hover/thumb:text-foreground transition-colors"
+                  >
                     {{ t("common.page_n", { n: idx + 1 }) }}
                   </p>
                 </div>
@@ -3147,9 +3836,18 @@ onUnmounted(() => {
                   class="group/more relative w-24 sm:w-28 shrink-0 cursor-pointer flex flex-col items-center justify-center aspect-[1/1.414] rounded-lg border border-dashed border-border/80 hover:border-primary/60 bg-muted/20 hover:bg-muted/40 transition-all text-center"
                   @click="detailSubView = 'thumbnails'"
                 >
-                  <Grid class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1" />
-                  <span class="text-[11px] font-medium text-muted-foreground group-hover/more:text-foreground">{{ t("explore.all_pages") }}</span>
-                  <span class="text-[9px] text-muted-foreground/70 mt-0.5">{{ t("common.page_count", { count: selectedPub.readingOrder.length }) }}</span>
+                  <Grid
+                    class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1"
+                  />
+                  <span
+                    class="text-[11px] font-medium text-muted-foreground group-hover/more:text-foreground"
+                    >{{ t("explore.all_pages") }}</span
+                  >
+                  <span class="text-[9px] text-muted-foreground/70 mt-0.5">{{
+                    t("common.page_count", {
+                      count: selectedPub.readingOrder.length,
+                    })
+                  }}</span>
                 </div>
               </div>
             </div>
@@ -3158,37 +3856,61 @@ onUnmounted(() => {
             <div
               v-if="selectedPub?.reviews?.length > 0"
               class="space-y-3"
-              :class="{ 'pt-5 sm:pt-6 border-t': groupedTags.length > 0 || (selectedPub?.readingOrder?.length || 0) > 0 }"
+              :class="{
+                'pt-5 sm:pt-6 border-t':
+                  groupedTags.length > 0 ||
+                  (selectedPub?.readingOrder?.length || 0) > 0,
+              }"
             >
               <div
                 class="flex items-center justify-between cursor-pointer group/sec select-none"
                 @click="detailSubView = 'reviews'"
               >
-                <span class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors">
+                <span
+                  class="text-sm font-bold text-foreground inline-flex items-center gap-1 group-hover/sec:text-primary transition-colors"
+                >
                   {{ t("explore.modal_reviews") }}
-                  <ChevronRight class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform" />
+                  <ChevronRight
+                    class="size-3.5 opacity-60 group-hover/sec:translate-x-0.5 transition-transform"
+                  />
                 </span>
-                <span class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors">
-                  {{ t("explore.modal_reviews_total", { count: selectedPub.reviews.length }) }}
+                <span
+                  class="text-[11px] text-muted-foreground group-hover/sec:text-foreground transition-colors"
+                >
+                  {{
+                    t("explore.modal_reviews_total", {
+                      count: selectedPub.reviews.length,
+                    })
+                  }}
                 </span>
               </div>
 
               <!-- Horizontal Review Cards Track -->
-              <div class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none">
+              <div
+                class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none"
+              >
                 <div
                   v-for="rev in previewReviews"
                   :key="rev.id || rev.time + rev.username"
                   class="group/rev relative w-72 sm:w-80 shrink-0 p-3.5 sm:p-4 rounded-xl border bg-muted/40 dark:bg-muted/20 hover:bg-muted/60 dark:hover:bg-muted/30 cursor-pointer transition-all duration-200 flex flex-col justify-between space-y-3"
                   @click="detailSubView = 'reviews'"
                 >
-                  <p class="text-xs sm:text-[13px] text-foreground/90 line-clamp-3 leading-relaxed break-words font-normal">
+                  <p
+                    class="text-xs sm:text-[13px] text-foreground/90 line-clamp-3 leading-relaxed break-words font-normal"
+                  >
                     {{ stripHtmlToSnippet(rev.content) }}
                   </p>
-                  <div class="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/30">
-                    <span class="font-medium text-foreground/80 truncate max-w-[150px] group-hover/rev:text-primary transition-colors">
+                  <div
+                    class="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/30"
+                  >
+                    <span
+                      class="font-medium text-foreground/80 truncate max-w-[150px] group-hover/rev:text-primary transition-colors"
+                    >
                       {{ rev.username }}
                     </span>
-                    <span class="font-mono text-[10px]">{{ rev.time ? rev.time.slice(0, 10) : '' }}</span>
+                    <span class="font-mono text-[10px]">{{
+                      rev.time ? rev.time.slice(0, 10) : ""
+                    }}</span>
                   </div>
                 </div>
 
@@ -3198,9 +3920,18 @@ onUnmounted(() => {
                   class="group/more relative w-32 sm:w-36 shrink-0 cursor-pointer flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-border/80 hover:border-primary/60 bg-muted/20 hover:bg-muted/40 transition-all text-center"
                   @click="detailSubView = 'reviews'"
                 >
-                  <MessageSquare class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1.5" />
-                  <span class="text-xs font-medium text-muted-foreground group-hover/more:text-foreground">{{ t("explore.all_reviews") }}</span>
-                  <span class="text-[10px] text-muted-foreground/70 mt-0.5">{{ t("explore.modal_reviews_total", { count: selectedPub.reviews.length }) }}</span>
+                  <MessageSquare
+                    class="size-5 text-muted-foreground group-hover/more:text-primary transition-colors mb-1.5"
+                  />
+                  <span
+                    class="text-xs font-medium text-muted-foreground group-hover/more:text-foreground"
+                    >{{ t("explore.all_reviews") }}</span
+                  >
+                  <span class="text-[10px] text-muted-foreground/70 mt-0.5">{{
+                    t("explore.modal_reviews_total", {
+                      count: selectedPub.reviews.length,
+                    })
+                  }}</span>
                 </div>
               </div>
             </div>
@@ -3216,7 +3947,9 @@ onUnmounted(() => {
             class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto no-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
           >
             <!-- Sticky Subview Header -->
-            <div class="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b px-5 sm:px-7 py-3 flex items-center justify-between">
+            <div
+              class="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b px-5 sm:px-7 py-3 flex items-center justify-between"
+            >
               <div class="flex items-center gap-2">
                 <Button
                   variant="ghost"
@@ -3234,14 +3967,20 @@ onUnmounted(() => {
               </div>
               <div class="flex items-center gap-3">
                 <span class="text-xs text-muted-foreground hidden sm:inline">
-                  {{ t("explore.preview_hint", { count: selectedPub?.readingOrder?.length || 0 }) }}
+                  {{
+                    t("explore.preview_hint", {
+                      count: selectedPub?.readingOrder?.length || 0,
+                    })
+                  }}
                 </span>
                 <!-- Quick Page Jump (if more than 48 pages) -->
                 <div
                   v-if="(selectedPub?.readingOrder?.length || 0) > 48"
                   class="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/40 border rounded-lg px-2 py-0.5"
                 >
-                  <span class="text-[11px] select-none">{{ t("explore.jump_to") }}</span>
+                  <span class="text-[11px] select-none">{{
+                    t("explore.jump_to")
+                  }}</span>
                   <input
                     v-model.number="pageJumpInput"
                     type="number"
@@ -3275,13 +4014,20 @@ onUnmounted(() => {
 
             <!-- Mobile Hint -->
             <div class="sm:hidden px-5 pt-3 text-xs text-muted-foreground">
-              {{ t("explore.preview_hint", { count: selectedPub?.readingOrder?.length || 0 }) }}
+              {{
+                t("explore.preview_hint", {
+                  count: selectedPub?.readingOrder?.length || 0,
+                })
+              }}
             </div>
 
             <!-- Thumbnails Grid -->
             <div class="p-5 sm:p-7 flex-1">
               <div
-                v-if="!selectedPub?.readingOrder || selectedPub.readingOrder.length === 0"
+                v-if="
+                  !selectedPub?.readingOrder ||
+                  selectedPub.readingOrder.length === 0
+                "
                 class="py-16 text-center text-muted-foreground text-sm"
               >
                 {{ t("explore.no_thumbnails") }}
@@ -3297,26 +4043,43 @@ onUnmounted(() => {
                   class="group/gridpage cursor-pointer flex flex-col items-center select-none"
                   @click="handleRead(selectedPub, idx)"
                 >
-                  <div class="relative aspect-[1/1.414] w-full overflow-hidden rounded-xl border bg-muted shadow-xs group-hover/gridpage:shadow-md group-hover/gridpage:border-primary transition-all active:scale-95">
-                    <CoverImage :src="page.thumbnailHref || page.href" :alt="t('common.page_n', { n: idx + 1 })" />
+                  <div
+                    class="relative aspect-[1/1.414] w-full overflow-hidden rounded-xl border bg-muted shadow-xs group-hover/gridpage:shadow-md group-hover/gridpage:border-primary transition-all active:scale-95"
+                  >
+                    <CoverImage
+                      :src="page.thumbnailHref || page.href"
+                      :alt="t('common.page_n', { n: idx + 1 })"
+                    />
                     <!-- Hover overlay with read icon -->
-                    <div class="absolute inset-0 bg-black/35 opacity-0 group-hover/gridpage:opacity-100 flex items-center justify-center transition-opacity">
+                    <div
+                      class="absolute inset-0 bg-black/35 opacity-0 group-hover/gridpage:opacity-100 flex items-center justify-center transition-opacity"
+                    >
                       <BookOpen class="size-7 text-white drop-shadow-md" />
                     </div>
                   </div>
-                  <span class="text-xs text-muted-foreground mt-1.5 group-hover/gridpage:text-foreground group-hover/gridpage:font-medium transition-colors">
+                  <span
+                    class="text-xs text-muted-foreground mt-1.5 group-hover/gridpage:text-foreground group-hover/gridpage:font-medium transition-colors"
+                  >
                     {{ t("common.page_n", { n: idx + 1 }) }}
                   </span>
                 </div>
 
                 <!-- Progressive loading sentinel for thumbnails -->
                 <div
-                  v-if="thumbnailRenderLimit < (selectedPub?.readingOrder?.length || 0)"
+                  v-if="
+                    thumbnailRenderLimit <
+                    (selectedPub?.readingOrder?.length || 0)
+                  "
                   ref="thumbnailSentinelRef"
                   class="col-span-full py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2"
                 >
                   <RefreshCw class="size-3.5 animate-spin opacity-60" />
-                  <span>{{ t("explore.loading_more_thumbs", { shown: displayedThumbnails.length, total: selectedPub?.readingOrder?.length }) }}</span>
+                  <span>{{
+                    t("explore.loading_more_thumbs", {
+                      shown: displayedThumbnails.length,
+                      total: selectedPub?.readingOrder?.length,
+                    })
+                  }}</span>
                 </div>
               </div>
             </div>
@@ -3329,7 +4092,9 @@ onUnmounted(() => {
             class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto no-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
           >
             <!-- Sticky Subview Header -->
-            <div class="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b px-5 sm:px-7 py-3 flex items-center justify-between">
+            <div
+              class="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b px-5 sm:px-7 py-3 flex items-center justify-between"
+            >
               <div class="flex items-center gap-2">
                 <Button
                   variant="ghost"
@@ -3347,7 +4112,11 @@ onUnmounted(() => {
               </div>
               <div class="flex items-center gap-3">
                 <span class="text-xs text-muted-foreground hidden sm:inline">
-                  {{ t("explore.modal_reviews_total", { count: selectedPub?.reviews?.length || 0 }) }}
+                  {{
+                    t("explore.modal_reviews_total", {
+                      count: selectedPub?.reviews?.length || 0,
+                    })
+                  }}
                 </span>
                 <DialogClose as-child>
                   <Button
@@ -3380,18 +4149,27 @@ onUnmounted(() => {
                 <!-- Reviewer & Time Info -->
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2">
-                    <div class="size-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs select-none">
+                    <div
+                      class="size-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs select-none"
+                    >
                       {{ (rev.username || "?").charAt(0).toUpperCase() }}
                     </div>
                     <div>
-                      <span class="text-xs sm:text-sm font-semibold text-foreground">
+                      <span
+                        class="text-xs sm:text-sm font-semibold text-foreground"
+                      >
                         {{ rev.username }}
                       </span>
                     </div>
                   </div>
-                  <div class="text-right text-[11px] text-muted-foreground font-mono">
+                  <div
+                    class="text-right text-[11px] text-muted-foreground font-mono"
+                  >
                     <div>{{ rev.time }}</div>
-                    <div v-if="rev.lastEditTime" class="text-[10px] text-muted-foreground/70">
+                    <div
+                      v-if="rev.lastEditTime"
+                      class="text-[10px] text-muted-foreground/70"
+                    >
                       {{ t("explore.edited_at", { time: rev.lastEditTime }) }}
                     </div>
                   </div>
@@ -3412,7 +4190,12 @@ onUnmounted(() => {
                 @click="reviewRenderLimit += 20"
               >
                 <RefreshCw class="size-3.5 animate-spin opacity-60" />
-                <span>{{ t("explore.loading_more_reviews", { shown: displayedReviews.length, total: selectedPub?.reviews?.length }) }}</span>
+                <span>{{
+                  t("explore.loading_more_reviews", {
+                    shown: displayedReviews.length,
+                    total: selectedPub?.reviews?.length,
+                  })
+                }}</span>
               </div>
             </div>
           </div>

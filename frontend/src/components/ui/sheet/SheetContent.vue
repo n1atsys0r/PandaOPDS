@@ -8,7 +8,7 @@ import {
   DialogPortal,
   useForwardPropsEmits,
 } from "reka-ui";
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import SheetOverlay from "./SheetOverlay.vue";
 
 defineOptions({ inheritAttrs: false });

@@ -60,7 +60,9 @@ export function t(key, params = {}) {
   }
   if (params && Object.keys(params).length > 0) {
     return val.replace(/\{(\w+)\}/g, (match, k) => {
-      return params[k] !== undefined && params[k] !== null ? String(params[k]) : match;
+      return params[k] !== undefined && params[k] !== null
+        ? String(params[k])
+        : match;
     });
   }
   return val;

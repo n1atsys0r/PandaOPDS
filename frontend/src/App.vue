@@ -212,11 +212,7 @@ const themeMeta = computed(() => {
 const groups = computed(() => {
   let f = s.config.value?.fields || {};
   let map = {
-    [t("config.group_site")]: [
-      "eh_site",
-      "public_base_url",
-      "pse_page_base",
-    ],
+    [t("config.group_site")]: ["eh_site", "public_base_url", "pse_page_base"],
     [t("config.group_auth")]: ["ipb_member_id", "ipb_pass_hash", "igneous"],
     [t("config.group_features")]: [
       "tag_status_filter",
@@ -230,7 +226,10 @@ const groups = computed(() => {
       "favorites_sync_categories",
       "favorites_sync_archive",
     ],
-    [t("config.group_archive")]: ["archive_update_interval_days", "archive_auto_update"],
+    [t("config.group_archive")]: [
+      "archive_update_interval_days",
+      "archive_auto_update",
+    ],
   };
   return Object.entries(map)
     .map(([title, keys]) => ({
@@ -239,29 +238,36 @@ const groups = computed(() => {
     }))
     .filter((x) => x.fields.length);
 });
-const labels = new Proxy({}, {
-  get(_, k) {
-    const map = {
-      eh_site: t("config.label_eh_site"),
-      public_base_url: t("config.label_public_base_url"),
-      pse_page_base: t("config.label_pse_page_base"),
-      ipb_member_id: "IPB Member ID",
-      ipb_pass_hash: "IPB Pass Hash",
-      igneous: "Igneous Cookie",
-      tag_status_filter: t("config.label_tag_status_filter"),
-      tag_translation_enabled: t("config.label_tag_translation_enabled"),
-      comments_enabled: t("config.label_comments_enabled"),
-      image_cache_enabled: t("config.label_image_cache_enabled"),
-      cache_max_gb: t("config.label_cache_max_gb"),
-      favorites_sync_interval_seconds: t("config.label_favorites_sync_interval_seconds"),
-      favorites_sync_categories: t("config.label_favorites_sync_categories"),
-      favorites_sync_archive: t("config.label_favorites_sync_archive"),
-      archive_update_interval_days: t("config.label_archive_update_interval_days"),
-      archive_auto_update: t("config.label_archive_auto_update"),
-    };
-    return map[k] || k;
-  }
-});
+const labels = new Proxy(
+  {},
+  {
+    get(_, k) {
+      const map = {
+        eh_site: t("config.label_eh_site"),
+        public_base_url: t("config.label_public_base_url"),
+        pse_page_base: t("config.label_pse_page_base"),
+        ipb_member_id: "IPB Member ID",
+        ipb_pass_hash: "IPB Pass Hash",
+        igneous: "Igneous Cookie",
+        tag_status_filter: t("config.label_tag_status_filter"),
+        tag_translation_enabled: t("config.label_tag_translation_enabled"),
+        comments_enabled: t("config.label_comments_enabled"),
+        image_cache_enabled: t("config.label_image_cache_enabled"),
+        cache_max_gb: t("config.label_cache_max_gb"),
+        favorites_sync_interval_seconds: t(
+          "config.label_favorites_sync_interval_seconds",
+        ),
+        favorites_sync_categories: t("config.label_favorites_sync_categories"),
+        favorites_sync_archive: t("config.label_favorites_sync_archive"),
+        archive_update_interval_days: t(
+          "config.label_archive_update_interval_days",
+        ),
+        archive_auto_update: t("config.label_archive_auto_update"),
+      };
+      return map[k] || k;
+    },
+  },
+);
 const secret = (k) => ["ipb_member_id", "ipb_pass_hash", "igneous"].includes(k);
 const boolean = (k) =>
   [
@@ -292,8 +298,10 @@ const lockedReason = (key) => {
 };
 const qualityLabel = (entry) => {
   const tier = String(entry.or || entry.quality || "").toLowerCase();
-  if (tier === "org" || tier.includes("original")) return t("archive.tier_original");
-  if (tier === "res" || tier.includes("resample")) return t("archive.tier_resample");
+  if (tier === "org" || tier.includes("original"))
+    return t("archive.tier_original");
+  if (tier === "res" || tier.includes("resample"))
+    return t("archive.tier_resample");
   if (entry.status === "unarchived") return t("archive.tier_online");
   return t("archive.tier_archived");
 };
@@ -407,20 +415,35 @@ async function handleExploreArchive(pub) {
     gid: pub.gid,
     token: pub.token,
     title: pub.title,
+    status: pub.archiveItem?.status || "unarchived",
   });
 }
 
-async function handleExploreFavorite(pub) {
+async function handleExploreFavorite(payload) {
+  const pub = payload?.pub || payload;
+  const action = payload?.action;
+  const favcat = payload?.favcat;
+
   const item = s.archives.value?.find(
     (a) =>
       (a.gid === pub.gid || a.active_gid === pub.gid) &&
       (a.token === pub.token || a.active_token === pub.token),
   );
-  if (item?.is_favorited) {
-    s.requestFavoriteRemove(item);
-  } else {
-    await s.favorite(pub, "add", 0);
+
+  if (action === "remove") {
+    const target = item || {
+      gid: pub.gid,
+      token: pub.token,
+      title: pub.title,
+      status: "unarchived",
+    };
+    s.requestFavoriteRemove(target);
+    return;
   }
+
+  const effectiveAction = action || (item?.is_favorited ? "move" : "add");
+  const effectiveFavcat = favcat != null ? Number(favcat) : 0;
+  await s.favorite(pub, effectiveAction, effectiveFavcat);
 }
 
 function requestFullSync() {
@@ -549,7 +572,10 @@ const favcatList = computed(() => {
     const found = cats.find((c) => Number(c.id) === i);
     list.push({
       id: i,
-      name: found?.name || archiveNames[i] || t("archive.favcat_default", { id: i }),
+      name:
+        found?.name ||
+        archiveNames[i] ||
+        t("archive.favcat_default", { id: i }),
       count: counts[i] || 0,
     });
   }
@@ -582,7 +608,9 @@ const favcatLabel = computed(() => {
   if (selectedFavcat.value === "favorited") return t("common.favorited");
   const id = Number(selectedFavcat.value);
   const found = favcatList.value.find((c) => c.id === id);
-  return found ? `${found.id}: ${found.name}` : t("archive.favcat_default", { id });
+  return found
+    ? `${found.id}: ${found.name}`
+    : t("archive.favcat_default", { id });
 });
 
 const filteredArchives = computed(() => {
@@ -671,17 +699,23 @@ const deleteDialogMeta = computed(() => {
       desc: fav
         ? t("archive.delete_desc_failed_fav")
         : t("archive.delete_desc_failed"),
-      note: fav ? t("archive.delete_note_failed_fav") : t("archive.delete_note_failed"),
+      note: fav
+        ? t("archive.delete_note_failed_fav")
+        : t("archive.delete_note_failed"),
       confirm: t("archive.action_clear_failed"),
     };
   }
-  if (["pending", "downloading", "zipping", "submitting"].includes(tTarget.status)) {
+  if (
+    ["pending", "downloading", "zipping", "submitting"].includes(tTarget.status)
+  ) {
     return {
       title: t("archive.dialog_cancel_title"),
       desc: fav
         ? t("archive.delete_desc_task_fav")
         : t("archive.delete_desc_task"),
-      note: fav ? t("archive.delete_note_task_fav") : t("archive.delete_note_task"),
+      note: fav
+        ? t("archive.delete_note_task_fav")
+        : t("archive.delete_note_task"),
       confirm: t("archive.action_cancel"),
     };
   }
@@ -695,12 +729,8 @@ const deleteDialogMeta = computed(() => {
   }
   return {
     title: t("archive.dialog_delete_title"),
-    desc: fav
-      ? t("archive.delete_desc_fav")
-      : t("archive.delete_desc_ready"),
-    note: fav
-      ? t("archive.delete_note_fav")
-      : t("archive.delete_note_ready"),
+    desc: fav ? t("archive.delete_desc_fav") : t("archive.delete_desc_ready"),
+    note: fav ? t("archive.delete_note_fav") : t("archive.delete_note_ready"),
     confirm: t("archive.action_delete"),
   };
 });
@@ -747,7 +777,10 @@ function cardActionLabel(a) {
           </span>
         </div>
       </SidebarHeader>
-      <AppSidebarNav :page="s.page.value" @navigate="(p) => s.route(p, 'replace')" />
+      <AppSidebarNav
+        :page="s.page.value"
+        @navigate="(p) => s.route(p, 'replace')"
+      />
       <SidebarFooter
         v-if="s.authToken.value || s.status.value?.app?.auth_enabled"
         class="sidebar-footer border-t border-sidebar-border/60 p-3 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:items-center"
@@ -787,7 +820,9 @@ function cardActionLabel(a) {
         />
         <Breadcrumb>
           <BreadcrumbList>
-            <template v-if="s.page.value === 'explore' && s.exploreSubRoute.value">
+            <template
+              v-if="s.page.value === 'explore' && s.exploreSubRoute.value"
+            >
               <BreadcrumbItem>
                 <BreadcrumbLink
                   as="button"
@@ -1116,12 +1151,16 @@ function cardActionLabel(a) {
                 <div
                   class="flex items-center justify-between mt-2 text-xs text-muted-foreground font-mono"
                 >
-                  <span
-                    >{{ t("dashboard.hits", { count: s.status.value?.memory_cache?.hits ?? 0 }) }}</span
-                  >
-                  <span
-                    >{{ t("dashboard.misses", { count: s.status.value?.memory_cache?.misses ?? 0 }) }}</span
-                  >
+                  <span>{{
+                    t("dashboard.hits", {
+                      count: s.status.value?.memory_cache?.hits ?? 0,
+                    })
+                  }}</span>
+                  <span>{{
+                    t("dashboard.misses", {
+                      count: s.status.value?.memory_cache?.misses ?? 0,
+                    })
+                  }}</span>
                 </div>
               </CardContent>
             </Card>
@@ -1144,7 +1183,9 @@ function cardActionLabel(a) {
                     class="text-2xl font-bold tracking-tight text-foreground"
                   >
                     {{
-                      s.status.value?.disk_cache?.enabled ? t("dashboard.enabled") : t("dashboard.disabled")
+                      s.status.value?.disk_cache?.enabled
+                        ? t("dashboard.enabled")
+                        : t("dashboard.disabled")
                     }}
                   </div>
                   <Button
@@ -1161,9 +1202,11 @@ function cardActionLabel(a) {
                 <div
                   class="flex items-center justify-between mt-1.5 text-xs text-muted-foreground font-mono"
                 >
-                  <span
-                    >{{ t("dashboard.cache_entries_count", { count: s.status.value?.disk_cache?.entries ?? 0 }) }}</span
-                  >
+                  <span>{{
+                    t("dashboard.cache_entries_count", {
+                      count: s.status.value?.disk_cache?.entries ?? 0,
+                    })
+                  }}</span>
                   <span>{{
                     formatBytes(s.status.value?.disk_cache?.bytes ?? 0)
                   }}</span>
@@ -1175,27 +1218,27 @@ function cardActionLabel(a) {
           <div class="columns">
             <Card class="shadow-xs">
               <CardHeader class="border-b border-border/50 pb-3">
-                <CardTitle class="text-base font-semibold text-foreground"
-                  >{{ t("dashboard.runtime_details") }}</CardTitle
-                >
-                <CardDescription class="text-xs text-muted-foreground"
-                  >{{ t("dashboard.runtime_desc") }}</CardDescription
-                >
+                <CardTitle class="text-base font-semibold text-foreground">{{
+                  t("dashboard.runtime_details")
+                }}</CardTitle>
+                <CardDescription class="text-xs text-muted-foreground">{{
+                  t("dashboard.runtime_desc")
+                }}</CardDescription>
               </CardHeader>
               <CardContent class="pt-2">
                 <div class="divide-y divide-border/50 text-sm">
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.version") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.version")
+                    }}</span>
                     <Badge variant="secondary" class="font-mono text-xs">
                       v{{ s.status.value?.app?.version || "—" }}
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.external_url") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.external_url")
+                    }}</span>
                     <span
                       class="font-mono text-xs text-foreground truncate max-w-[240px]"
                     >
@@ -1206,9 +1249,9 @@ function cardActionLabel(a) {
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.ipb_status") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.ipb_status")
+                    }}</span>
                     <Badge
                       :variant="
                         s.status.value?.site?.has_ipb ? 'outline' : 'secondary'
@@ -1223,20 +1266,31 @@ function cardActionLabel(a) {
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.max_concurrency") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.max_concurrency")
+                    }}</span>
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ s.status.value?.throttle?.max_concurrency != null ? t("dashboard.threads", { count: s.status.value.throttle.max_concurrency }) : "—" }}
+                      {{
+                        s.status.value?.throttle?.max_concurrency != null
+                          ? t("dashboard.threads", {
+                              count: s.status.value.throttle.max_concurrency,
+                            })
+                          : "—"
+                      }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.html_interval") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.html_interval")
+                    }}</span>
                     <span class="font-mono text-xs font-medium text-foreground">
                       {{
-                        s.status.value?.throttle?.html_interval_seconds != null ? t("dashboard.seconds_unit", { count: s.status.value.throttle.html_interval_seconds }) : "—"
+                        s.status.value?.throttle?.html_interval_seconds != null
+                          ? t("dashboard.seconds_unit", {
+                              count:
+                                s.status.value.throttle.html_interval_seconds,
+                            })
+                          : "—"
                       }}
                     </span>
                   </div>
@@ -1244,7 +1298,9 @@ function cardActionLabel(a) {
                     v-if="s.status.value?.circuit?.state === 'open'"
                     class="flex items-center justify-between py-2.5 text-destructive"
                   >
-                    <span class="text-xs font-medium">{{ t("dashboard.circuit_reason") }}</span>
+                    <span class="text-xs font-medium">{{
+                      t("dashboard.circuit_reason")
+                    }}</span>
                     <span class="text-xs font-mono">{{
                       s.status.value?.circuit?.reason
                     }}</span>
@@ -1257,12 +1313,13 @@ function cardActionLabel(a) {
               <CardHeader class="border-b border-border/50 pb-3">
                 <div class="flex items-center justify-between">
                   <div>
-                    <CardTitle class="text-base font-semibold text-foreground"
+                    <CardTitle
+                      class="text-base font-semibold text-foreground"
                       >{{ t("dashboard.home_layout") }}</CardTitle
                     >
-                    <CardDescription class="text-xs text-muted-foreground"
-                      >{{ t("dashboard.home_layout_desc") }}</CardDescription
-                    >
+                    <CardDescription class="text-xs text-muted-foreground">{{
+                      t("dashboard.home_layout_desc")
+                    }}</CardDescription>
                   </div>
                   <Button
                     variant="ghost"
@@ -1270,16 +1327,17 @@ function cardActionLabel(a) {
                     class="h-7 text-xs gap-1"
                     @click="s.route('home', 'replace')"
                   >
-                    {{ t("dashboard.enter_editor") }} <ArrowUpRight :size="12" />
+                    {{ t("dashboard.enter_editor") }}
+                    <ArrowUpRight :size="12" />
                   </Button>
                 </div>
               </CardHeader>
               <CardContent class="pt-2">
                 <div class="divide-y divide-border/50 text-sm">
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.content_source") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.content_source")
+                    }}</span>
                     <Badge variant="outline" class="font-mono text-xs">
                       {{
                         s.status.value?.home?.using_file
@@ -1289,9 +1347,9 @@ function cardActionLabel(a) {
                     </Badge>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.config_path") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.config_path")
+                    }}</span>
                     <span
                       class="font-mono text-xs text-muted-foreground truncate max-w-[260px]"
                       :title="s.status.value?.home?.path"
@@ -1300,17 +1358,22 @@ function cardActionLabel(a) {
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.groups_sections") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.groups_sections")
+                    }}</span>
                     <span class="font-mono text-xs font-medium text-foreground">
-                      {{ t("dashboard.groups_sections_count", { groups: s.status.value?.home?.groups ?? 0, sections: s.status.value?.home?.sections ?? 0 }) }}
+                      {{
+                        t("dashboard.groups_sections_count", {
+                          groups: s.status.value?.home?.groups ?? 0,
+                          sections: s.status.value?.home?.sections ?? 0,
+                        })
+                      }}
                     </span>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.opds_versions") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.opds_versions")
+                    }}</span>
                     <div class="flex items-center gap-1.5">
                       <Badge variant="secondary" class="text-[10px] font-mono"
                         >v1.2</Badge
@@ -1324,9 +1387,9 @@ function cardActionLabel(a) {
                     </div>
                   </div>
                   <div class="flex items-center justify-between py-2.5">
-                    <span class="text-muted-foreground text-xs font-medium"
-                      >{{ t("dashboard.heartbeat") }}</span
-                    >
+                    <span class="text-muted-foreground text-xs font-medium">{{
+                      t("dashboard.heartbeat")
+                    }}</span>
                     <span
                       class="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
                     >
@@ -1365,9 +1428,9 @@ function cardActionLabel(a) {
           </div>
           <Card v-if="s.config.value?.legacy" class="panel">
             <CardHeader class="panel-header">
-              <CardTitle role="heading" aria-level="2"
-                >{{ t("config.readonly_title") }}</CardTitle
-              >
+              <CardTitle role="heading" aria-level="2">{{
+                t("config.readonly_title")
+              }}</CardTitle>
             </CardHeader>
             <CardContent class="panel-body">
               <p v-if="s.config.value.legacy.error" class="archive-error">
@@ -1416,9 +1479,9 @@ function cardActionLabel(a) {
                 <CardTitle role="heading" aria-level="2">{{
                   group.title
                 }}</CardTitle>
-                <CardDescription
-                  >{{ t("config.saved_pending_restart") }}</CardDescription
-                >
+                <CardDescription>{{
+                  t("config.saved_pending_restart")
+                }}</CardDescription>
               </div>
             </CardHeader>
             <CardContent class="form-panel-content">
@@ -1426,33 +1489,36 @@ function cardActionLabel(a) {
                 <div>
                   <label :for="key"
                     >{{ labels[key] || key }}
-                    <Badge v-if="f.pending" variant="outline" class="badge-warn"
+                    <Badge
+                      v-if="f.pending"
+                      variant="outline"
+                      class="badge-warn"
                       >{{ t("config.pending_restart") }}</Badge
                     ></label
                   ><small>{{
                     f.locked
                       ? lockedReason(key)
-                      : (f.source === "env"
-                          ? t("config.source_env")
-                          : f.source === "file"
-                            ? t("config.source_file")
-                            : t("config.source_default"))
+                      : f.source === "env"
+                        ? t("config.source_env")
+                        : f.source === "file"
+                          ? t("config.source_file")
+                          : t("config.source_default")
                   }}</small>
-                  <small v-if="key === 'archive_update_interval_days'"
-                    >{{ t("config.hint_archive_update_interval_days") }}</small
-                  >
-                  <small v-if="key === 'archive_auto_update'"
-                    >{{ t("config.hint_archive_auto_update") }}</small
-                  >
-                  <small v-if="key === 'favorites_sync_interval_seconds'"
-                    >{{ t("config.hint_favorites_sync_interval_seconds") }}</small
-                  >
-                  <small v-if="key === 'favorites_sync_categories'"
-                    >{{ t("config.hint_favorites_sync_categories") }}</small
-                  >
-                  <small v-if="key === 'favorites_sync_archive'"
-                    >{{ t("config.hint_favorites_sync_archive") }}</small
-                  >
+                  <small v-if="key === 'archive_update_interval_days'">{{
+                    t("config.hint_archive_update_interval_days")
+                  }}</small>
+                  <small v-if="key === 'archive_auto_update'">{{
+                    t("config.hint_archive_auto_update")
+                  }}</small>
+                  <small v-if="key === 'favorites_sync_interval_seconds'">{{
+                    t("config.hint_favorites_sync_interval_seconds")
+                  }}</small>
+                  <small v-if="key === 'favorites_sync_categories'">{{
+                    t("config.hint_favorites_sync_categories")
+                  }}</small>
+                  <small v-if="key === 'favorites_sync_archive'">{{
+                    t("config.hint_favorites_sync_archive")
+                  }}</small>
                 </div>
                 <div class="control">
                   <label v-if="boolean(key)" class="switch"
@@ -1485,11 +1551,17 @@ function cardActionLabel(a) {
                     @update:model-value="edit(key, Number($event))"
                   >
                     <SelectTrigger :id="key" class="control-select">
-                      <SelectValue :placeholder="t('config.select_pse_page_base')" />
+                      <SelectValue
+                        :placeholder="t('config.select_pse_page_base')"
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">{{ t("config.pse_page_base_1") }}</SelectItem>
-                      <SelectItem value="0">{{ t("config.pse_page_base_0") }}</SelectItem>
+                      <SelectItem value="1">{{
+                        t("config.pse_page_base_1")
+                      }}</SelectItem>
+                      <SelectItem value="0">{{
+                        t("config.pse_page_base_0")
+                      }}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Select
@@ -1499,12 +1571,20 @@ function cardActionLabel(a) {
                     @update:model-value="edit(key, $event)"
                   >
                     <SelectTrigger :id="key" class="control-select">
-                      <SelectValue :placeholder="t('config.select_tag_filter')" />
+                      <SelectValue
+                        :placeholder="t('config.select_tag_filter')"
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="balanced">{{ t("config.tag_filter_balanced") }}</SelectItem>
-                      <SelectItem value="strict">{{ t("config.tag_filter_strict") }}</SelectItem>
-                      <SelectItem value="off">{{ t("config.tag_filter_off") }}</SelectItem>
+                      <SelectItem value="balanced">{{
+                        t("config.tag_filter_balanced")
+                      }}</SelectItem>
+                      <SelectItem value="strict">{{
+                        t("config.tag_filter_strict")
+                      }}</SelectItem>
+                      <SelectItem value="off">{{
+                        t("config.tag_filter_off")
+                      }}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Input
@@ -1553,8 +1633,9 @@ function cardActionLabel(a) {
                     class="control-input"
                     autocomplete="new-password"
                     @update:model-value="edit(key, $event)"
-                  /><Badge v-if="f.locked" variant="outline" class="locked"
-                    >{{ t("config.locked") }}</Badge
+                  /><Badge v-if="f.locked" variant="outline" class="locked">{{
+                    t("config.locked")
+                  }}</Badge
                   ><Button
                     v-if="key === 'ipb_member_id'"
                     :disabled="f.locked"
@@ -1580,7 +1661,9 @@ function cardActionLabel(a) {
                   {{
                     t("config.active_val", {
                       val: secret(key)
-                        ? (f.set ? t("config.state_set") : t("config.state_unset"))
+                        ? f.set
+                          ? t("config.state_set")
+                          : t("config.state_unset")
                         : (f.active ?? t("config.state_unset_parentheses")),
                     })
                   }}
@@ -1588,7 +1671,9 @@ function cardActionLabel(a) {
                   {{
                     t("config.saved_val", {
                       val: secret(key)
-                        ? (f.saved_set ? t("config.state_set") : t("config.state_unset"))
+                        ? f.saved_set
+                          ? t("config.state_set")
+                          : t("config.state_unset")
                         : (f.saved ?? t("config.state_unset_parentheses")),
                     })
                   }}
@@ -1628,7 +1713,9 @@ function cardActionLabel(a) {
                     :disabled="!s.status.value?.site?.has_ipb || s.busy.value"
                     @click="s.syncFavorites(false)"
                   >
-                    <RefreshCw class="size-3.5" />{{ t("archive.sync_favorites") }}
+                    <RefreshCw class="size-3.5" />{{
+                      t("archive.sync_favorites")
+                    }}
                   </Button>
                   <Button
                     variant="outline"
@@ -1654,12 +1741,12 @@ function cardActionLabel(a) {
                     class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
                     @click="requestFullSync"
                   >
-                    <span class="font-medium text-foreground"
-                      >{{ t("archive.full_sync_title") }}</span
-                    >
-                    <span class="text-[11px] text-muted-foreground mt-0.5"
-                      >{{ t("archive.full_sync_desc") }}</span
-                    >
+                    <span class="font-medium text-foreground">{{
+                      t("archive.full_sync_title")
+                    }}</span>
+                    <span class="text-[11px] text-muted-foreground mt-0.5">{{
+                      t("archive.full_sync_desc")
+                    }}</span>
                   </button>
                 </div>
               </div>
@@ -1686,39 +1773,31 @@ function cardActionLabel(a) {
             :class="'archive-scan-' + s.archiveScan.value.status"
             role="status"
           >
-            <span v-if="s.archiveScan.value.status === 'running'"
-              >{{ t("archive.scan_searching") }}</span
-            >
-            <span v-else-if="s.archiveScan.value.status === 'success'"
-              >{{
-                t("archive.scan_success", {
-                  imported: s.archiveScan.value.imported,
-                  skipped: s.archiveScan.value.skipped,
-                  conflicts: s.archiveScan.value.conflicts,
-                })
-              }}</span
-            >
-            <span v-else-if="s.archiveScan.value.status === 'skipped'"
-              >{{
-                t("archive.scan_skipped", {
-                  skipped: s.archiveScan.value.skipped,
-                })
-              }}</span
-            >
-            <span v-else-if="s.archiveScan.value.status === 'conflict'"
-              >{{
-                t("archive.scan_conflict", {
-                  conflicts: s.archiveScan.value.conflicts,
-                })
-              }}</span
-            >
-            <span v-else
-              >{{
-                t("archive.scan_error", {
-                  err: s.archiveScan.value.error || t("common.unknown"),
-                })
-              }}</span
-            >
+            <span v-if="s.archiveScan.value.status === 'running'">{{
+              t("archive.scan_searching")
+            }}</span>
+            <span v-else-if="s.archiveScan.value.status === 'success'">{{
+              t("archive.scan_success", {
+                imported: s.archiveScan.value.imported,
+                skipped: s.archiveScan.value.skipped,
+                conflicts: s.archiveScan.value.conflicts,
+              })
+            }}</span>
+            <span v-else-if="s.archiveScan.value.status === 'skipped'">{{
+              t("archive.scan_skipped", {
+                skipped: s.archiveScan.value.skipped,
+              })
+            }}</span>
+            <span v-else-if="s.archiveScan.value.status === 'conflict'">{{
+              t("archive.scan_conflict", {
+                conflicts: s.archiveScan.value.conflicts,
+              })
+            }}</span>
+            <span v-else>{{
+              t("archive.scan_error", {
+                err: s.archiveScan.value.error || t("common.unknown"),
+              })
+            }}</span>
             <Button
               v-if="s.archiveScan.value.status !== 'running'"
               variant="ghost"
@@ -1841,7 +1920,9 @@ function cardActionLabel(a) {
                 </SelectTrigger>
                 <SelectContent position="popper">
                   <SelectItem value="all">
-                    <span class="font-medium">{{ t("archive.all_categories") }}</span>
+                    <span class="font-medium">{{
+                      t("archive.all_categories")
+                    }}</span>
                   </SelectItem>
                   <SelectItem
                     v-for="cat in EH_CATEGORIES"
@@ -1853,7 +1934,7 @@ function cardActionLabel(a) {
                         class="cat-dot"
                         :style="{ backgroundColor: cat.color }"
                       ></span>
-                      <span>{{ t('category.' + cat.key) || cat.label }}</span>
+                      <span>{{ t("category." + cat.key) || cat.label }}</span>
                       <span class="text-xs text-muted-foreground font-mono"
                         >({{ categoryCounts[cat.key] || 0 }})</span
                       >
@@ -1872,7 +1953,9 @@ function cardActionLabel(a) {
                 </SelectTrigger>
                 <SelectContent position="popper">
                   <SelectItem value="all">
-                    <span class="font-medium">{{ t("archive.all_favorites") }}</span>
+                    <span class="font-medium">{{
+                      t("archive.all_favorites")
+                    }}</span>
                   </SelectItem>
                   <SelectItem value="unfavorited">
                     <span class="inline-flex items-center gap-1.5">
@@ -1935,9 +2018,9 @@ function cardActionLabel(a) {
           </div>
           <div v-else-if="!filteredArchives.length" class="panel empty">
             <p>{{ t("archive.empty_filtered") }}</p>
-            <Button variant="link" size="sm" @click="resetFilters"
-              >{{ t("archive.clear_filters") }}</Button
-            >
+            <Button variant="link" size="sm" @click="resetFilters">{{
+              t("archive.clear_filters")
+            }}</Button>
           </div>
           <div v-else class="gallery">
             <Card
@@ -1979,10 +2062,9 @@ function cardActionLabel(a) {
               </div>
               <div class="gallery-meta items-center">
                 <span class="shrink-0 whitespace-nowrap"
-                  >{{
-                    a.metadata?.filecount || a.page_count || "—"
-                  }}
-                  {{ t("common.pages") }}<template v-if="archiveSizeText(a)"
+                  >{{ a.metadata?.filecount || a.page_count || "—" }}
+                  {{ t("common.pages")
+                  }}<template v-if="archiveSizeText(a)"
                     >（{{ archiveSizeText(a) }}）</template
                   ></span
                 >
@@ -2012,7 +2094,8 @@ function cardActionLabel(a) {
                     ]"
                     :title="
                       a.favcat != null
-                        ? a.favcat_name || t('archive.favcat_default', { id: a.favcat })
+                        ? a.favcat_name ||
+                          t('archive.favcat_default', { id: a.favcat })
                         : t('archive.add_to_fav')
                     "
                   >
@@ -2020,7 +2103,8 @@ function cardActionLabel(a) {
                     <SelectValue :placeholder="t('common.unfavorited')">
                       <span class="truncate">{{
                         a.favcat != null
-                          ? a.favcat_name || t("archive.favcat_default", { id: a.favcat })
+                          ? a.favcat_name ||
+                            t("archive.favcat_default", { id: a.favcat })
                           : t("common.unfavorited")
                       }}</span>
                     </SelectValue>
@@ -2060,7 +2144,10 @@ function cardActionLabel(a) {
                     >{{ t("archive.open_upstream") }}</a
                   >
                 </Button>
-                <Button variant="link" size="sm" @click="s.refreshMetadata(a)"
+                <Button
+                  variant="link"
+                  size="sm"
+                  @click="s.refreshMetadata(a)"
                   >{{ t("archive.update_meta") }}</Button
                 ><Button
                   variant="link"
@@ -2202,7 +2289,9 @@ function cardActionLabel(a) {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
+              ><Button variant="outline">{{
+                t("common.cancel")
+              }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button :disabled="s.busy.value" @click="s.startArchive">{{
@@ -2217,19 +2306,23 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="s.confirmCache.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{{ t("archive.dialog_clear_cache_title") }}</AlertDialogTitle>
+            <AlertDialogTitle>{{
+              t("archive.dialog_clear_cache_title")
+            }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{ t("archive.dialog_clear_cache_desc") }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
+              ><Button variant="outline">{{
+                t("common.cancel")
+              }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
-              ><Button variant="destructive" @click="s.clearCache"
-                >{{ t("dashboard.clear_cache") }}</Button
-              ></AlertDialogAction
+              ><Button variant="destructive" @click="s.clearCache">{{
+                t("dashboard.clear_cache")
+              }}</Button></AlertDialogAction
             >
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2252,7 +2345,9 @@ function cardActionLabel(a) {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
+              ><Button variant="outline">{{
+                t("common.cancel")
+              }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
               ><Button variant="destructive" @click="s.deleteArchive">{{
@@ -2265,7 +2360,9 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="s.confirmFavoriteRemove.value">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{{ t("archive.dialog_fav_remove_title") }}</AlertDialogTitle>
+            <AlertDialogTitle>{{
+              t("archive.dialog_fav_remove_title")
+            }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{
                 s.favoriteRemoveTarget.value?.status === "unarchived"
@@ -2286,10 +2383,14 @@ function cardActionLabel(a) {
           </label>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
+              ><Button variant="outline">{{
+                t("common.cancel")
+              }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
-              ><Button variant="destructive" @click="s.confirmFavoriteRemoval"
+              ><Button
+                variant="destructive"
+                @click="s.confirmFavoriteRemoval"
                 >{{ t("archive.remove_fav") }}</Button
               ></AlertDialogAction
             >
@@ -2299,17 +2400,23 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="confirmFullSyncOpen">
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{{ t("archive.dialog_full_sync_title") }}</AlertDialogTitle>
+            <AlertDialogTitle>{{
+              t("archive.dialog_full_sync_title")
+            }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{ t("archive.dialog_full_sync_desc") }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel as-child
-              ><Button variant="outline">{{ t("common.cancel") }}</Button></AlertDialogCancel
+              ><Button variant="outline">{{
+                t("common.cancel")
+              }}</Button></AlertDialogCancel
             >
             <AlertDialogAction as-child
-              ><Button :disabled="s.busy.value" @click="confirmAndRunFullSync"
+              ><Button
+                :disabled="s.busy.value"
+                @click="confirmAndRunFullSync"
                 >{{ t("archive.dialog_full_sync_confirm") }}</Button
               ></AlertDialogAction
             >
@@ -2319,7 +2426,9 @@ function cardActionLabel(a) {
       <AlertDialog v-model:open="createArchiveDialogOpen">
         <AlertDialogContent class="max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>{{ t("archive.dialog_new_title") }}</AlertDialogTitle>
+            <AlertDialogTitle>{{
+              t("archive.dialog_new_title")
+            }}</AlertDialogTitle>
             <AlertDialogDescription>
               {{ t("archive.dialog_new_desc") }}
             </AlertDialogDescription>
@@ -2371,9 +2480,9 @@ function cardActionLabel(a) {
                 }}
               </div>
               <div class="flex items-center gap-2 pt-1">
-                <label class="text-xs text-muted-foreground shrink-0"
-                  >{{ t("archive.dialog_new_quality_label") }}</label
-                >
+                <label class="text-xs text-muted-foreground shrink-0">{{
+                  t("archive.dialog_new_quality_label")
+                }}</label>
                 <Select v-model="s.selectedQuality.value">
                   <SelectTrigger class="h-8 text-xs flex-1">
                     <SelectValue

@@ -2,14 +2,12 @@
 import { ref } from "vue";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { CircleAlertIcon as CircleAlert, RefreshCwIcon as RefreshCw } from "@lucide/vue";
+import {
+  CircleAlertIcon as CircleAlert,
+  RefreshCwIcon as RefreshCw,
+} from "@lucide/vue";
 import { useApp } from "@/state.js";
 import { t } from "@/i18n.js";
 
@@ -41,7 +39,9 @@ async function handleLogin() {
 
 <template>
   <div class="flex flex-col gap-6">
-    <Card class="rounded-xl border border-border bg-card text-card-foreground shadow-sm py-0 gap-0">
+    <Card
+      class="rounded-xl border border-border bg-card text-card-foreground shadow-sm py-0 gap-0"
+    >
       <CardHeader class="p-6 pb-4">
         <CardTitle class="text-2xl font-bold tracking-tight text-foreground">
           {{ t("auth.title") }}
@@ -50,13 +50,22 @@ async function handleLogin() {
       <CardContent class="p-6 pt-0">
         <form @submit.prevent="handleLogin">
           <div class="flex flex-col gap-6">
-            <Alert v-if="errorMessage" variant="destructive" class="py-2.5 px-3">
+            <Alert
+              v-if="errorMessage"
+              variant="destructive"
+              class="py-2.5 px-3"
+            >
               <CircleAlert class="size-4 shrink-0 text-destructive" />
-              <AlertDescription class="text-xs">{{ errorMessage }}</AlertDescription>
+              <AlertDescription class="text-xs">{{
+                errorMessage
+              }}</AlertDescription>
             </Alert>
 
             <div class="grid gap-2">
-              <label for="username" class="text-sm font-medium leading-none text-foreground select-none">
+              <label
+                for="username"
+                class="text-sm font-medium leading-none text-foreground select-none"
+              >
                 {{ t("auth.username") }}
               </label>
               <Input
@@ -71,7 +80,10 @@ async function handleLogin() {
             </div>
 
             <div class="grid gap-2">
-              <label for="password" class="text-sm font-medium leading-none text-foreground select-none">
+              <label
+                for="password"
+                class="text-sm font-medium leading-none text-foreground select-none"
+              >
                 {{ t("auth.password") }}
               </label>
               <Input

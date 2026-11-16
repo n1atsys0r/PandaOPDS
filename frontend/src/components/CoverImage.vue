@@ -39,7 +39,9 @@ const props = defineProps({
 const s = useApp();
 const rootEl = ref(null);
 const initial = s.peekCoverUrl(props.src);
-const visible = ref(Boolean(initial) || typeof IntersectionObserver === "undefined");
+const visible = ref(
+  Boolean(initial) || typeof IntersectionObserver === "undefined",
+);
 const resolvedSrc = ref(initial);
 const failed = ref(false);
 let loadSeq = 0;

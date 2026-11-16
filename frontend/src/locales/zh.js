@@ -164,7 +164,8 @@ export default {
     import_local: "导入本地归档",
     importing: "正在导入…",
     scan_searching: "正在查找归档状态与图库资料…",
-    scan_success: "导入完成：导入 {imported} 个文件，跳过 {skipped} 个文件，冲突 {conflicts} 个文件。",
+    scan_success:
+      "导入完成：导入 {imported} 个文件，跳过 {skipped} 个文件，冲突 {conflicts} 个文件。",
     scan_skipped: "导入完成：未导入新文件，跳过 {skipped} 个文件。",
     scan_conflict: "导入完成：未导入文件，发现 {conflicts} 个冲突文件。",
     scan_error: "导入失败：{err}",
@@ -206,29 +207,39 @@ export default {
     load_more_btn: "加载更多（已显示 {shown} / {total}）",
     dialog_confirm_update_title: "确认更新归档版本",
     dialog_confirm_archive_title: "确认开始归档",
-    dialog_desc_update: "将使用现有归档的画质档请求新版本。若该档位未解锁，可能消耗 GP，请核对报价后确认。",
-    dialog_desc_retry: "重试会重新向上游请求归档。未解锁档位可能消耗 GP，请核对画质档和报价。",
-    dialog_desc_start: "归档任务会请求上游。未解锁档位会消耗你的账户 GP，请核对档位和价格。",
+    dialog_desc_update:
+      "将使用现有归档的画质档请求新版本。若该档位未解锁，可能消耗 GP，请核对报价后确认。",
+    dialog_desc_retry:
+      "重试会重新向上游请求归档。未解锁档位可能消耗 GP，请核对画质档和报价。",
+    dialog_desc_start:
+      "归档任务会请求上游。未解锁档位会消耗你的账户 GP，请核对档位和价格。",
     selected_gallery: "选定画廊",
     dialog_confirm_update_btn: "确认更新版本",
     dialog_fav_remove_title: "移除收藏？",
-    dialog_fav_remove_desc_unarchived: "这会从你的 E-Hentai 收藏夹移除此画廊，并同步清理未归档的本地建档记录。",
+    dialog_fav_remove_desc_unarchived:
+      "这会从你的 E-Hentai 收藏夹移除此画廊，并同步清理未归档的本地建档记录。",
     dialog_fav_remove_desc_default: "这会从你的 E-Hentai 收藏夹移除此画廊。",
-    dialog_fav_remove_also_delete: "同时删除本地归档（只有上游移除收藏成功后才会执行）",
+    dialog_fav_remove_also_delete:
+      "同时删除本地归档（只有上游移除收藏成功后才会执行）",
     dialog_full_sync_title: "执行全量校准收藏？",
-    dialog_full_sync_desc: "将从头遍历你的 E-Hentai 收藏页（受最大扫描页数限制），补齐遗漏建档并自动清理上游已取消收藏的「未归档」条目。此操作不会触发付费归档，但会发起较多次列表页请求。",
+    dialog_full_sync_desc:
+      "将从头遍历你的 E-Hentai 收藏页（受最大扫描页数限制），补齐遗漏建档并自动清理上游已取消收藏的「未归档」条目。此操作不会触发付费归档，但会发起较多次列表页请求。",
     dialog_full_sync_confirm: "确认全量校准",
     dialog_new_title: "新建画廊归档",
-    dialog_new_desc: "请输入画廊 URL 或 GID/TOKEN。归档需要已配置 IPB 登录凭据。",
-    dialog_new_no_ipb: "未检测到完整的 IPB 登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。",
-    dialog_new_placeholder: "https://e-hentai.org/g/123456/abcdef/ 或 123456/abcdef",
+    dialog_new_desc:
+      "请输入画廊 URL 或 GID/TOKEN。归档需要已配置 IPB 登录凭据。",
+    dialog_new_no_ipb:
+      "未检测到完整的 IPB 登录凭据。请先在“设置”中配置登录凭据，再查询 GP 报价。",
+    dialog_new_placeholder:
+      "https://e-hentai.org/g/123456/abcdef/ 或 123456/abcdef",
     dialog_new_query: "查询",
     dialog_new_quote_ready: "报价已获取",
     dialog_new_balance: "账户余额：{balance} GP",
     dialog_new_quality_label: "画质档",
     dialog_new_quality_placeholder: "选择画质档",
     dialog_new_unlocked: "（已解锁）",
-    dialog_new_warning: "归档任务会请求上游。未解锁档位会消耗账户 GP，请核对档位和价格。",
+    dialog_new_warning:
+      "归档任务会请求上游。未解锁档位会消耗账户 GP，请核对档位和价格。",
     dialog_new_confirm: "确认",
     new_archive: "新建归档",
     sync_menu: "同步收藏",
@@ -237,7 +248,8 @@ export default {
     scan_imports: "扫描未入库归档",
     scanning: "扫描中...",
     scan_banner_running: "正在扫描本地归档目录...",
-    scan_banner_result: "扫描完成：已导入 {imported} 本，跳过 {skipped} 本，冲突 {conflicts} 本",
+    scan_banner_result:
+      "扫描完成：已导入 {imported} 本，跳过 {skipped} 本，冲突 {conflicts} 本",
     dismiss: "忽略",
     search_placeholder: "搜索画廊...",
     all_statuses: "全部状态",
@@ -265,7 +277,8 @@ export default {
     action_cancel: "取消归档",
     action_delete: "删除归档",
     input_label: "画廊链接或 ID",
-    input_placeholder: "例如 https://e-hentai.org/g/123456/abcdef/ 或 123456 abcdef",
+    input_placeholder:
+      "例如 https://e-hentai.org/g/123456/abcdef/ 或 123456 abcdef",
     querying: "查询中...",
     quality_select: "选择画质档位",
     gp_cost: "消耗 GP: {gp}",
@@ -277,19 +290,25 @@ export default {
     dialog_clear_failed_title: "清除失败记录？",
     dialog_remove_orphan_title: "移除残留记录？",
     dialog_clear_cache_title: "清理图片缓存？",
-    dialog_clear_cache_desc: "这会删除本地缓存的图片字节；下次访问时会重新从 E-Hentai 获取。",
-    delete_desc_failed_fav: "将清理临时下载文件与报错信息，保留收藏建档记录并恢复为「未归档」状态。",
+    dialog_clear_cache_desc:
+      "这会删除本地缓存的图片字节；下次访问时会重新从 E-Hentai 获取。",
+    delete_desc_failed_fav:
+      "将清理临时下载文件与报错信息，保留收藏建档记录并恢复为「未归档」状态。",
     delete_desc_failed: "将清理临时下载文件并移除该失败记录。",
     delete_note_failed_fav: "操作不会影响 E-Hentai 收藏",
     delete_note_failed: "操作将彻底移除该失败条目",
-    delete_desc_task_fav: "将中止下载并清理临时文件，保留收藏建档记录并恢复为「未归档」状态。",
+    delete_desc_task_fav:
+      "将中止下载并清理临时文件，保留收藏建档记录并恢复为「未归档」状态。",
     delete_desc_task: "将中止下载、清理临时文件并移除该条目。",
     delete_note_task_fav: "操作不会影响 E-Hentai 收藏",
     delete_note_task: "操作将彻底移除该条目",
-    delete_desc_orphan: "该条目不在收藏夹且无本地归档文件，移除后将从「浏览」列表清除。",
+    delete_desc_orphan:
+      "该条目不在收藏夹且无本地归档文件，移除后将从「浏览」列表清除。",
     delete_note_orphan: "操作仅清理本地元数据索引",
-    delete_desc_fav: "仅删除本地归档文件；因仍在收藏夹中，卡片将保留为「未归档」状态并可继续在线阅读（移除收藏后会自动清理）。",
-    delete_desc_ready: "将删除本地归档文件及本地记录（不在收藏夹中，将从「浏览」列表移除）；E-Hentai 账号记录保留。",
+    delete_desc_fav:
+      "仅删除本地归档文件；因仍在收藏夹中，卡片将保留为「未归档」状态并可继续在线阅读（移除收藏后会自动清理）。",
+    delete_desc_ready:
+      "将删除本地归档文件及本地记录（不在收藏夹中，将从「浏览」列表移除）；E-Hentai 账号记录保留。",
     delete_note_fav: "本地归档 ZIP 将被删除，收藏卡片保留",
     delete_note_ready: "操作只影响本机保存的归档与记录",
   },
@@ -335,12 +354,15 @@ export default {
     click_favcat_filter: " (点击按此收藏夹筛选)",
     favorite_add: "加入收藏",
     favorite_remove: "已收藏 (点击取消)",
+    favorite_select: "选择收藏分类",
+    favorite_move: "更改收藏分类",
     status_archived: "已归档",
     status_downloading: "正在下载归档...",
     status_failed: "归档失败 (点击查看)",
     status_unarchived: "未归档 (点击归档)",
     badge_archived: "已归档",
     badge_downloading: "下载中",
+    badge_pending: "排队中",
     badge_failed: "归档失败",
     badge_fav: "收藏",
     badge_favorited: "已收藏",
@@ -391,7 +413,8 @@ export default {
     save: "保存编排",
     reset_defaults: "重置为默认预设",
     reset_defaults_title: "重置编排为系统预设",
-    reset_defaults_desc: "将所有页面编排重置为系统默认推荐配置（包含 Watched、Favorites、Toplists、Archives 页面以及主页分组）。当前未保存的修改将被覆盖，重置后点击「保存编排」即可生效写入配置文件。",
+    reset_defaults_desc:
+      "将所有页面编排重置为系统默认推荐配置（包含 Watched、Favorites、Toplists、Archives 页面以及主页分组）。当前未保存的修改将被覆盖，重置后点击「保存编排」即可生效写入配置文件。",
     reset_defaults_confirm: "确认重置",
     home_page_title: "首页",
     toplists_page_title: "排行榜",
@@ -417,9 +440,11 @@ export default {
     root_page_badge: "根页面",
     readonly_title: "页面布局（只读）",
     readonly_desc: "编辑接口不可用 · {path}",
-    readonly_recovery_hint: "当前为只读视图。重置为默认预设可进入可视化编辑，保存时将写入新的配置文件。",
+    readonly_recovery_hint:
+      "当前为只读视图。重置为默认预设可进入可视化编辑，保存时将写入新的配置文件。",
     error_title: "页面布局无法读取",
-    error_recovery_hint: "配置文件读取失败。重置为默认预设可重建配置，保存时将覆盖并备份损坏的文件。",
+    error_recovery_hint:
+      "配置文件读取失败。重置为默认预设可重建配置，保存时将覆盖并备份损坏的文件。",
     reset_and_recover: "重置为默认预设并恢复编辑",
     repair_title: "需要修复现有布局",
     repair_desc: "{error} · 原文件会在保存时备份。",
@@ -427,21 +452,27 @@ export default {
     mode_publications: "出版物模式",
     mode_sections: "分组模式",
     custom_search_title: "自定义搜索",
-    custom_search_desc: "定制全局检索与出版物流的筛选胶囊。在首页、自定义页面及客户端 OpenSearch 中通用，支持各分类、最低星级、排除项与追加搜索词。",
+    custom_search_desc:
+      "定制全局检索与出版物流的筛选胶囊。在首页、自定义页面及客户端 OpenSearch 中通用，支持各分类、最低星级、排除项与追加搜索词。",
     custom_search_capsules: "搜索筛选胶囊",
     add_search_facet: "添加筛选胶囊",
     empty_search_facets_title: "尚未配置搜索筛选胶囊",
-    empty_search_facets_desc: "点击上方「添加筛选胶囊」创建自定义筛选，或重置为系统预设的 10 大分类。",
-    page_search_facets_hint: "此页面出版物流已连接全局「自定义搜索」胶囊，可在左侧「自定义搜索」中统一调整。",
+    empty_search_facets_desc:
+      "点击上方「添加筛选胶囊」创建自定义筛选，或重置为系统预设的 10 大分类。",
+    page_search_facets_hint:
+      "此页面出版物流已连接全局「自定义搜索」胶囊，可在左侧「自定义搜索」中统一调整。",
     goto_custom_search: "前往自定义搜索",
     global_nav_title: "导航",
     global_nav_desc: "统一调度，所有页面与预排骨架置顶展示",
-    global_nav_workbench_desc: "全局统一配置的顶栏导航胶囊。固定显示在所有 OPDS 目录顶层及页面加载骨架屏中，支持页面跳转、画廊预设及搜索表达式。",
+    global_nav_workbench_desc:
+      "全局统一配置的顶栏导航胶囊。固定显示在所有 OPDS 目录顶层及页面加载骨架屏中，支持页面跳转、画廊预设及搜索表达式。",
     add_global_nav: "添加导航",
     empty_global_nav_title: "尚未配置全局导航",
-    empty_global_nav_desc: "点击上方「添加导航」可创建置顶导航，方便在各个页面间快速穿梭。",
+    empty_global_nav_desc:
+      "点击上方「添加导航」可创建置顶导航，方便在各个页面间快速穿梭。",
     nav_title: "顶层导航",
-    nav_desc: "固定展示在 OPDS 首页顶层，用于跨功能快捷跳转，可与任一内容模式共存。",
+    nav_desc:
+      "固定展示在 OPDS 首页顶层，用于跨功能快捷跳转，可与任一内容模式共存。",
     add_nav: "添加导航",
     add_facet: "添加分类筛选",
     add_section: "添加分组",
@@ -465,9 +496,12 @@ export default {
     default_items: "默认 10 项",
     n_items: "{count} 项",
     discard_changes: "放弃修改",
-    replace_groups_warning: "保存分组布局会移除服务器上当前的顶层出版物和筛选。此草稿仍暂存在本页。",
-    replace_pubs_warning: "保存出版物布局会移除服务器上当前的分组栏目。此草稿仍暂存在本页。",
-    facet_unsupported_warning: "当前出版物来源不支持筛选。请移除所有筛选，或改用搜索、latest、toplist 或 favorites 来源。",
+    replace_groups_warning:
+      "保存分组布局会移除服务器上当前的顶层出版物和筛选。此草稿仍暂存在本页。",
+    replace_pubs_warning:
+      "保存出版物布局会移除服务器上当前的分组栏目。此草稿仍暂存在本页。",
+    facet_unsupported_warning:
+      "当前出版物来源不支持筛选。请移除所有筛选，或改用搜索、latest、toplist 或 favorites 来源。",
     reorder_up: "上移",
     reorder_down: "下移",
     delete: "删除",
@@ -486,7 +520,8 @@ export default {
     empty_nav_title: "尚未配置顶层导航",
     empty_nav_desc: "点击上方「添加导航」可加入常用入口，在客户端中始终置顶。",
     content_layout: "内容布局",
-    content_layout_desc: "选择首页主体内容的呈现形式。出版物流与分组栏目二选一。",
+    content_layout_desc:
+      "选择首页主体内容的呈现形式。出版物流与分组栏目二选一。",
     mode_publications_btn: "出版物流模式",
     mode_groups_btn: "分组栏目模式",
     groups_list: "分组栏目列表",
@@ -510,7 +545,8 @@ export default {
     preview_count: "预览条数",
     preview_count_placeholder: "默认 10",
     empty_groups_title: "尚未添加任何分组栏目",
-    empty_groups_desc: "分组栏目模式会将每个栏目输出为一个横向滚动画廊流或子分类。",
+    empty_groups_desc:
+      "分组栏目模式会将每个栏目输出为一个横向滚动画廊流或子分类。",
     top_publication: "顶层出版物",
     configured: "已配置",
     pure_nav_mode: "纯导航模式",
@@ -525,7 +561,8 @@ export default {
     facets_title: "筛选集合 (Facets)",
     facet_sets_title: "筛选集合库",
     facet_sets_desc: "通用画廊筛选维度",
-    facet_sets_workbench_desc: "在此配置全局通用的筛选集合（如语言筛选、分级过滤等），配置保存后可在任意出版物流页面中直接引用，无需重复编辑。",
+    facet_sets_workbench_desc:
+      "在此配置全局通用的筛选集合（如语言筛选、分级过滤等），配置保存后可在任意出版物流页面中直接引用，无需重复编辑。",
     facets_follow_pub: "· 筛选项将自动叠加在上方出版物的基础上",
     facets_require_pub: "· 添加顶层出版物后可启用筛选",
     add_facet_set: "新建筛选集合",
@@ -536,7 +573,8 @@ export default {
     add_page_facet_ref: "引用筛选集合",
     select_facet_set_to_add: "选择要引用的筛选集合...",
     all_facet_sets_referenced: "已引用全部可用的筛选集合",
-    empty_page_facets_desc: "当前未引用任何自定义筛选集合。页面将默认使用基础分类/目录导航。点击上方按钮可引用筛选集合库中的集合。",
+    empty_page_facets_desc:
+      "当前未引用任何自定义筛选集合。页面将默认使用基础分类/目录导航。点击上方按钮可引用筛选集合库中的集合。",
     no_facet_sets_in_library: "筛选集合库尚无配置，请先前往筛选集合库创建集合",
     go_to_facet_sets: "前往筛选集合库配置",
     edit_in_library: "前往库中编辑",
@@ -560,9 +598,12 @@ export default {
     facet_query_placeholder: "可选输入追加标签/词 (如: language:chinese)",
     facet_select_all: "全选",
     facet_clear_all: "清空",
-    empty_facet_set_desc: "该筛选组内暂无筛选项，点击「添加筛选项」创建过滤条件。",
-    empty_facets_desc: "未配置筛选集合。点击上方「添加筛选组」即可创建基于分类、评分与标签的条件筛选。",
-    choose_mode_hint: "请在上方右上角选择「出版物流模式」或「分组栏目模式」以继续编排。",
+    empty_facet_set_desc:
+      "该筛选组内暂无筛选项，点击「添加筛选项」创建过滤条件。",
+    empty_facets_desc:
+      "未配置筛选集合。点击上方「添加筛选组」即可创建基于分类、评分与标签的条件筛选。",
+    choose_mode_hint:
+      "请在上方右上角选择「出版物流模式」或「分组栏目模式」以继续编排。",
     pub_draft: "出版物草稿",
     no_top_pub: "无顶层出版物",
     n_facets: "{count} 个筛选",
@@ -585,10 +626,14 @@ export default {
     source_file: "来源：配置文件",
     source_default: "来源：默认值",
     hint_archive_update_interval_days: "0 关闭周期检查；仅写入 settings.toml。",
-    hint_archive_auto_update: "启用后自动购买新版归档，可能消耗 GP；仅写入 settings.toml。",
-    hint_favorites_sync_interval_seconds: "默认 3600 秒；设为 0 只关闭周期扫描，收藏操作触发的扫描和手动扫描仍可用。",
-    hint_favorites_sync_categories: "逗号分隔收藏夹 ID（0–9）；留空表示全部，-ID 表示排除该收藏夹。只限制自动归档范围，不影响同步扫描。",
-    hint_favorites_sync_archive: "启用后会自动购买新发现收藏的归档，可能消耗 GP；首次扫描只建立基线，不会归档已有收藏。保存后重启生效。",
+    hint_archive_auto_update:
+      "启用后自动购买新版归档，可能消耗 GP；仅写入 settings.toml。",
+    hint_favorites_sync_interval_seconds:
+      "默认 3600 秒；设为 0 只关闭周期扫描，收藏操作触发的扫描和手动扫描仍可用。",
+    hint_favorites_sync_categories:
+      "逗号分隔收藏夹 ID（0–9）；留空表示全部，-ID 表示排除该收藏夹。只限制自动归档范围，不影响同步扫描。",
+    hint_favorites_sync_archive:
+      "启用后会自动购买新发现收藏的归档，可能消耗 GP；首次扫描只建立基线，不会归档已有收藏。保存后重启生效。",
     select_site: "选择站点",
     select_pse_page_base: "选择页码起始值",
     pse_page_base_1: "1-based（默认）",
@@ -658,7 +703,8 @@ export default {
       archive_auto_update: "自动更新归档",
     },
     locked_reason: "{env} 环境变量控制此项。",
-    credentials_locked_reason: "IPB_MEMBER_ID / IPB_PASS_HASH 环境变量控制此项。",
+    credentials_locked_reason:
+      "IPB_MEMBER_ID / IPB_PASS_HASH 环境变量控制此项。",
   },
   auth: {
     title: "登录 PandaOPDS",
@@ -690,14 +736,18 @@ export default {
     cache_cleared: "已清理 {count} 条缓存",
     fav_updated: "收藏类别已更新",
     sync_skipped: "已跳过收藏同步",
-    sync_complete: "收藏同步完成：扫描 {scanned} 页，新增 {newCount} 项，新建档 {cataloged} 项",
+    sync_complete:
+      "收藏同步完成：扫描 {scanned} 页，新增 {newCount} 项，新建档 {cataloged} 项",
     quote_expired: "报价已过期，因为输入内容发生了变化。请重新查询。",
     no_quality_option: "没有可用的画质档",
-    invalid_input: "无法解析 gid/token。请输入画廊 URL、archiver URL 或 123456/abcdef。",
+    invalid_input:
+      "无法解析 gid/token。请输入画廊 URL、archiver URL 或 123456/abcdef。",
     invalid_gp: "报价中的 GP 金额无效，请重新查询。",
-    missing_secrets: "IPB Member ID 和 IPB Pass Hash 必须同时填写；同时留空可清除登录态。",
+    missing_secrets:
+      "IPB Member ID 和 IPB Pass Hash 必须同时填写；同时留空可清除登录态。",
     select_home_mode_first: "请先选择要保留的首页布局模式。",
-    unsupported_facet_source: "现有筛选来源不受支持。请移除筛选，或将出版物来源改为搜索、latest、toplist 或 favorites。",
+    unsupported_facet_source:
+      "现有筛选来源不受支持。请移除筛选，或将出版物来源改为搜索、latest、toplist 或 favorites。",
     config_readonly_error: "编辑接口不可用，当前显示只读配置",
     home_readonly_error: "首页编辑接口不可用，当前显示只读布局",
     select_quality_tier: "请选择可用画质档。",

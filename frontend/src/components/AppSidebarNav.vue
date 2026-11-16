@@ -39,7 +39,10 @@ function navigate(page) {
               :tooltip="t('nav.dashboard')"
               @click="navigate('dashboard')"
             >
-              <LayoutDashboard /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.dashboard") }}</span>
+              <LayoutDashboard /><span
+                class="group-data-[collapsible=icon]:hidden"
+                >{{ t("nav.dashboard") }}</span
+              >
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -48,7 +51,10 @@ function navigate(page) {
               :tooltip="t('explore.edit_home')"
               @click="navigate('home')"
             >
-              <PanelsTopLeft /><span class="group-data-[collapsible=icon]:hidden">{{ t("explore.edit_home") }}</span>
+              <PanelsTopLeft /><span
+                class="group-data-[collapsible=icon]:hidden"
+                >{{ t("explore.edit_home") }}</span
+              >
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -57,7 +63,9 @@ function navigate(page) {
               :tooltip="t('nav.explore')"
               @click="navigate('explore')"
             >
-              <Compass /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.explore") }}</span>
+              <Compass /><span class="group-data-[collapsible=icon]:hidden">{{
+                t("nav.explore")
+              }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -66,7 +74,9 @@ function navigate(page) {
               :tooltip="t('nav.archive')"
               @click="navigate('archive')"
             >
-              <Package2 /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.archive") }}</span>
+              <Package2 /><span class="group-data-[collapsible=icon]:hidden">{{
+                t("nav.archive")
+              }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -83,7 +93,9 @@ function navigate(page) {
               :tooltip="t('nav.settings')"
               @click="navigate('config')"
             >
-              <Settings /><span class="group-data-[collapsible=icon]:hidden">{{ t("nav.settings") }}</span>
+              <Settings /><span class="group-data-[collapsible=icon]:hidden">{{
+                t("nav.settings")
+              }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

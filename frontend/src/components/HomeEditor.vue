@@ -41,14 +41,21 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useApp } from "@/state.js";
-import { canUseFacets, replacesAlternateMode, isValidSlug } from "@/home-layout.js";
+import {
+  canUseFacets,
+  replacesAlternateMode,
+  isValidSlug,
+} from "@/home-layout.js";
 import { t } from "@/i18n.js";
 
 const s = useApp();
 
 // Active page computed
 const activePage = computed(() => {
-  return s.pages.value.find((p) => p.id === s.activePageId.value) || s.pages.value[0] || { id: "home", title: "Home", mode: "groups" };
+  return (
+    s.pages.value.find((p) => p.id === s.activePageId.value) ||
+    s.pages.value[0] || { id: "home", title: "Home", mode: "groups" }
+  );
 });
 
 const currentPageMode = computed(() => {
@@ -108,7 +115,12 @@ function handleAddPageTitleInput(val) {
   }
 }
 
-const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "archives", "history"]);
+const BUILTIN_PAGE_IDS = new Set([
+  "watched",
+  "favorites",
+  "archives",
+  "history",
+]);
 
 function confirmAddPage() {
   const title = addPageForm.value.title.trim();
@@ -121,7 +133,11 @@ function confirmAddPage() {
     addPageError.value = t("home_editor.page_id_exists");
     return;
   }
-  const ok = s.addPage({ id, title: title || id, mode: addPageForm.value.mode });
+  const ok = s.addPage({
+    id,
+    title: title || id,
+    mode: addPageForm.value.mode,
+  });
   if (ok) {
     addPageOpen.value = false;
   } else {
@@ -137,7 +153,8 @@ const editPageError = ref("");
 function openEditPageModal(page) {
   editPageForm.value = {
     origId: page.id,
-    title: page.id === "home" ? getPageDisplayTitle(page) : (page.title || page.id),
+    title:
+      page.id === "home" ? getPageDisplayTitle(page) : page.title || page.id,
     id: page.id,
   };
   editPageError.value = "";
@@ -152,7 +169,10 @@ function confirmEditPage() {
       editPageError.value = t("home_editor.page_id_invalid");
       return;
     }
-    if (newId !== editPageForm.value.origId && (BUILTIN_PAGE_IDS.has(newId) || s.pages.value.some((p) => p.id === newId))) {
+    if (
+      newId !== editPageForm.value.origId &&
+      (BUILTIN_PAGE_IDS.has(newId) || s.pages.value.some((p) => p.id === newId))
+    ) {
       editPageError.value = t("home_editor.page_id_exists");
       return;
     }
@@ -217,7 +237,10 @@ function expandAll() {
   const next = new Set();
   if (s.activePageId.value === "__global_nav__") {
     (s.navigation.value || []).forEach((x) => next.add(x));
-  } else if (s.activePageId.value === "__search_facets__" || s.activePageId.value === "__facet_sets__") {
+  } else if (
+    s.activePageId.value === "__search_facets__" ||
+    s.activePageId.value === "__facet_sets__"
+  ) {
     (s.searchFacets.value || []).forEach((f) => next.add(f));
   } else {
     (s.layout.value.groups || []).forEach((x) => next.add(x));
@@ -228,20 +251,73 @@ function expandAll() {
 }
 
 const EH_CATEGORIES = [
-  { name: "Doujinshi", bg: "bg-[#ed5565]", text: "text-white", border: "border-[#ed5565]" },
-  { name: "Manga", bg: "bg-[#f6bb42]", text: "text-white", border: "border-[#f6bb42]" },
-  { name: "Artist CG", bg: "bg-[#d0b400]", text: "text-white", border: "border-[#d0b400]" },
-  { name: "Game CG", bg: "bg-[#2ecc71]", text: "text-white", border: "border-[#2ecc71]" },
-  { name: "Western", bg: "bg-[#8cc152]", text: "text-white", border: "border-[#8cc152]" },
-  { name: "Non-H", bg: "bg-[#4fc1e9]", text: "text-white", border: "border-[#4fc1e9]" },
-  { name: "Image Set", bg: "bg-[#5d9cec]", text: "text-white", border: "border-[#5d9cec]" },
-  { name: "Cosplay", bg: "bg-[#ac92ec]", text: "text-white", border: "border-[#ac92ec]" },
-  { name: "Asian Porn", bg: "bg-[#ec87c0]", text: "text-white", border: "border-[#ec87c0]" },
-  { name: "Misc", bg: "bg-[#aab2bd]", text: "text-white", border: "border-[#aab2bd]" },
+  {
+    name: "Doujinshi",
+    bg: "bg-[#ed5565]",
+    text: "text-white",
+    border: "border-[#ed5565]",
+  },
+  {
+    name: "Manga",
+    bg: "bg-[#f6bb42]",
+    text: "text-white",
+    border: "border-[#f6bb42]",
+  },
+  {
+    name: "Artist CG",
+    bg: "bg-[#d0b400]",
+    text: "text-white",
+    border: "border-[#d0b400]",
+  },
+  {
+    name: "Game CG",
+    bg: "bg-[#2ecc71]",
+    text: "text-white",
+    border: "border-[#2ecc71]",
+  },
+  {
+    name: "Western",
+    bg: "bg-[#8cc152]",
+    text: "text-white",
+    border: "border-[#8cc152]",
+  },
+  {
+    name: "Non-H",
+    bg: "bg-[#4fc1e9]",
+    text: "text-white",
+    border: "border-[#4fc1e9]",
+  },
+  {
+    name: "Image Set",
+    bg: "bg-[#5d9cec]",
+    text: "text-white",
+    border: "border-[#5d9cec]",
+  },
+  {
+    name: "Cosplay",
+    bg: "bg-[#ac92ec]",
+    text: "text-white",
+    border: "border-[#ac92ec]",
+  },
+  {
+    name: "Asian Porn",
+    bg: "bg-[#ec87c0]",
+    text: "text-white",
+    border: "border-[#ec87c0]",
+  },
+  {
+    name: "Misc",
+    bg: "bg-[#aab2bd]",
+    text: "text-white",
+    border: "border-[#aab2bd]",
+  },
 ];
 
 function isCatSelected(item, catName) {
-  return Array.isArray(item.categories) && item.categories.some((c) => c.toLowerCase() === catName.toLowerCase());
+  return (
+    Array.isArray(item.categories) &&
+    item.categories.some((c) => c.toLowerCase() === catName.toLowerCase())
+  );
 }
 
 function selectAllCategories(item) {
@@ -255,7 +331,9 @@ function clearAllCategories(item) {
 }
 
 function isFilterDisabled(item, key) {
-  return Array.isArray(item.disable_filters) && item.disable_filters.includes(key);
+  return (
+    Array.isArray(item.disable_filters) && item.disable_filters.includes(key)
+  );
 }
 
 function getFacetSetById(id) {
@@ -265,7 +343,9 @@ function getFacetSetById(id) {
 
 const unreferencedFacetSets = computed(() => {
   if (!Array.isArray(s.facetSets.value)) return [];
-  const referencedIds = new Set((s.layout.value.facets || []).map((f) => f.facet_set).filter(Boolean));
+  const referencedIds = new Set(
+    (s.layout.value.facets || []).map((f) => f.facet_set).filter(Boolean),
+  );
   return s.facetSets.value.filter((fs) => !referencedIds.has(fs.id));
 });
 
@@ -330,7 +410,8 @@ onMounted(() => {
 
 function countLabel(section) {
   if (!section || section.count === 0) return t("home_editor.no_preview");
-  if (section.count == null || section.count === "") return t("home_editor.default_items");
+  if (section.count == null || section.count === "")
+    return t("home_editor.default_items");
   return t("home_editor.n_items", { count: section.count });
 }
 
@@ -346,10 +427,7 @@ const activePersistedSections = computed(() => {
 const homeReplaceWarning = computed(() => {
   const persisted = activePersistedSections.value;
   const currentMode = currentPageMode.value;
-  if (
-    replacesAlternateMode(persisted, currentMode) &&
-    currentMode === "groups"
-  )
+  if (replacesAlternateMode(persisted, currentMode) && currentMode === "groups")
     return t("home_editor.replace_groups_warning");
   if (
     replacesAlternateMode(persisted, currentMode) &&
@@ -538,9 +616,9 @@ function handleGroupKindChange(item) {
     <Card v-if="s.home.value?.legacy" class="panel">
       <CardHeader class="panel-header">
         <CardTitle>{{ t("home_editor.readonly_title") }}</CardTitle>
-        <CardDescription
-          >{{ t("home_editor.readonly_desc", { path: s.home.value.legacy.path }) }}</CardDescription
-        >
+        <CardDescription>{{
+          t("home_editor.readonly_desc", { path: s.home.value.legacy.path })
+        }}</CardDescription>
       </CardHeader>
       <CardContent class="panel-body">
         <div
@@ -554,9 +632,18 @@ function handleGroupKindChange(item) {
             <small>{{ item.kind }} · {{ item.query }}</small>
           </div>
         </div>
-        <div class="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <p class="text-xs text-muted-foreground">{{ t("home_editor.readonly_recovery_hint") }}</p>
-          <Button variant="outline" size="sm" class="gap-1.5 shrink-0" @click="resetDefaultsOpen = true">
+        <div
+          class="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+        >
+          <p class="text-xs text-muted-foreground">
+            {{ t("home_editor.readonly_recovery_hint") }}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            class="gap-1.5 shrink-0"
+            @click="resetDefaultsOpen = true"
+          >
             <RotateCcw class="size-4" />{{ t("home_editor.reset_and_recover") }}
           </Button>
         </div>
@@ -570,9 +657,18 @@ function handleGroupKindChange(item) {
       </CardHeader>
       <CardContent class="panel-body">
         <div class="archive-error">{{ s.home.value.error }}</div>
-        <div class="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <p class="text-xs text-muted-foreground">{{ t("home_editor.error_recovery_hint") }}</p>
-          <Button variant="outline" size="sm" class="gap-1.5 shrink-0" @click="resetDefaultsOpen = true">
+        <div
+          class="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+        >
+          <p class="text-xs text-muted-foreground">
+            {{ t("home_editor.error_recovery_hint") }}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            class="gap-1.5 shrink-0"
+            @click="resetDefaultsOpen = true"
+          >
             <RotateCcw class="size-4" />{{ t("home_editor.reset_and_recover") }}
           </Button>
         </div>
@@ -582,27 +678,23 @@ function handleGroupKindChange(item) {
     <!-- Main Workspace -->
     <template v-else-if="s.pages.value.length > 0 || s.home.value?.sections">
       <!-- Validation / Repair Banner -->
-      <Alert
-        v-if="s.home.value?.validation_error"
-        variant="warning"
-      >
+      <Alert v-if="s.home.value?.validation_error" variant="warning">
         <AlertTriangle class="size-4 shrink-0" />
         <div class="flex-1 flex flex-col gap-1">
-          <AlertTitle class="text-sm font-semibold"
-            >{{ t("home_editor.repair_title") }}</AlertTitle
-          >
+          <AlertTitle class="text-sm font-semibold">{{
+            t("home_editor.repair_title")
+          }}</AlertTitle>
           <AlertDescription class="text-xs">
-            {{ s.home.value.validation_error }} · {{ t("home_editor.repair_desc", { error: "" }).replace(/^ · /, "") }}
+            {{ s.home.value.validation_error }} ·
+            {{
+              t("home_editor.repair_desc", { error: "" }).replace(/^ · /, "")
+            }}
           </AlertDescription>
         </div>
       </Alert>
 
       <!-- Warning Banners -->
-      <Alert
-        v-if="homeReplaceWarning"
-        variant="warning"
-        class="py-2.5"
-      >
+      <Alert v-if="homeReplaceWarning" variant="warning" class="py-2.5">
         <AlertTriangle class="size-4 shrink-0" />
         <AlertDescription class="text-xs">
           {{ homeReplaceWarning }}
@@ -614,11 +706,18 @@ function handleGroupKindChange(item) {
         <!-- ================= LEFT INTERNAL SIDEBAR: 页面列表 ================= -->
         <div class="lg:col-span-4 xl:col-span-3 flex flex-col gap-3">
           <Card class="panel">
-            <CardHeader class="p-4 pb-3 flex flex-row items-center justify-between gap-2 border-b border-border/60">
+            <CardHeader
+              class="p-4 pb-3 flex flex-row items-center justify-between gap-2 border-b border-border/60"
+            >
               <div class="flex items-center gap-2">
                 <PanelsTopLeft class="size-4 text-primary" />
-                <span class="font-semibold text-sm">{{ t("home_editor.page_list_title") }}</span>
-                <Badge variant="secondary" class="h-5 px-1.5 text-[11px] font-mono font-normal">
+                <span class="font-semibold text-sm">{{
+                  t("home_editor.page_list_title")
+                }}</span>
+                <Badge
+                  variant="secondary"
+                  class="h-5 px-1.5 text-[11px] font-mono font-normal"
+                >
                   {{ s.pages.value.length }}
                 </Badge>
               </div>
@@ -635,7 +734,11 @@ function handleGroupKindChange(item) {
               <!-- Pinned Global Navigation item -->
               <div
                 class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none border border-transparent"
-                :class="s.activePageId.value === '__global_nav__' ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'"
+                :class="
+                  s.activePageId.value === '__global_nav__'
+                    ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs'
+                    : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
+                "
                 @click="s.selectActivePage('__global_nav__')"
               >
                 <div class="flex items-center gap-2.5 min-w-0 flex-1">
@@ -651,7 +754,10 @@ function handleGroupKindChange(item) {
                     </div>
                   </div>
                 </div>
-                <Badge variant="secondary" class="h-5 px-1.5 text-[10px] font-mono font-normal">
+                <Badge
+                  variant="secondary"
+                  class="h-5 px-1.5 text-[10px] font-mono font-normal"
+                >
                   {{ (s.navigation.value || []).length }}
                 </Badge>
               </div>
@@ -659,7 +765,12 @@ function handleGroupKindChange(item) {
               <!-- Pinned Custom Search Facets item -->
               <div
                 class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none border border-transparent"
-                :class="s.activePageId.value === '__search_facets__' || s.activePageId.value === '__facet_sets__' ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'"
+                :class="
+                  s.activePageId.value === '__search_facets__' ||
+                  s.activePageId.value === '__facet_sets__'
+                    ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs'
+                    : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
+                "
                 @click="s.selectActivePage('__search_facets__')"
               >
                 <div class="flex items-center gap-2.5 min-w-0 flex-1">
@@ -675,7 +786,10 @@ function handleGroupKindChange(item) {
                     </div>
                   </div>
                 </div>
-                <Badge variant="secondary" class="h-5 px-1.5 text-[10px] font-mono font-normal">
+                <Badge
+                  variant="secondary"
+                  class="h-5 px-1.5 text-[10px] font-mono font-normal"
+                >
                   {{ (s.searchFacets.value || []).length }}
                 </Badge>
               </div>
@@ -686,29 +800,52 @@ function handleGroupKindChange(item) {
                 v-for="page in s.pages.value"
                 :key="page.id"
                 class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none"
-                :class="page.id === s.activePageId.value ? 'bg-accent text-accent-foreground font-medium shadow-xs' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'"
+                :class="
+                  page.id === s.activePageId.value
+                    ? 'bg-accent text-accent-foreground font-medium shadow-xs'
+                    : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
+                "
                 @click="s.selectActivePage(page.id)"
               >
                 <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                  <Home v-if="page.id === 'home'" class="size-4 shrink-0 text-primary" />
-                  <PanelsTopLeft v-else class="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+                  <Home
+                    v-if="page.id === 'home'"
+                    class="size-4 shrink-0 text-primary"
+                  />
+                  <PanelsTopLeft
+                    v-else
+                    class="size-4 shrink-0 text-muted-foreground group-hover:text-foreground"
+                  />
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-sm font-medium leading-tight">
                       {{ getPageDisplayTitle(page) }}
                     </div>
                     <div class="flex items-center gap-1.5 mt-0.5">
-                      <span class="font-mono text-[10px] text-muted-foreground/80">
-                        {{ page.id === 'home' ? '/' : '/page/' + page.id }}
+                      <span
+                        class="font-mono text-[10px] text-muted-foreground/80"
+                      >
+                        {{ page.id === "home" ? "/" : "/page/" + page.id }}
                       </span>
-                      <Badge variant="outline" class="text-[9px] px-1 py-0 h-3.5 font-normal">
-                        {{ page.mode === 'publications' ? t("home_editor.mode_publications") : t("home_editor.mode_sections") }}
+                      <Badge
+                        variant="outline"
+                        class="text-[9px] px-1 py-0 h-3.5 font-normal"
+                      >
+                        {{
+                          page.mode === "publications"
+                            ? t("home_editor.mode_publications")
+                            : t("home_editor.mode_sections")
+                        }}
                       </Badge>
                     </div>
                   </div>
                 </div>
 
                 <!-- Action buttons for custom pages -->
-                <div v-if="page.id !== 'home'" class="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100" @click.stop>
+                <div
+                  v-if="page.id !== 'home'"
+                  class="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100"
+                  @click.stop
+                >
                   <Button
                     variant="ghost"
                     size="icon-xs"
@@ -734,10 +871,15 @@ function handleGroupKindChange(item) {
         </div>
 
         <!-- ================= RIGHT PANE: 全局顶栏导航工作台 ================= -->
-        <div v-if="s.activePageId.value === '__global_nav__'" class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
+        <div
+          v-if="s.activePageId.value === '__global_nav__'"
+          class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6"
+        >
           <Card class="panel home-workbench">
             <CardHeader class="p-5 pb-3 border-b border-border/60">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div
+                class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
                 <div class="flex items-center gap-2.5">
                   <Compass class="size-5 text-primary shrink-0" />
                   <div>
@@ -759,7 +901,9 @@ function handleGroupKindChange(item) {
                     class="h-8 gap-1.5 text-xs"
                     @click="handleAddGlobalNavigation"
                   >
-                    <Plus class="size-3.5" />{{ t("home_editor.add_global_nav") }}
+                    <Plus class="size-3.5" />{{
+                      t("home_editor.add_global_nav")
+                    }}
                   </Button>
                 </div>
               </div>
@@ -783,7 +927,8 @@ function handleGroupKindChange(item) {
                     :key="'gnav-' + i"
                     class="home-item-card rounded-xl border border-border bg-card transition-[border-color,box-shadow] duration-150 overflow-hidden shadow-xs hover:border-border/80"
                     :class="{
-                      'ring-1 ring-primary/20 border-primary/30': isExpanded(nav),
+                      'ring-1 ring-primary/20 border-primary/30':
+                        isExpanded(nav),
                     }"
                   >
                     <!-- Summary Bar -->
@@ -800,25 +945,46 @@ function handleGroupKindChange(item) {
                         <span
                           class="font-medium text-sm text-foreground truncate max-w-[200px] sm:max-w-[280px]"
                         >
-                          {{ nav.title || getNavTargetTitle(nav) || t("home_editor.unnamed_nav") }}
+                          {{
+                            nav.title ||
+                            getNavTargetTitle(nav) ||
+                            t("home_editor.unnamed_nav")
+                          }}
                         </span>
-                        <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+                        <div
+                          class="flex items-center gap-1.5 shrink-0 flex-wrap"
+                        >
                           <Badge
                             variant="outline"
                             class="text-[10px] px-1.5 py-0 h-4.5 font-normal text-muted-foreground border-border/80"
                           >
-                            {{ nav.type === "page" ? t("home_editor.target_page") : (nav.type === "search" ? t("home_editor.type_search") : t("home_editor.type_preset")) }}
+                            {{
+                              nav.type === "page"
+                                ? t("home_editor.target_page")
+                                : nav.type === "search"
+                                  ? t("home_editor.type_search")
+                                  : t("home_editor.type_preset")
+                            }}
                           </Badge>
                           <code
                             class="text-[11px] font-mono bg-muted/80 text-muted-foreground px-1.5 py-0.5 rounded truncate max-w-[160px] sm:max-w-[220px]"
                           >
-                            {{ nav.type === "page" ? (nav.query === "home" ? "/" : "/page/" + nav.query) : (nav.query || t("home_editor.not_set")) }}
+                            {{
+                              nav.type === "page"
+                                ? nav.query === "home"
+                                  ? "/"
+                                  : "/page/" + nav.query
+                                : nav.query || t("home_editor.not_set")
+                            }}
                           </code>
                         </div>
                       </div>
 
                       <!-- Quick Actions -->
-                      <div class="flex items-center gap-0.5 shrink-0" @click.stop>
+                      <div
+                        class="flex items-center gap-0.5 shrink-0"
+                        @click.stop
+                      >
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -854,7 +1020,11 @@ function handleGroupKindChange(item) {
                           variant="ghost"
                           size="icon-xs"
                           :aria-expanded="isExpanded(nav)"
-                          :title="isExpanded(nav) ? t('home_editor.collapse') : t('home_editor.expand')"
+                          :title="
+                            isExpanded(nav)
+                              ? t('home_editor.collapse')
+                              : t('home_editor.expand')
+                          "
                           @click="toggleExpand(nav)"
                         >
                           <ChevronRight
@@ -882,18 +1052,34 @@ function handleGroupKindChange(item) {
                             class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                             @change="handleNavTypeChange(nav)"
                           >
-                            <option value="preset">{{ t("home_editor.type_preset") }}</option>
-                            <option value="page">{{ t("home_editor.target_page") }}</option>
-                            <option value="search">{{ t("home_editor.type_search") }}</option>
+                            <option value="preset">
+                              {{ t("home_editor.type_preset") }}
+                            </option>
+                            <option value="page">
+                              {{ t("home_editor.target_page") }}
+                            </option>
+                            <option value="search">
+                              {{ t("home_editor.type_search") }}
+                            </option>
                           </select>
                         </div>
 
                         <div
-                          :class="nav.type === 'page' ? 'sm:col-span-9' : 'sm:col-span-4'"
+                          :class="
+                            nav.type === 'page'
+                              ? 'sm:col-span-9'
+                              : 'sm:col-span-4'
+                          "
                           class="flex flex-col gap-1.5"
                         >
                           <label class="text-xs font-medium text-foreground">
-                            {{ nav.type === "page" ? t("home_editor.target_page") : (nav.type === "preset" ? t("home_editor.preset_name") : t("home_editor.search_query")) }}
+                            {{
+                              nav.type === "page"
+                                ? t("home_editor.target_page")
+                                : nav.type === "preset"
+                                  ? t("home_editor.preset_name")
+                                  : t("home_editor.search_query")
+                            }}
                           </label>
                           <!-- Target: Page -->
                           <select
@@ -907,7 +1093,9 @@ function handleGroupKindChange(item) {
                               :key="p.id"
                               :value="p.id"
                             >
-                              {{ getPageDisplayTitle(p) }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
+                              {{ getPageDisplayTitle(p) }} ({{
+                                p.id === "home" ? "/" : "/page/" + p.id
+                              }})
                             </option>
                           </select>
 
@@ -925,7 +1113,11 @@ function handleGroupKindChange(item) {
                               v-else-if="!isKnownPreset(nav.query)"
                               :value="nav.query"
                             >
-                              {{ t("home_editor.custom_preset", { query: nav.query }) }}
+                              {{
+                                t("home_editor.custom_preset", {
+                                  query: nav.query,
+                                })
+                              }}
                             </option>
                             <optgroup
                               v-for="grp in PRESET_GROUPS"
@@ -961,7 +1153,10 @@ function handleGroupKindChange(item) {
                           </label>
                           <Input
                             v-model="nav.title"
-                            :placeholder="getNavTargetTitle(nav) || t('home_editor.nav_title_placeholder')"
+                            :placeholder="
+                              getNavTargetTitle(nav) ||
+                              t('home_editor.nav_title_placeholder')
+                            "
                             class="h-8 text-xs bg-background dark:bg-input/30"
                             @update:model-value="s.homeDirty.value = true"
                           />
@@ -998,10 +1193,18 @@ function handleGroupKindChange(item) {
         </div>
 
         <!-- ================= RIGHT PANE: 自定义搜索工作台 ================= -->
-        <div v-else-if="s.activePageId.value === '__search_facets__' || s.activePageId.value === '__facet_sets__'" class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
+        <div
+          v-else-if="
+            s.activePageId.value === '__search_facets__' ||
+            s.activePageId.value === '__facet_sets__'
+          "
+          class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6"
+        >
           <Card class="panel home-workbench">
             <CardHeader class="p-5 pb-3 border-b border-border/60">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div
+                class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
                 <div class="flex items-center gap-2.5">
                   <SlidersHorizontal class="size-5 text-primary shrink-0" />
                   <div>
@@ -1023,7 +1226,9 @@ function handleGroupKindChange(item) {
                     class="h-8 gap-1.5 text-xs"
                     @click="handleAddSearchFacet"
                   >
-                    <Plus class="size-3.5" />{{ t("home_editor.add_search_facet") }}
+                    <Plus class="size-3.5" />{{
+                      t("home_editor.add_search_facet")
+                    }}
                   </Button>
                 </div>
               </div>
@@ -1039,11 +1244,17 @@ function handleGroupKindChange(item) {
 
                 <!-- Empty State -->
                 <div
-                  v-if="!s.searchFacets.value || s.searchFacets.value.length === 0"
+                  v-if="
+                    !s.searchFacets.value || s.searchFacets.value.length === 0
+                  "
                   class="p-8 rounded-2xl border border-dashed border-border/80 text-center text-xs text-muted-foreground flex flex-col items-center gap-2 bg-muted/10"
                 >
-                  <SlidersHorizontal class="size-8 text-muted-foreground/40 mb-1" />
-                  <span class="font-medium text-foreground">{{ t("home_editor.empty_search_facets_title") }}</span>
+                  <SlidersHorizontal
+                    class="size-8 text-muted-foreground/40 mb-1"
+                  />
+                  <span class="font-medium text-foreground">{{
+                    t("home_editor.empty_search_facets_title")
+                  }}</span>
                   <span>{{ t("home_editor.empty_search_facets_desc") }}</span>
                   <Button
                     variant="outline"
@@ -1051,7 +1262,9 @@ function handleGroupKindChange(item) {
                     class="h-8 text-xs gap-1.5 mt-2"
                     @click="handleAddSearchFacet"
                   >
-                    <Plus class="size-3.5" />{{ t("home_editor.add_search_facet") }}
+                    <Plus class="size-3.5" />{{
+                      t("home_editor.add_search_facet")
+                    }}
                   </Button>
                 </div>
 
@@ -1062,7 +1275,8 @@ function handleGroupKindChange(item) {
                     :key="'sf-' + fIdx"
                     class="home-item-card rounded-xl border border-border bg-card transition-[border-color,box-shadow] duration-150 overflow-hidden shadow-xs hover:border-border/80"
                     :class="{
-                      'ring-1 ring-primary/20 border-primary/30': isExpanded(fItem),
+                      'ring-1 ring-primary/20 border-primary/30':
+                        isExpanded(fItem),
                     }"
                   >
                     <!-- Capsule Header Bar -->
@@ -1071,18 +1285,24 @@ function handleGroupKindChange(item) {
                       @click="toggleExpand(fItem)"
                     >
                       <div class="flex items-center gap-2.5 flex-1 min-w-0">
-                        <span class="size-5 rounded text-[11px] font-mono font-medium flex items-center justify-center shrink-0 bg-muted text-muted-foreground">
+                        <span
+                          class="size-5 rounded text-[11px] font-mono font-medium flex items-center justify-center shrink-0 bg-muted text-muted-foreground"
+                        >
                           {{ fIdx + 1 }}
                         </span>
                         <Input
                           v-model="fItem.title"
-                          :placeholder="t('home_editor.facet_item_title_placeholder')"
+                          :placeholder="
+                            t('home_editor.facet_item_title_placeholder')
+                          "
                           class="h-7 text-xs bg-background dark:bg-input/30 font-medium max-w-[160px] sm:max-w-[220px]"
                           @click.stop
                           @update:model-value="s.homeDirty.value = true"
                         />
                         <!-- Badges Summary -->
-                        <div class="flex items-center gap-1.5 flex-wrap shrink-0">
+                        <div
+                          class="flex items-center gap-1.5 flex-wrap shrink-0"
+                        >
                           <Badge
                             v-if="fItem.rating > 0"
                             variant="outline"
@@ -1091,11 +1311,19 @@ function handleGroupKindChange(item) {
                             ★ {{ fItem.rating }}+
                           </Badge>
                           <Badge
-                            v-if="fItem.categories && fItem.categories.length > 0"
+                            v-if="
+                              fItem.categories && fItem.categories.length > 0
+                            "
                             variant="outline"
                             class="text-[10px] px-1.5 py-0 h-4.5 text-primary border-primary/30 font-normal"
                           >
-                            {{ fItem.categories.length === 1 ? fItem.categories[0] : fItem.categories.length + ' ' + t("home_editor.facet_categories") }}
+                            {{
+                              fItem.categories.length === 1
+                                ? fItem.categories[0]
+                                : fItem.categories.length +
+                                  " " +
+                                  t("home_editor.facet_categories")
+                            }}
                           </Badge>
                           <Badge
                             v-if="fItem.expunged"
@@ -1113,7 +1341,10 @@ function handleGroupKindChange(item) {
                         </div>
                       </div>
 
-                      <div class="flex items-center gap-0.5 shrink-0" @click.stop>
+                      <div
+                        class="flex items-center gap-0.5 shrink-0"
+                        @click.stop
+                      >
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -1149,19 +1380,28 @@ function handleGroupKindChange(item) {
                           variant="ghost"
                           size="icon-xs"
                           :aria-expanded="isExpanded(fItem)"
-                          :title="isExpanded(fItem) ? t('home_editor.collapse') : t('home_editor.expand')"
+                          :title="
+                            isExpanded(fItem)
+                              ? t('home_editor.collapse')
+                              : t('home_editor.expand')
+                          "
                           @click="toggleExpand(fItem)"
                         >
                           <ChevronRight
                             class="size-3.5 text-muted-foreground transition-transform duration-200"
-                            :class="{ 'rotate-90 text-foreground': isExpanded(fItem) }"
+                            :class="{
+                              'rotate-90 text-foreground': isExpanded(fItem),
+                            }"
                           />
                         </Button>
                       </div>
                     </div>
 
                     <!-- Capsule Details (Visual Condition Builder) -->
-                    <div v-if="isExpanded(fItem)" class="p-4 border-t border-border flex flex-col gap-4 text-xs bg-background">
+                    <div
+                      v-if="isExpanded(fItem)"
+                      class="p-4 border-t border-border flex flex-col gap-4 text-xs bg-background"
+                    >
                       <!-- 1. Categories (10 EH Colored Pills) -->
                       <div class="flex flex-col gap-2">
                         <div class="flex items-center justify-between gap-2">
@@ -1192,10 +1432,19 @@ function handleGroupKindChange(item) {
                             :key="cat.name"
                             type="button"
                             class="h-6 px-2.5 text-[11px] font-medium rounded-full border transition-all cursor-pointer"
-                            :class="isCatSelected(fItem, cat.name)
-                              ? [cat.bg, cat.text, cat.border, 'shadow-xs font-semibold']
-                              : 'bg-muted/40 border-border/80 text-muted-foreground hover:border-foreground/40'"
-                            @click="s.toggleSearchFacetCategory(fItem, cat.name)"
+                            :class="
+                              isCatSelected(fItem, cat.name)
+                                ? [
+                                    cat.bg,
+                                    cat.text,
+                                    cat.border,
+                                    'shadow-xs font-semibold',
+                                  ]
+                                : 'bg-muted/40 border-border/80 text-muted-foreground hover:border-foreground/40'
+                            "
+                            @click="
+                              s.toggleSearchFacetCategory(fItem, cat.name)
+                            "
                           >
                             {{ cat.name }}
                           </button>
@@ -1213,11 +1462,27 @@ function handleGroupKindChange(item) {
                             class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                             @change="s.homeDirty.value = true"
                           >
-                            <option :value="0">{{ t("home_editor.facet_rating_none") }}</option>
-                            <option :value="2">{{ t("home_editor.facet_rating_n", { stars: 2 }) }}</option>
-                            <option :value="3">{{ t("home_editor.facet_rating_n", { stars: 3 }) }}</option>
-                            <option :value="4">{{ t("home_editor.facet_rating_n", { stars: 4 }) }}</option>
-                            <option :value="5">{{ t("home_editor.facet_rating_5") }}</option>
+                            <option :value="0">
+                              {{ t("home_editor.facet_rating_none") }}
+                            </option>
+                            <option :value="2">
+                              {{
+                                t("home_editor.facet_rating_n", { stars: 2 })
+                              }}
+                            </option>
+                            <option :value="3">
+                              {{
+                                t("home_editor.facet_rating_n", { stars: 3 })
+                              }}
+                            </option>
+                            <option :value="4">
+                              {{
+                                t("home_editor.facet_rating_n", { stars: 4 })
+                              }}
+                            </option>
+                            <option :value="5">
+                              {{ t("home_editor.facet_rating_5") }}
+                            </option>
                           </select>
                         </div>
 
@@ -1227,7 +1492,9 @@ function handleGroupKindChange(item) {
                           </label>
                           <Input
                             v-model="fItem.query"
-                            :placeholder="t('home_editor.facet_query_placeholder')"
+                            :placeholder="
+                              t('home_editor.facet_query_placeholder')
+                            "
                             class="h-8 text-xs bg-background dark:bg-input/30 font-mono"
                             @update:model-value="s.homeDirty.value = true"
                           />
@@ -1240,34 +1507,48 @@ function handleGroupKindChange(item) {
                           {{ t("home_editor.facet_options") }}
                         </span>
                         <div class="flex flex-wrap gap-x-5 gap-y-2 pt-0.5">
-                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                          <label
+                            class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none"
+                          >
                             <input
                               type="checkbox"
                               v-model="fItem.expunged"
                               class="rounded border-input text-primary focus:ring-primary size-3.5"
                               @change="s.homeDirty.value = true"
                             />
-                            <span>{{ t("home_editor.facet_opt_expunged") }}</span>
+                            <span>{{
+                              t("home_editor.facet_opt_expunged")
+                            }}</span>
                           </label>
-                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                          <label
+                            class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none"
+                          >
                             <input
                               type="checkbox"
                               :checked="isFilterDisabled(fItem, 'language')"
                               class="rounded border-input text-primary focus:ring-primary size-3.5"
-                              @change="s.toggleSearchFacetFilter(fItem, 'language')"
+                              @change="
+                                s.toggleSearchFacetFilter(fItem, 'language')
+                              "
                             />
                             <span>{{ t("home_editor.facet_opt_sfl") }}</span>
                           </label>
-                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                          <label
+                            class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none"
+                          >
                             <input
                               type="checkbox"
                               :checked="isFilterDisabled(fItem, 'uploader')"
                               class="rounded border-input text-primary focus:ring-primary size-3.5"
-                              @change="s.toggleSearchFacetFilter(fItem, 'uploader')"
+                              @change="
+                                s.toggleSearchFacetFilter(fItem, 'uploader')
+                              "
                             />
                             <span>{{ t("home_editor.facet_opt_sfu") }}</span>
                           </label>
-                          <label class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none">
+                          <label
+                            class="inline-flex items-center gap-1.5 text-xs text-foreground cursor-pointer select-none"
+                          >
                             <input
                               type="checkbox"
                               :checked="isFilterDisabled(fItem, 'tags')"
@@ -1290,9 +1571,14 @@ function handleGroupKindChange(item) {
         <div v-else class="lg:col-span-8 xl:col-span-9 flex flex-col gap-6">
           <Card class="panel home-workbench">
             <CardHeader class="p-5 pb-3 border-b border-border/60">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div
+                class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
                 <div class="flex items-center gap-2.5">
-                  <Home v-if="activePage.id === 'home'" class="size-5 text-primary shrink-0" />
+                  <Home
+                    v-if="activePage.id === 'home'"
+                    class="size-5 text-primary shrink-0"
+                  />
                   <PanelsTopLeft v-else class="size-5 text-primary shrink-0" />
                   <div>
                     <div class="flex items-center gap-2">
@@ -1300,7 +1586,11 @@ function handleGroupKindChange(item) {
                         {{ getPageDisplayTitle(activePage) }}
                       </h2>
                       <Badge variant="secondary" class="font-mono text-xs">
-                        {{ activePage.id === 'home' ? '/' : '/page/' + activePage.id }}
+                        {{
+                          activePage.id === "home"
+                            ? "/"
+                            : "/page/" + activePage.id
+                        }}
                       </Badge>
                     </div>
                   </div>
@@ -1314,7 +1604,9 @@ function handleGroupKindChange(item) {
                     class="h-8 gap-1 text-xs"
                     @click="openEditPageModal(activePage)"
                   >
-                    <Pencil class="size-3.5" />{{ t("home_editor.edit_page_meta") }}
+                    <Pencil class="size-3.5" />{{
+                      t("home_editor.edit_page_meta")
+                    }}
                   </Button>
                 </div>
               </div>
@@ -1330,7 +1622,9 @@ function handleGroupKindChange(item) {
                   <div>
                     <div class="flex items-center gap-2">
                       <Layers class="size-4 text-primary shrink-0" />
-                      <h3 class="text-base font-semibold tracking-tight whitespace-nowrap">
+                      <h3
+                        class="text-base font-semibold tracking-tight whitespace-nowrap"
+                      >
                         {{ t("home_editor.content_layout") }}
                       </h3>
                     </div>
@@ -1364,11 +1658,17 @@ function handleGroupKindChange(item) {
                 </div>
 
                 <!-- MODE A: 分组栏目模式 -->
-                <div v-if="currentPageMode === 'groups'" class="flex flex-col gap-3 pt-1">
+                <div
+                  v-if="currentPageMode === 'groups'"
+                  class="flex flex-col gap-3 pt-1"
+                >
                   <!-- Toolbar for Groups -->
-                  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div
+                    class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
                     <div class="flex items-center gap-2 flex-wrap">
-                      <span class="text-xs font-medium text-foreground whitespace-nowrap"
+                      <span
+                        class="text-xs font-medium text-foreground whitespace-nowrap"
                         >{{ t("home_editor.groups_list") }}</span
                       >
                       <Badge
@@ -1390,7 +1690,9 @@ function handleGroupKindChange(item) {
                         class="h-8 gap-1.5 text-xs"
                         @click="handleAddGroup('publication')"
                       >
-                        <Plus class="size-3.5" />{{ t("home_editor.add_pub_group") }}
+                        <Plus class="size-3.5" />{{
+                          t("home_editor.add_pub_group")
+                        }}
                       </Button>
                       <Button
                         variant="outline"
@@ -1398,7 +1700,9 @@ function handleGroupKindChange(item) {
                         class="h-8 gap-1.5 text-xs"
                         @click="handleAddGroup('navigation')"
                       >
-                        <Plus class="size-3.5" />{{ t("home_editor.add_nav_group") }}
+                        <Plus class="size-3.5" />{{
+                          t("home_editor.add_nav_group")
+                        }}
                       </Button>
                     </div>
                   </div>
@@ -1413,7 +1717,8 @@ function handleGroupKindChange(item) {
                       :key="'grp-' + i"
                       class="home-item-card rounded-xl border border-border bg-card transition-[border-color,box-shadow] duration-150 overflow-hidden shadow-xs hover:border-border/80"
                       :class="{
-                        'ring-1 ring-primary/20 border-primary/30': isExpanded(item),
+                        'ring-1 ring-primary/20 border-primary/30':
+                          isExpanded(item),
                       }"
                     >
                       <!-- Summary Bar -->
@@ -1430,9 +1735,15 @@ function handleGroupKindChange(item) {
                           <span
                             class="font-medium text-sm text-foreground truncate max-w-[200px] sm:max-w-[260px]"
                           >
-                            {{ item.title || item.query || t("home_editor.unnamed_section") }}
+                            {{
+                              item.title ||
+                              item.query ||
+                              t("home_editor.unnamed_section")
+                            }}
                           </span>
-                          <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+                          <div
+                            class="flex items-center gap-1.5 shrink-0 flex-wrap"
+                          >
                             <Badge
                               variant="outline"
                               class="text-[10px] px-1.5 py-0 h-4.5 font-normal border-border/80"
@@ -1467,14 +1778,21 @@ function handleGroupKindChange(item) {
                                 variant="secondary"
                                 class="text-[10px] px-1.5 py-0 h-4.5 font-normal text-muted-foreground font-mono"
                               >
-                                {{ t("home_editor.n_subnavs", { count: (item.items || []).length }) }}
+                                {{
+                                  t("home_editor.n_subnavs", {
+                                    count: (item.items || []).length,
+                                  })
+                                }}
                               </Badge>
                             </template>
                           </div>
                         </div>
 
                         <!-- Quick Actions -->
-                        <div class="flex items-center gap-0.5 shrink-0" @click.stop>
+                        <div
+                          class="flex items-center gap-0.5 shrink-0"
+                          @click.stop
+                        >
                           <Button
                             variant="ghost"
                             size="icon-xs"
@@ -1505,12 +1823,19 @@ function handleGroupKindChange(item) {
                           >
                             <Trash2 class="size-3.5" />
                           </Button>
-                          <Separator orientation="vertical" class="h-3.5 mx-1" />
+                          <Separator
+                            orientation="vertical"
+                            class="h-3.5 mx-1"
+                          />
                           <Button
                             variant="ghost"
                             size="icon-xs"
                             :aria-expanded="isExpanded(item)"
-                            :title="isExpanded(item) ? t('home_editor.collapse') : t('home_editor.expand')"
+                            :title="
+                              isExpanded(item)
+                                ? t('home_editor.collapse')
+                                : t('home_editor.expand')
+                            "
                             @click="toggleExpand(item)"
                           >
                             <ChevronRight
@@ -1534,18 +1859,22 @@ function handleGroupKindChange(item) {
                           class="grid grid-cols-1 sm:grid-cols-12 gap-3"
                         >
                           <div class="sm:col-span-4 flex flex-col gap-1.5">
-                            <label class="text-xs font-medium text-foreground"
+                            <label
+                              class="text-xs font-medium text-foreground"
                               >{{ t("home_editor.group_title") }}</label
                             >
                             <Input
                               v-model="item.title"
-                              :placeholder="t('home_editor.pub_group_title_placeholder')"
+                              :placeholder="
+                                t('home_editor.pub_group_title_placeholder')
+                              "
                               class="h-8 text-xs bg-background dark:bg-input/30"
                               @update:model-value="s.homeDirty.value = true"
                             />
                           </div>
                           <div class="sm:col-span-2 flex flex-col gap-1.5">
-                            <label class="text-xs font-medium text-foreground"
+                            <label
+                              class="text-xs font-medium text-foreground"
                               >{{ t("home_editor.source_type") }}</label
                             >
                             <select
@@ -1553,13 +1882,21 @@ function handleGroupKindChange(item) {
                               class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                               @change="handleTypeChange(item)"
                             >
-                              <option value="preset">{{ t("home_editor.type_preset") }}</option>
-                              <option value="search">{{ t("home_editor.type_search") }}</option>
+                              <option value="preset">
+                                {{ t("home_editor.type_preset") }}
+                              </option>
+                              <option value="search">
+                                {{ t("home_editor.type_search") }}
+                              </option>
                             </select>
                           </div>
                           <div class="sm:col-span-4 flex flex-col gap-1.5">
                             <label class="text-xs font-medium text-foreground">
-                              {{ item.type === "preset" ? t("home_editor.preset_name") : t("home_editor.search_query") }}
+                              {{
+                                item.type === "preset"
+                                  ? t("home_editor.preset_name")
+                                  : t("home_editor.search_query")
+                              }}
                             </label>
                             <select
                               v-if="item.type === 'preset'"
@@ -1574,7 +1911,11 @@ function handleGroupKindChange(item) {
                                 v-else-if="!isKnownPreset(item.query)"
                                 :value="item.query"
                               >
-                                {{ t("home_editor.custom_preset", { query: item.query }) }}
+                                {{
+                                  t("home_editor.custom_preset", {
+                                    query: item.query,
+                                  })
+                                }}
                               </option>
                               <optgroup
                                 v-for="grp in PRESET_GROUPS"
@@ -1599,14 +1940,17 @@ function handleGroupKindChange(item) {
                             />
                           </div>
                           <div class="sm:col-span-2 flex flex-col gap-1.5">
-                            <label class="text-xs font-medium text-foreground"
+                            <label
+                              class="text-xs font-medium text-foreground"
                               >{{ t("home_editor.preview_count") }}</label
                             >
                             <Input
                               v-model.number="item.count"
                               type="number"
                               min="0"
-                              :placeholder="t('home_editor.preview_count_placeholder')"
+                              :placeholder="
+                                t('home_editor.preview_count_placeholder')
+                              "
                               class="h-8 text-xs bg-background dark:bg-input/30 font-mono"
                               @update:model-value="s.homeDirty.value = true"
                             />
@@ -1617,18 +1961,22 @@ function handleGroupKindChange(item) {
                         <div v-else class="flex flex-col gap-3.5">
                           <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
                             <div class="sm:col-span-9 flex flex-col gap-1.5">
-                              <label class="text-xs font-medium text-foreground"
+                              <label
+                                class="text-xs font-medium text-foreground"
                                 >{{ t("home_editor.group_title") }}</label
                               >
                               <Input
                                 v-model="item.title"
-                                :placeholder="t('home_editor.nav_group_title_placeholder')"
+                                :placeholder="
+                                  t('home_editor.nav_group_title_placeholder')
+                                "
                                 class="h-8 text-xs bg-background dark:bg-input/30 font-medium"
                                 @update:model-value="s.homeDirty.value = true"
                               />
                             </div>
                             <div class="sm:col-span-3 flex flex-col gap-1.5">
-                              <label class="text-xs font-medium text-foreground"
+                              <label
+                                class="text-xs font-medium text-foreground"
                                 >{{ t("home_editor.section_type") }}</label
                               >
                               <select
@@ -1636,18 +1984,28 @@ function handleGroupKindChange(item) {
                                 class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                                 @change="handleGroupKindChange(item)"
                               >
-                                <option value="navigation">{{ t("home_editor.kind_navigation") }}</option>
-                                <option value="publication">{{ t("home_editor.kind_publication") }}</option>
+                                <option value="navigation">
+                                  {{ t("home_editor.kind_navigation") }}
+                                </option>
+                                <option value="publication">
+                                  {{ t("home_editor.kind_publication") }}
+                                </option>
                               </select>
                             </div>
                           </div>
 
                           <!-- Sub Navigations Panel -->
-                          <div class="rounded-xl border border-border/80 bg-background/60 dark:bg-input/10 p-3 flex flex-col gap-2.5">
-                            <div class="flex items-center justify-between pb-0.5">
+                          <div
+                            class="rounded-xl border border-border/80 bg-background/60 dark:bg-input/10 p-3 flex flex-col gap-2.5"
+                          >
+                            <div
+                              class="flex items-center justify-between pb-0.5"
+                            >
                               <div class="flex items-center gap-2">
                                 <Compass class="size-3.5 text-primary" />
-                                <span class="text-xs font-medium text-foreground">
+                                <span
+                                  class="text-xs font-medium text-foreground"
+                                >
                                   {{ t("home_editor.nav_items_list") }}
                                 </span>
                                 <Badge
@@ -1691,15 +2049,25 @@ function handleGroupKindChange(item) {
                                     class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                                     @change="handleNavTypeChange(subItem)"
                                   >
-                                    <option value="preset">{{ t("home_editor.type_preset") }}</option>
-                                    <option value="page">{{ t("home_editor.target_page") }}</option>
-                                    <option value="search">{{ t("home_editor.type_search") }}</option>
+                                    <option value="preset">
+                                      {{ t("home_editor.type_preset") }}
+                                    </option>
+                                    <option value="page">
+                                      {{ t("home_editor.target_page") }}
+                                    </option>
+                                    <option value="search">
+                                      {{ t("home_editor.type_search") }}
+                                    </option>
                                   </select>
                                 </div>
 
                                 <!-- Target Value Control -->
                                 <div
-                                  :class="subItem.type === 'page' ? 'flex-1 min-w-[180px]' : 'w-full sm:w-44 md:w-52 shrink-0'"
+                                  :class="
+                                    subItem.type === 'page'
+                                      ? 'flex-1 min-w-[180px]'
+                                      : 'w-full sm:w-44 md:w-52 shrink-0'
+                                  "
                                 >
                                   <!-- If page -->
                                   <select
@@ -1713,7 +2081,9 @@ function handleGroupKindChange(item) {
                                       :key="p.id"
                                       :value="p.id"
                                     >
-                                      {{ getPageDisplayTitle(p) }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
+                                      {{ getPageDisplayTitle(p) }} ({{
+                                        p.id === "home" ? "/" : "/page/" + p.id
+                                      }})
                                     </option>
                                   </select>
 
@@ -1724,14 +2094,22 @@ function handleGroupKindChange(item) {
                                     class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
                                     @change="s.homeDirty.value = true"
                                   >
-                                    <option v-if="!subItem.query" value="" disabled>
+                                    <option
+                                      v-if="!subItem.query"
+                                      value=""
+                                      disabled
+                                    >
                                       {{ t("home_editor.select_preset") }}
                                     </option>
                                     <option
                                       v-else-if="!isKnownPreset(subItem.query)"
                                       :value="subItem.query"
                                     >
-                                      {{ t("home_editor.custom_preset", { query: subItem.query }) }}
+                                      {{
+                                        t("home_editor.custom_preset", {
+                                          query: subItem.query,
+                                        })
+                                      }}
                                     </option>
                                     <optgroup
                                       v-for="grp in PRESET_GROUPS"
@@ -1752,9 +2130,13 @@ function handleGroupKindChange(item) {
                                   <Input
                                     v-else
                                     v-model="subItem.query"
-                                    :placeholder="t('home_editor.search_placeholder')"
+                                    :placeholder="
+                                      t('home_editor.search_placeholder')
+                                    "
                                     class="h-7 text-xs bg-background dark:bg-input/30 font-mono"
-                                    @update:model-value="s.homeDirty.value = true"
+                                    @update:model-value="
+                                      s.homeDirty.value = true
+                                    "
                                   />
                                 </div>
 
@@ -1765,21 +2147,32 @@ function handleGroupKindChange(item) {
                                 >
                                   <Input
                                     v-model="subItem.title"
-                                    :placeholder="getNavTargetTitle(subItem) || t('home_editor.nav_item_title_placeholder')"
+                                    :placeholder="
+                                      getNavTargetTitle(subItem) ||
+                                      t(
+                                        'home_editor.nav_item_title_placeholder',
+                                      )
+                                    "
                                     class="h-7 text-xs bg-background dark:bg-input/30"
-                                    @update:model-value="s.homeDirty.value = true"
+                                    @update:model-value="
+                                      s.homeDirty.value = true
+                                    "
                                   />
                                 </div>
 
                                 <!-- Actions -->
-                                <div class="flex items-center gap-0.5 self-end sm:self-center shrink-0">
+                                <div
+                                  class="flex items-center gap-0.5 self-end sm:self-center shrink-0"
+                                >
                                   <Button
                                     variant="ghost"
                                     size="icon-xs"
                                     :disabled="subIdx === 0"
                                     :aria-label="t('home_editor.reorder_up')"
                                     :title="t('home_editor.reorder_up')"
-                                    @click="s.moveGroupNavigationItem(i, subIdx, -1)"
+                                    @click="
+                                      s.moveGroupNavigationItem(i, subIdx, -1)
+                                    "
                                   >
                                     <ChevronUp class="size-3" />
                                   </Button>
@@ -1789,7 +2182,9 @@ function handleGroupKindChange(item) {
                                     :disabled="subIdx === item.items.length - 1"
                                     :aria-label="t('home_editor.reorder_down')"
                                     :title="t('home_editor.reorder_down')"
-                                    @click="s.moveGroupNavigationItem(i, subIdx, 1)"
+                                    @click="
+                                      s.moveGroupNavigationItem(i, subIdx, 1)
+                                    "
                                   >
                                     <ChevronDown class="size-3" />
                                   </Button>
@@ -1799,7 +2194,9 @@ function handleGroupKindChange(item) {
                                     class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                                     :aria-label="t('home_editor.delete')"
                                     :title="t('home_editor.delete')"
-                                    @click="s.removeGroupNavigationItem(i, subIdx)"
+                                    @click="
+                                      s.removeGroupNavigationItem(i, subIdx)
+                                    "
                                   >
                                     <Trash2 class="size-3" />
                                   </Button>
@@ -1838,7 +2235,9 @@ function handleGroupKindChange(item) {
                         class="h-7 text-xs gap-1"
                         @click="handleAddGroup('publication')"
                       >
-                        <Plus class="size-3" />{{ t("home_editor.add_pub_group") }}
+                        <Plus class="size-3" />{{
+                          t("home_editor.add_pub_group")
+                        }}
                       </Button>
                       <Button
                         variant="outline"
@@ -1846,7 +2245,9 @@ function handleGroupKindChange(item) {
                         class="h-7 text-xs gap-1"
                         @click="handleAddGroup('navigation')"
                       >
-                        <Plus class="size-3" />{{ t("home_editor.add_nav_group") }}
+                        <Plus class="size-3" />{{
+                          t("home_editor.add_nav_group")
+                        }}
                       </Button>
                     </div>
                   </div>
@@ -1861,9 +2262,9 @@ function handleGroupKindChange(item) {
                   <div class="flex flex-col gap-2">
                     <div class="flex items-center justify-between gap-3">
                       <div class="flex items-center gap-2">
-                        <span class="text-xs font-medium text-foreground"
-                          >{{ t("home_editor.top_publication") }}</span
-                        >
+                        <span class="text-xs font-medium text-foreground">{{
+                          t("home_editor.top_publication")
+                        }}</span>
                         <Badge
                           v-if="s.layout.value.publication"
                           variant="secondary"
@@ -1886,7 +2287,9 @@ function handleGroupKindChange(item) {
                         class="h-8 gap-1.5 text-xs"
                         @click="handleAddPublication"
                       >
-                        <Plus class="size-3.5" />{{ t("home_editor.add_top_pub") }}
+                        <Plus class="size-3.5" />{{
+                          t("home_editor.add_top_pub")
+                        }}
                       </Button>
                     </div>
 
@@ -1901,14 +2304,18 @@ function handleGroupKindChange(item) {
                       >
                         <div class="flex items-center gap-2.5 min-w-0 flex-1">
                           <BookOpen class="size-4 text-primary shrink-0" />
-                          <span class="font-medium text-sm text-foreground truncate max-w-[200px] sm:max-w-[280px]">
+                          <span
+                            class="font-medium text-sm text-foreground truncate max-w-[200px] sm:max-w-[280px]"
+                          >
                             {{
                               s.layout.value.publication.title ||
                               s.layout.value.publication.query ||
                               t("home_editor.default_pub_title")
                             }}
                           </span>
-                          <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+                          <div
+                            class="flex items-center gap-1.5 shrink-0 flex-wrap"
+                          >
                             <Badge
                               variant="outline"
                               class="text-[10px] px-1.5 py-0 h-4.5 font-normal text-muted-foreground border-border/80"
@@ -1922,7 +2329,10 @@ function handleGroupKindChange(item) {
                             <code
                               class="text-[11px] font-mono bg-muted/80 text-muted-foreground px-1.5 py-0.5 rounded truncate max-w-[140px] sm:max-w-[180px]"
                             >
-                              {{ s.layout.value.publication.query || t("home_editor.not_set") }}
+                              {{
+                                s.layout.value.publication.query ||
+                                t("home_editor.not_set")
+                              }}
                             </code>
                             <Badge
                               variant="secondary"
@@ -1934,7 +2344,10 @@ function handleGroupKindChange(item) {
                         </div>
 
                         <!-- Actions -->
-                        <div class="flex items-center gap-0.5 shrink-0" @click.stop>
+                        <div
+                          class="flex items-center gap-0.5 shrink-0"
+                          @click.stop
+                        >
                           <Button
                             variant="ghost"
                             size="icon-xs"
@@ -1945,11 +2358,16 @@ function handleGroupKindChange(item) {
                           >
                             <Trash2 class="size-3.5" />
                           </Button>
-                          <Separator orientation="vertical" class="h-3.5 mx-1" />
+                          <Separator
+                            orientation="vertical"
+                            class="h-3.5 mx-1"
+                          />
                           <Button
                             variant="ghost"
                             size="icon-xs"
-                            :aria-expanded="isExpanded(s.layout.value.publication)"
+                            :aria-expanded="
+                              isExpanded(s.layout.value.publication)
+                            "
                             :title="
                               isExpanded(s.layout.value.publication)
                                 ? t('home_editor.collapse')
@@ -1960,7 +2378,9 @@ function handleGroupKindChange(item) {
                             <ChevronRight
                               class="size-3.5 text-muted-foreground transition-transform duration-200"
                               :class="{
-                                'rotate-90 text-foreground': isExpanded(s.layout.value.publication),
+                                'rotate-90 text-foreground': isExpanded(
+                                  s.layout.value.publication,
+                                ),
                               }"
                             />
                           </Button>
@@ -1974,27 +2394,37 @@ function handleGroupKindChange(item) {
                       >
                         <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
                           <div class="sm:col-span-4 flex flex-col gap-1.5">
-                            <label class="text-xs font-medium text-foreground"
+                            <label
+                              class="text-xs font-medium text-foreground"
                               >{{ t("home_editor.pub_title") }}</label
                             >
                             <Input
                               v-model="s.layout.value.publication.title"
-                              :placeholder="t('home_editor.pub_title_placeholder')"
+                              :placeholder="
+                                t('home_editor.pub_title_placeholder')
+                              "
                               class="h-8 text-xs bg-background dark:bg-input/30"
                               @update:model-value="s.homeDirty.value = true"
                             />
                           </div>
                           <div class="sm:col-span-2 flex flex-col gap-1.5">
-                            <label class="text-xs font-medium text-foreground"
+                            <label
+                              class="text-xs font-medium text-foreground"
                               >{{ t("home_editor.source_type") }}</label
                             >
                             <select
                               v-model="s.layout.value.publication.type"
                               class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-                              @change="handleTypeChange(s.layout.value.publication)"
+                              @change="
+                                handleTypeChange(s.layout.value.publication)
+                              "
                             >
-                              <option value="preset">{{ t("home_editor.type_preset") }}</option>
-                              <option value="search">{{ t("home_editor.type_search") }}</option>
+                              <option value="preset">
+                                {{ t("home_editor.type_preset") }}
+                              </option>
+                              <option value="search">
+                                {{ t("home_editor.type_search") }}
+                              </option>
                             </select>
                           </div>
                           <div class="sm:col-span-4 flex flex-col gap-1.5">
@@ -2006,19 +2436,33 @@ function handleGroupKindChange(item) {
                               }}
                             </label>
                             <select
-                              v-if="s.layout.value.publication.type === 'preset'"
+                              v-if="
+                                s.layout.value.publication.type === 'preset'
+                              "
                               v-model="s.layout.value.publication.query"
                               class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background dark:bg-input/30 px-2.5 text-foreground shadow-xs outline-none focus:border-ring focus:ring-1 focus:ring-ring font-mono"
                               @change="s.homeDirty.value = true"
                             >
-                              <option v-if="!s.layout.value.publication.query" value="" disabled>
+                              <option
+                                v-if="!s.layout.value.publication.query"
+                                value=""
+                                disabled
+                              >
                                 {{ t("home_editor.select_preset") }}
                               </option>
                               <option
-                                v-else-if="!isKnownPreset(s.layout.value.publication.query)"
+                                v-else-if="
+                                  !isKnownPreset(
+                                    s.layout.value.publication.query,
+                                  )
+                                "
                                 :value="s.layout.value.publication.query"
                               >
-                                {{ t("home_editor.custom_preset", { query: s.layout.value.publication.query }) }}
+                                {{
+                                  t("home_editor.custom_preset", {
+                                    query: s.layout.value.publication.query,
+                                  })
+                                }}
                               </option>
                               <optgroup
                                 v-for="grp in PRESET_GROUPS"
@@ -2043,14 +2487,17 @@ function handleGroupKindChange(item) {
                             />
                           </div>
                           <div class="sm:col-span-2 flex flex-col gap-1.5">
-                            <label class="text-xs font-medium text-foreground"
+                            <label
+                              class="text-xs font-medium text-foreground"
                               >{{ t("home_editor.preview_count") }}</label
                             >
                             <Input
                               v-model.number="s.layout.value.publication.count"
                               type="number"
                               min="0"
-                              :placeholder="t('home_editor.preview_count_pub_placeholder')"
+                              :placeholder="
+                                t('home_editor.preview_count_pub_placeholder')
+                              "
                               class="h-8 text-xs bg-background dark:bg-input/30 font-mono"
                               @update:model-value="s.homeDirty.value = true"
                             />
@@ -2064,9 +2511,13 @@ function handleGroupKindChange(item) {
                       v-if="s.layout.value.publication"
                       class="flex flex-col gap-3 pt-4 border-t border-border/70"
                     >
-                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-border/80 bg-muted/20">
+                      <div
+                        class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-border/80 bg-muted/20"
+                      >
                         <div class="flex items-center gap-2.5 min-w-0">
-                          <SlidersHorizontal class="size-4 text-primary shrink-0" />
+                          <SlidersHorizontal
+                            class="size-4 text-primary shrink-0"
+                          />
                           <div class="flex flex-col gap-0.5 min-w-0">
                             <span class="text-xs font-semibold text-foreground">
                               {{ t("home_editor.custom_search_title") }}
@@ -2097,7 +2548,9 @@ function handleGroupKindChange(item) {
                         <span class="text-xs font-medium text-foreground block">
                           {{ t("home_editor.pure_nav_title") }}
                         </span>
-                        <span class="text-[11px] text-muted-foreground block mt-0.5">
+                        <span
+                          class="text-[11px] text-muted-foreground block mt-0.5"
+                        >
                           {{ t("home_editor.pure_nav_desc") }}
                         </span>
                       </div>
@@ -2107,7 +2560,9 @@ function handleGroupKindChange(item) {
                         class="h-8 text-xs gap-1.5 shrink-0"
                         @click="handleAddPublication"
                       >
-                        <Plus class="size-3.5" />{{ t("home_editor.add_top_pub_btn") }}
+                        <Plus class="size-3.5" />{{
+                          t("home_editor.add_top_pub_btn")
+                        }}
                       </Button>
                     </div>
                   </div>
@@ -2138,7 +2593,10 @@ function handleGroupKindChange(item) {
         </DialogHeader>
 
         <div class="flex flex-col gap-4 py-2">
-          <div v-if="addPageError" class="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs">
+          <div
+            v-if="addPageError"
+            class="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs"
+          >
             {{ addPageError }}
           </div>
 
@@ -2160,7 +2618,7 @@ function handleGroupKindChange(item) {
                 {{ t("home_editor.page_id_label") }}
               </label>
               <span class="text-[10px] text-muted-foreground font-mono">
-                /page/{{ addPageForm.id || 'slug' }}
+                /page/{{ addPageForm.id || "slug" }}
               </span>
             </div>
             <Input
@@ -2202,7 +2660,11 @@ function handleGroupKindChange(item) {
           <Button variant="outline" size="sm" @click="addPageOpen = false">
             {{ t("common.cancel") }}
           </Button>
-          <Button size="sm" :disabled="!addPageForm.title.trim() || !addPageForm.id.trim()" @click="confirmAddPage">
+          <Button
+            size="sm"
+            :disabled="!addPageForm.title.trim() || !addPageForm.id.trim()"
+            @click="confirmAddPage"
+          >
             {{ t("common.confirm") }}
           </Button>
         </DialogFooter>
@@ -2217,7 +2679,10 @@ function handleGroupKindChange(item) {
         </DialogHeader>
 
         <div class="flex flex-col gap-4 py-2">
-          <div v-if="editPageError" class="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs">
+          <div
+            v-if="editPageError"
+            class="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs"
+          >
             {{ editPageError }}
           </div>
 
@@ -2232,7 +2697,10 @@ function handleGroupKindChange(item) {
             />
           </div>
 
-          <div v-if="editPageForm.origId !== 'home'" class="flex flex-col gap-1.5">
+          <div
+            v-if="editPageForm.origId !== 'home'"
+            class="flex flex-col gap-1.5"
+          >
             <div class="flex items-center justify-between">
               <label class="text-xs font-medium text-foreground">
                 {{ t("home_editor.page_id_label") }}
@@ -2252,7 +2720,14 @@ function handleGroupKindChange(item) {
           <Button variant="outline" size="sm" @click="editPageOpen = false">
             {{ t("common.cancel") }}
           </Button>
-          <Button size="sm" :disabled="!editPageForm.title.trim() || (editPageForm.origId !== 'home' && !editPageForm.id.trim())" @click="confirmEditPage">
+          <Button
+            size="sm"
+            :disabled="
+              !editPageForm.title.trim() ||
+              (editPageForm.origId !== 'home' && !editPageForm.id.trim())
+            "
+            @click="confirmEditPage"
+          >
             {{ t("common.save") }}
           </Button>
         </DialogFooter>
@@ -2263,7 +2738,11 @@ function handleGroupKindChange(item) {
     <Dialog v-model:open="deletePageOpen">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{{ t("home_editor.delete_page_title", { title: getPageDisplayTitle(deletePageTarget) }) }}</DialogTitle>
+          <DialogTitle>{{
+            t("home_editor.delete_page_title", {
+              title: getPageDisplayTitle(deletePageTarget),
+            })
+          }}</DialogTitle>
           <DialogDescription>
             {{ t("home_editor.delete_page_desc") }}
           </DialogDescription>
@@ -2291,7 +2770,11 @@ function handleGroupKindChange(item) {
         </DialogHeader>
 
         <DialogFooter class="gap-2 sm:gap-0">
-          <Button variant="outline" size="sm" @click="resetDefaultsOpen = false">
+          <Button
+            variant="outline"
+            size="sm"
+            @click="resetDefaultsOpen = false"
+          >
             {{ t("common.cancel") }}
           </Button>
           <Button

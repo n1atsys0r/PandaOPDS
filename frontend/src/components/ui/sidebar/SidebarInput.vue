@@ -1,6 +1,6 @@
 <script setup>
 import { cn } from "cn";
-import { Input } from '@/components/ui/input';
+import { Input } from "@/components/ui/input";
 
 const props = defineProps({
   class: {

@@ -91,7 +91,8 @@ export default {
     seconds_unit: "{count} s",
     circuit_reason: "Circuit Breaker Reason",
     home_layout: "Page Orchestration",
-    home_layout_desc: "OPDS home feed and custom pages layout and content source",
+    home_layout_desc:
+      "OPDS home feed and custom pages layout and content source",
     enter_editor: "Open Editor",
     content_source: "Content Source",
     builtin_default: "Built-in Default",
@@ -160,13 +161,17 @@ export default {
     sync_favorites: "Sync Favorites",
     more_sync_options: "More sync options",
     full_sync_title: "Full Favorites Calibration…",
-    full_sync_desc: "Traverse all favorite pages and clean up items removed upstream",
+    full_sync_desc:
+      "Traverse all favorite pages and clean up items removed upstream",
     import_local: "Import Local Archives",
     importing: "Importing…",
     scan_searching: "Searching for archive status and gallery data…",
-    scan_success: "Import complete: imported {imported} files, skipped {skipped} files, {conflicts} conflicts.",
-    scan_skipped: "Import complete: no new files imported, skipped {skipped} files.",
-    scan_conflict: "Import complete: no files imported, found {conflicts} conflicting files.",
+    scan_success:
+      "Import complete: imported {imported} files, skipped {skipped} files, {conflicts} conflicts.",
+    scan_skipped:
+      "Import complete: no new files imported, skipped {skipped} files.",
+    scan_conflict:
+      "Import complete: no files imported, found {conflicts} conflicting files.",
     scan_error: "Import failed: {err}",
     close_import_hint: "Dismiss import notice",
     tab_all: "All",
@@ -206,29 +211,40 @@ export default {
     load_more_btn: "Load more (showing {shown} / {total})",
     dialog_confirm_update_title: "Confirm Version Update",
     dialog_confirm_archive_title: "Confirm Archiving",
-    dialog_desc_update: "Will request the new version using the current archive quality tier. Unlocked tiers may consume GP; please verify the quote.",
-    dialog_desc_retry: "Retrying will re-request the archive from upstream. Unlocked tiers may consume GP; please verify quality and quote.",
-    dialog_desc_start: "Archive task will request upstream. Unlocked tiers consume account GP; please verify quality and price.",
+    dialog_desc_update:
+      "Will request the new version using the current archive quality tier. Unlocked tiers may consume GP; please verify the quote.",
+    dialog_desc_retry:
+      "Retrying will re-request the archive from upstream. Unlocked tiers may consume GP; please verify quality and quote.",
+    dialog_desc_start:
+      "Archive task will request upstream. Unlocked tiers consume account GP; please verify quality and price.",
     selected_gallery: "Selected Gallery",
     dialog_confirm_update_btn: "Confirm Version Update",
     dialog_fav_remove_title: "Remove Favorite?",
-    dialog_fav_remove_desc_unarchived: "This will remove the gallery from your E-Hentai favorites and clean up the unarchived local catalog record.",
-    dialog_fav_remove_desc_default: "This will remove the gallery from your E-Hentai favorites.",
-    dialog_fav_remove_also_delete: "Also delete local archive (only executed after successful upstream removal)",
+    dialog_fav_remove_desc_unarchived:
+      "This will remove the gallery from your E-Hentai favorites and clean up the unarchived local catalog record.",
+    dialog_fav_remove_desc_default:
+      "This will remove the gallery from your E-Hentai favorites.",
+    dialog_fav_remove_also_delete:
+      "Also delete local archive (only executed after successful upstream removal)",
     dialog_full_sync_title: "Perform Full Favorites Calibration?",
-    dialog_full_sync_desc: "Will scan all E-Hentai favorite pages from start (capped by max scan pages), catalog missing entries and clean up entries un-favorited upstream. Does not trigger paid archiving, but issues multiple page requests.",
+    dialog_full_sync_desc:
+      "Will scan all E-Hentai favorite pages from start (capped by max scan pages), catalog missing entries and clean up entries un-favorited upstream. Does not trigger paid archiving, but issues multiple page requests.",
     dialog_full_sync_confirm: "Confirm Full Calibration",
     dialog_new_title: "New Gallery Archive",
-    dialog_new_desc: "Enter gallery URL or GID/TOKEN. Archiving requires configured IPB login credentials.",
-    dialog_new_no_ipb: "No complete IPB credentials detected. Please configure login credentials in Settings before querying GP quotes.",
-    dialog_new_placeholder: "https://e-hentai.org/g/123456/abcdef/ or 123456/abcdef",
+    dialog_new_desc:
+      "Enter gallery URL or GID/TOKEN. Archiving requires configured IPB login credentials.",
+    dialog_new_no_ipb:
+      "No complete IPB credentials detected. Please configure login credentials in Settings before querying GP quotes.",
+    dialog_new_placeholder:
+      "https://e-hentai.org/g/123456/abcdef/ or 123456/abcdef",
     dialog_new_query: "Query",
     dialog_new_quote_ready: "Quote obtained",
     dialog_new_balance: "Account balance: {balance} GP",
     dialog_new_quality_label: "Quality Tier",
     dialog_new_quality_placeholder: "Select quality tier",
     dialog_new_unlocked: " (Unlocked)",
-    dialog_new_warning: "Archive task will request upstream. Unlocked tiers consume account GP; please check tier and price.",
+    dialog_new_warning:
+      "Archive task will request upstream. Unlocked tiers consume account GP; please check tier and price.",
     dialog_new_confirm: "Confirm",
     new_archive: "New Archive",
     sync_menu: "Sync Favorites",
@@ -237,7 +253,8 @@ export default {
     scan_imports: "Scan Unindexed Archives",
     scanning: "Scanning...",
     scan_banner_running: "Scanning local archives directory...",
-    scan_banner_result: "Scan complete: imported {imported}, skipped {skipped}, conflicts {conflicts}",
+    scan_banner_result:
+      "Scan complete: imported {imported}, skipped {skipped}, conflicts {conflicts}",
     dismiss: "Dismiss",
     search_placeholder: "Search galleries...",
     all_statuses: "All Statuses",
@@ -265,11 +282,13 @@ export default {
     action_cancel: "Cancel Archive",
     action_delete: "Delete Archive",
     input_label: "Gallery URL or ID",
-    input_placeholder: "e.g. https://e-hentai.org/g/123456/abcdef/ or 123456 abcdef",
+    input_placeholder:
+      "e.g. https://e-hentai.org/g/123456/abcdef/ or 123456 abcdef",
     querying: "Querying...",
     quality_select: "Select Quality Tier",
     gp_cost: "GP Cost: {gp}",
-    gp_warning: "This action will consume GP from your E-Hentai account. Please confirm to proceed.",
+    gp_warning:
+      "This action will consume GP from your E-Hentai account. Please confirm to proceed.",
     start_archive: "Confirm Archive",
     submitting: "Submitting...",
     dialog_delete_title: "Delete Local Archive?",
@@ -277,20 +296,29 @@ export default {
     dialog_clear_failed_title: "Clear Failed Record?",
     dialog_remove_orphan_title: "Remove Orphan Record?",
     dialog_clear_cache_title: "Clear Image Cache?",
-    dialog_clear_cache_desc: "This will delete locally cached image bytes; they will be re-fetched from E-Hentai on next access.",
-    delete_desc_failed_fav: "Temporary files and error logs will be cleared. The favorite catalog record will be retained and reset to \"Unarchived\".",
-    delete_desc_failed: "Temporary files will be cleared and this failed record will be removed.",
+    dialog_clear_cache_desc:
+      "This will delete locally cached image bytes; they will be re-fetched from E-Hentai on next access.",
+    delete_desc_failed_fav:
+      'Temporary files and error logs will be cleared. The favorite catalog record will be retained and reset to "Unarchived".',
+    delete_desc_failed:
+      "Temporary files will be cleared and this failed record will be removed.",
     delete_note_failed_fav: "Does not affect E-Hentai favorites",
     delete_note_failed: "This failed entry will be completely removed",
-    delete_desc_task_fav: "Download will be aborted and temporary files cleared. The favorite catalog record will be retained and reset to \"Unarchived\".",
-    delete_desc_task: "Download will be aborted, temporary files cleared, and this entry removed.",
+    delete_desc_task_fav:
+      'Download will be aborted and temporary files cleared. The favorite catalog record will be retained and reset to "Unarchived".',
+    delete_desc_task:
+      "Download will be aborted, temporary files cleared, and this entry removed.",
     delete_note_task_fav: "Does not affect E-Hentai favorites",
     delete_note_task: "This entry will be completely removed",
-    delete_desc_orphan: "This entry is not in favorites and has no local archive file. Removing it will clear it from the browser view.",
+    delete_desc_orphan:
+      "This entry is not in favorites and has no local archive file. Removing it will clear it from the browser view.",
     delete_note_orphan: "Only clears local metadata index",
-    delete_desc_fav: "Only the local archive file will be deleted. Since it is still in your favorites, the card remains as \"Unarchived\" and readable online.",
-    delete_desc_ready: "The local archive file and local record will be removed from the browser view. Your E-Hentai account is unaffected.",
-    delete_note_fav: "Local archive ZIP will be deleted, favorite card retained",
+    delete_desc_fav:
+      'Only the local archive file will be deleted. Since it is still in your favorites, the card remains as "Unarchived" and readable online.',
+    delete_desc_ready:
+      "The local archive file and local record will be removed from the browser view. Your E-Hentai account is unaffected.",
+    delete_note_fav:
+      "Local archive ZIP will be deleted, favorite card retained",
     delete_note_ready: "Only affects locally saved archives and records",
   },
   explore: {
@@ -335,12 +363,15 @@ export default {
     click_favcat_filter: " (Click to filter by this favorite folder)",
     favorite_add: "Add to Favorites",
     favorite_remove: "Favorited (Click to remove)",
+    favorite_select: "Select Favorite Category",
+    favorite_move: "Change Favorite Category",
     status_archived: "Archived",
     status_downloading: "Downloading archive...",
     status_failed: "Archive failed (Click to view)",
     status_unarchived: "Unarchived (Click to archive)",
     badge_archived: "Archived",
     badge_downloading: "Downloading",
+    badge_pending: "Queued",
     badge_failed: "Failed",
     badge_fav: "Favorite",
     badge_favorited: "Favorited",
@@ -351,8 +382,10 @@ export default {
     back_to_top: "Back to top",
     all_pages: "All Pages",
     all_reviews: "All Reviews",
-    loading_more_thumbs: "Loading more thumbnails... (Showing {shown} / {total} pages)",
-    loading_more_reviews: "Loading more reviews... (Showing {shown} / {total} reviews)",
+    loading_more_thumbs:
+      "Loading more thumbnails... (Showing {shown} / {total} pages)",
+    loading_more_reviews:
+      "Loading more reviews... (Showing {shown} / {total} reviews)",
     incognito_read: "Private Reading",
   },
   reader: {
@@ -371,7 +404,8 @@ export default {
     completed: "Completed",
     read_progress: "{percent}% read",
     incognito_badge: "Private",
-    incognito_notice: "Private reading mode active. Progress will not be recorded.",
+    incognito_notice:
+      "Private reading mode active. Progress will not be recorded.",
     previous_page: "Previous page",
     next_page: "Next page",
     single_page: "Single page",
@@ -391,24 +425,29 @@ export default {
     save: "Save Orchestration",
     reset_defaults: "Reset to Presets",
     reset_defaults_title: "Reset to Default Presets",
-    reset_defaults_desc: "Reset all pages and sections to the recommended default layout (including Watched, Favorites, Toplists, Archives, and Home). Current unsaved changes will be replaced. Click 'Save Orchestration' afterwards to persist.",
+    reset_defaults_desc:
+      "Reset all pages and sections to the recommended default layout (including Watched, Favorites, Toplists, Archives, and Home). Current unsaved changes will be replaced. Click 'Save Orchestration' afterwards to persist.",
     reset_defaults_confirm: "Confirm Reset",
     home_page_title: "Home",
     toplists_page_title: "Toplists",
     page_list_title: "Pages",
     add_page: "Add Page",
-    add_page_desc: "Create a new OPDS 2.0 page to link from home or other page navigation.",
+    add_page_desc:
+      "Create a new OPDS 2.0 page to link from home or other page navigation.",
     page_id_label: "Page Slug (ID)",
     page_id_placeholder: "e.g. doujin, toplist",
     page_title_label: "Page Name",
     page_title_placeholder: "e.g. Doujinshi Area",
     page_mode_label: "Initial Layout Mode",
     page_id_exists: "This page slug already exists",
-    page_id_invalid: "Page slug must contain only letters, numbers, underscores, and dashes",
+    page_id_invalid:
+      "Page slug must contain only letters, numbers, underscores, and dashes",
     delete_page: "Delete Page",
-    delete_page_title: "Delete page \"{title}\"",
-    delete_page_desc: "Are you sure you want to delete this page? Links pointing to it from other page navigations will become invalid.",
-    home_cannot_delete: "Home page is the OPDS root entry and cannot be deleted",
+    delete_page_title: 'Delete page "{title}"',
+    delete_page_desc:
+      "Are you sure you want to delete this page? Links pointing to it from other page navigations will become invalid.",
+    home_cannot_delete:
+      "Home page is the OPDS root entry and cannot be deleted",
     target_page: "Target Page",
     select_target_page: "Select target page",
     target_page_hint: "Navigating to this item will jump to this page.",
@@ -417,9 +456,11 @@ export default {
     root_page_badge: "Root",
     readonly_title: "Page Layout (Read-Only)",
     readonly_desc: "Editor API unavailable · {path}",
-    readonly_recovery_hint: "Currently in read-only view. Reset to defaults to enter visual editor; saving will write the new configuration.",
+    readonly_recovery_hint:
+      "Currently in read-only view. Reset to defaults to enter visual editor; saving will write the new configuration.",
     error_title: "Failed to Read Layout",
-    error_recovery_hint: "Failed to read configuration. Reset to defaults to rebuild layout; saving will overwrite and back up corrupted file.",
+    error_recovery_hint:
+      "Failed to read configuration. Reset to defaults to rebuild layout; saving will overwrite and back up corrupted file.",
     reset_and_recover: "Reset to Defaults & Resume Editing",
     repair_title: "Layout Repair Required",
     repair_desc: "{error} · Original file will be backed up upon saving.",
@@ -427,21 +468,27 @@ export default {
     mode_publications: "Publication Mode",
     mode_sections: "Sections Mode",
     custom_search_title: "Custom Search",
-    custom_search_desc: "Customize search and publication filter capsules. Shared across home, custom pages, and client OpenSearch with categories, ratings, and extra keywords.",
+    custom_search_desc:
+      "Customize search and publication filter capsules. Shared across home, custom pages, and client OpenSearch with categories, ratings, and extra keywords.",
     custom_search_capsules: "Search Filter Capsules",
     add_search_facet: "Add Filter Capsule",
     empty_search_facets_title: "No search filter capsules configured",
-    empty_search_facets_desc: "Click 'Add Filter Capsule' above or reset to defaults to restore the 10 categories.",
-    page_search_facets_hint: "This publication stream uses global 'Custom Search' capsules. Manage them in the 'Custom Search' tab on the left.",
+    empty_search_facets_desc:
+      "Click 'Add Filter Capsule' above or reset to defaults to restore the 10 categories.",
+    page_search_facets_hint:
+      "This publication stream uses global 'Custom Search' capsules. Manage them in the 'Custom Search' tab on the left.",
     goto_custom_search: "Go to Custom Search",
     global_nav_title: "Global Navigation",
     global_nav_desc: "Unified top bar across all pages and loading skeletons",
-    global_nav_workbench_desc: "Globally scheduled navigation capsules. Pinned at the top of all OPDS catalog views and loading skeletons. Supports page links, presets, and search queries.",
+    global_nav_workbench_desc:
+      "Globally scheduled navigation capsules. Pinned at the top of all OPDS catalog views and loading skeletons. Supports page links, presets, and search queries.",
     add_global_nav: "Add Navigation Capsule",
     empty_global_nav_title: "No global navigation capsules configured",
-    empty_global_nav_desc: "Click 'Add Navigation Capsule' above to create pinned shortcut pills across all pages.",
+    empty_global_nav_desc:
+      "Click 'Add Navigation Capsule' above to create pinned shortcut pills across all pages.",
     nav_title: "Top Navigation",
-    nav_desc: "Pinned to the top of the OPDS catalog for quick access across features.",
+    nav_desc:
+      "Pinned to the top of the OPDS catalog for quick access across features.",
     add_nav: "Add Navigation",
     add_facet: "Add Category Filter",
     add_section: "Add Group Section",
@@ -465,9 +512,12 @@ export default {
     default_items: "Default 10 items",
     n_items: "{count} items",
     discard_changes: "Discard Changes",
-    replace_groups_warning: "Saving groups layout will replace current publications and facets on the server. Draft is kept on this page.",
-    replace_pubs_warning: "Saving publication layout will replace current group sections on the server. Draft is kept on this page.",
-    facet_unsupported_warning: "Current publication source does not support facets. Please remove facets or switch source to search, latest, toplist, or favorites.",
+    replace_groups_warning:
+      "Saving groups layout will replace current publications and facets on the server. Draft is kept on this page.",
+    replace_pubs_warning:
+      "Saving publication layout will replace current group sections on the server. Draft is kept on this page.",
+    facet_unsupported_warning:
+      "Current publication source does not support facets. Please remove facets or switch source to search, latest, toplist, or favorites.",
     reorder_up: "Move Up",
     reorder_down: "Move Down",
     delete: "Delete",
@@ -484,13 +534,16 @@ export default {
     custom_preset: "{query} (Custom Preset)",
     search_placeholder: "e.g. language:english",
     empty_nav_title: "No top navigation configured",
-    empty_nav_desc: "Click \"Add Navigation\" above to add shortcuts pinned at the top of your catalog.",
+    empty_nav_desc:
+      'Click "Add Navigation" above to add shortcuts pinned at the top of your catalog.',
     content_layout: "Content Layout",
-    content_layout_desc: "Choose how the home content is structured: publication stream or grouped sections.",
+    content_layout_desc:
+      "Choose how the home content is structured: publication stream or grouped sections.",
     mode_publications_btn: "Publication Mode",
     mode_groups_btn: "Sections Mode",
     groups_list: "Group Sections List",
-    groups_list_desc: "Each group renders as a horizontal carousel or subcategory",
+    groups_list_desc:
+      "Each group renders as a horizontal carousel or subcategory",
     add_pub_group: "Publication Group",
     add_nav_group: "Navigation Group",
     unnamed_nav_group: "Unnamed Navigation Group",
@@ -510,7 +563,8 @@ export default {
     preview_count: "Preview Count",
     preview_count_placeholder: "Default 10",
     empty_groups_title: "No group sections added yet",
-    empty_groups_desc: "Sections mode displays each group as a carousel or subcategory in OPDS clients.",
+    empty_groups_desc:
+      "Sections mode displays each group as a carousel or subcategory in OPDS clients.",
     top_publication: "Top-Level Publication",
     configured: "Configured",
     pure_nav_mode: "Navigation-Only Mode",
@@ -520,23 +574,28 @@ export default {
     pub_title_placeholder: "Title (e.g. Latest Galleries)",
     preview_count_pub_placeholder: "Default 10; 0 disables preview",
     pure_nav_title: "Navigation-Only Home",
-    pure_nav_desc: "No top publication configured. Home only serves the navigation list.",
+    pure_nav_desc:
+      "No top publication configured. Home only serves the navigation list.",
     add_top_pub_btn: "Add Top-Level Publication",
     facets_title: "Facet Sets (Facets)",
     facet_sets_title: "Facet Sets Library",
     facet_sets_desc: "Reusable gallery filter dimensions",
-    facet_sets_workbench_desc: "Configure global reusable facet sets (e.g. language filters, ratings). Once saved, you can reference them in any publication page without repeating setup.",
-    facets_follow_pub: "· Filters are overlaid on top of the publication search",
+    facet_sets_workbench_desc:
+      "Configure global reusable facet sets (e.g. language filters, ratings). Once saved, you can reference them in any publication page without repeating setup.",
+    facets_follow_pub:
+      "· Filters are overlaid on top of the publication search",
     facets_require_pub: "· Enable facets after adding a top-level publication",
     add_facet_set: "New Facet Set",
     facet_set_id: "Set Identifier (ID)",
     facet_set_id_placeholder: "Unique identifier (e.g. language_filter)",
     referenced_facets_title: "Referenced Facet Sets",
-    referenced_facets_desc: "Active filter dimensions referenced from the global Facet Sets Library",
+    referenced_facets_desc:
+      "Active filter dimensions referenced from the global Facet Sets Library",
     add_page_facet_ref: "Reference Facet Set",
     select_facet_set_to_add: "Select a facet set to reference...",
     all_facet_sets_referenced: "All available facet sets are referenced",
-    empty_page_facets_desc: "No custom facet sets referenced. The page will default to standard category navigation. Click above to reference a set from the library.",
+    empty_page_facets_desc:
+      "No custom facet sets referenced. The page will default to standard category navigation. Click above to reference a set from the library.",
     no_facet_sets_in_library: "No facet sets configured in library yet",
     go_to_facet_sets: "Go to Facet Sets Library",
     edit_in_library: "Edit in Library",
@@ -557,12 +616,16 @@ export default {
     facet_opt_sfu: "Bypass uploader filter",
     facet_opt_sft: "Bypass tags filter",
     facet_query_label: "Appended Keywords",
-    facet_query_placeholder: "Optional tag/keyword to append (e.g. language:chinese)",
+    facet_query_placeholder:
+      "Optional tag/keyword to append (e.g. language:chinese)",
     facet_select_all: "Select All",
     facet_clear_all: "Clear All",
-    empty_facet_set_desc: "No items in this set yet. Click \"Add Filter Item\" to create one.",
-    empty_facets_desc: "No facet sets configured. Click \"Add Facet Set\" above to create category/rating filters.",
-    choose_mode_hint: "Please select \"Publication Mode\" or \"Sections Mode\" above to continue.",
+    empty_facet_set_desc:
+      'No items in this set yet. Click "Add Filter Item" to create one.',
+    empty_facets_desc:
+      'No facet sets configured. Click "Add Facet Set" above to create category/rating filters.',
+    choose_mode_hint:
+      'Please select "Publication Mode" or "Sections Mode" above to continue.',
     pub_draft: "Publication Draft",
     no_top_pub: "No top-level publication",
     n_facets: "{count} facets",
@@ -579,16 +642,22 @@ export default {
     desc: "Environment locked settings must be modified in the deployment environment.",
     badge_pending: "Some changes take effect after restart",
     readonly_title: "Current Settings (Read-only)",
-    saved_pending_restart: "Saved changes take effect after restarting the service",
+    saved_pending_restart:
+      "Saved changes take effect after restarting the service",
     pending_restart: "Restart Pending",
     source_env: "Source: Environment variable",
     source_file: "Source: Config file",
     source_default: "Source: Default",
-    hint_archive_update_interval_days: "0 disables periodic checks; only written to settings.toml.",
-    hint_archive_auto_update: "When enabled, automatically purchases new archive versions which may consume GP; only written to settings.toml.",
-    hint_favorites_sync_interval_seconds: "Default 3600s; set to 0 only disables periodic scan, favorite actions and manual scan remain active.",
-    hint_favorites_sync_categories: "Comma-separated favorite IDs (0-9); empty for all, -ID to exclude. Only limits auto-archive scope, not sync scan.",
-    hint_favorites_sync_archive: "When enabled, automatically purchases archives for newly discovered favorites (may consume GP); first scan establishes baseline only. Takes effect after restart.",
+    hint_archive_update_interval_days:
+      "0 disables periodic checks; only written to settings.toml.",
+    hint_archive_auto_update:
+      "When enabled, automatically purchases new archive versions which may consume GP; only written to settings.toml.",
+    hint_favorites_sync_interval_seconds:
+      "Default 3600s; set to 0 only disables periodic scan, favorite actions and manual scan remain active.",
+    hint_favorites_sync_categories:
+      "Comma-separated favorite IDs (0-9); empty for all, -ID to exclude. Only limits auto-archive scope, not sync scan.",
+    hint_favorites_sync_archive:
+      "When enabled, automatically purchases archives for newly discovered favorites (may consume GP); first scan establishes baseline only. Takes effect after restart.",
     select_site: "Select site",
     select_pse_page_base: "Select page base",
     pse_page_base_1: "1-based (default)",
@@ -630,7 +699,8 @@ export default {
     label_favorites_sync_archive: "Auto Archive New Favorites",
     label_archive_update_interval_days: "Archive Version Check Interval (days)",
     label_archive_auto_update: "Auto Update Archives",
-    locked_reason_ipb: "IPB_MEMBER_ID / IPB_PASS_HASH environment variables control this item.",
+    locked_reason_ipb:
+      "IPB_MEMBER_ID / IPB_PASS_HASH environment variables control this item.",
     locked_reason_env: "{env} environment variable controls this item.",
     groups: {
       site: "Site & Output",
@@ -658,7 +728,8 @@ export default {
       archive_auto_update: "Auto Update Archives",
     },
     locked_reason: "Controlled by {env} environment variable.",
-    credentials_locked_reason: "Controlled by IPB_MEMBER_ID / IPB_PASS_HASH environment variables.",
+    credentials_locked_reason:
+      "Controlled by IPB_MEMBER_ID / IPB_PASS_HASH environment variables.",
   },
   auth: {
     title: "Login to PandaOPDS",
@@ -678,30 +749,39 @@ export default {
     archive_skipped: "Gallery is already archived, duplicate task skipped.",
     meta_refreshed: "Gallery metadata refreshed",
     fav_removed: "Removed from favorites.",
-    fav_removed_unarchived: "Removed from favorites and cleared local catalog entry.",
+    fav_removed_unarchived:
+      "Removed from favorites and cleared local catalog entry.",
     fav_removed_deleted: "Removed from favorites and deleted local archive.",
     archive_deleted: "Local archive and catalog entry deleted",
-    archive_deleted_catalog_kept: "Local archive deleted (favorite kept as unarchived)",
+    archive_deleted_catalog_kept:
+      "Local archive deleted (favorite kept as unarchived)",
     failed_cleared: "Failed record cleared",
     failed_cleared_catalog_kept: "Failed state cleared and reset to unarchived",
     task_cancelled: "Archive task cancelled and removed",
-    task_cancelled_catalog_kept: "Archive task cancelled and reset to unarchived",
+    task_cancelled_catalog_kept:
+      "Archive task cancelled and reset to unarchived",
     orphan_removed: "Orphan record removed",
     cache_cleared: "Cleared {count} cache entries",
     fav_updated: "Favorite category updated",
     sync_skipped: "Favorites sync skipped",
-    sync_complete: "Favorites sync complete: scanned {scanned} pages, added {newCount} items, cataloged {cataloged} items",
+    sync_complete:
+      "Favorites sync complete: scanned {scanned} pages, added {newCount} items, cataloged {cataloged} items",
     quote_expired: "Quotation expired because input changed. Please re-query.",
     no_quality_option: "No available quality tier",
-    invalid_input: "Unable to parse gid/token. Please enter gallery URL, archiver URL, or 123456/abcdef.",
+    invalid_input:
+      "Unable to parse gid/token. Please enter gallery URL, archiver URL, or 123456/abcdef.",
     invalid_gp: "Invalid GP amount in quote, please re-query.",
-    missing_secrets: "IPB Member ID and IPB Pass Hash must be provided together, or both empty to clear.",
+    missing_secrets:
+      "IPB Member ID and IPB Pass Hash must be provided together, or both empty to clear.",
     select_home_mode_first: "Please select a home layout mode first.",
-    unsupported_facet_source: "Unsupported facet source. Please remove facets or change publication source to search, latest, toplist, or favorites.",
-    config_readonly_error: "Config editor unavailable, displaying read-only config",
+    unsupported_facet_source:
+      "Unsupported facet source. Please remove facets or change publication source to search, latest, toplist, or favorites.",
+    config_readonly_error:
+      "Config editor unavailable, displaying read-only config",
     home_readonly_error: "Home editor unavailable, displaying read-only layout",
     select_quality_tier: "Please select an available quality tier.",
-    quote_expired_or_invalid: "Quote expired or quality tier invalid, please re-query.",
+    quote_expired_or_invalid:
+      "Quote expired or quality tier invalid, please re-query.",
     fav_remove_failed: "Failed to remove favorite",
     fav_op_failed: "Favorite operation failed",
     gallery_list: "Gallery List",

@@ -975,7 +975,9 @@ onBeforeUnmount(() => {
                 v-else-if="webtoonStates[idx]?.status === 'error'"
                 class="flex flex-col items-center gap-2 py-12 text-xs text-muted-foreground"
               >
-                <span>{{ t("reader.page_load_failed", { page: idx + 1 }) }}</span>
+                <span>{{
+                  t("reader.page_load_failed", { page: idx + 1 })
+                }}</span>
                 <Button
                   variant="outline"
                   size="sm"

@@ -1,5 +1,14 @@
 import { reactive, toRefs } from "vue";
-import { canUseFacets, chooseInitialHomeMode, createDefaultGlobalNavigation, createDefaultHomePages, createDefaultSearchFacets, normalizeMode, serializeHomeLayout, splitHomeSections } from "./home-layout.js";
+import {
+  canUseFacets,
+  chooseInitialHomeMode,
+  createDefaultGlobalNavigation,
+  createDefaultHomePages,
+  createDefaultSearchFacets,
+  normalizeMode,
+  serializeHomeLayout,
+  splitHomeSections,
+} from "./home-layout.js";
 import { t } from "./i18n.js";
 import {
   READER_PAGE_KEY_PREFIX,
@@ -31,6 +40,7 @@ const state = reactive({
   archiveScanDismissedKey:
     localStorage.getItem("pandaopds_dismissed_archive_scan") || "",
   favcats: [],
+  favoriteOverrides: {},
   archiveInput: "",
   quote: null,
   quoteFor: "",
@@ -211,7 +221,8 @@ async function getProgression(gid, token) {
 }
 
 async function putProgression(gid, token, { pageIndex, pageCount }) {
-  if (!gid || !token || !Number.isFinite(pageCount) || pageCount <= 0) return null;
+  if (!gid || !token || !Number.isFinite(pageCount) || pageCount <= 0)
+    return null;
   const payload = buildProgressionPayload(pageIndex, pageCount);
   const key = `${gid}:${token}`;
   try {
@@ -231,7 +242,13 @@ async function putProgression(gid, token, { pageIndex, pageCount }) {
   return null;
 }
 
-function updateLocalProgress(gid, token, pageIndex, pageCount, modified = new Date().toISOString()) {
+function updateLocalProgress(
+  gid,
+  token,
+  pageIndex,
+  pageCount,
+  modified = new Date().toISOString(),
+) {
   if (!gid || !token || !Number.isFinite(pageCount) || pageCount <= 0) return;
   const key = `${gid}:${token}`;
   const clamped = Math.min(Math.max(0, pageIndex), Math.max(0, pageCount - 1));
@@ -246,7 +263,9 @@ function getGalleryProgress(gid, token, pageCount) {
   let localRecord = null;
   if (typeof window !== "undefined" && window.localStorage) {
     try {
-      localRecord = parseSavedProgress(localStorage.getItem(`${READER_PAGE_KEY_PREFIX}${key}`));
+      localRecord = parseSavedProgress(
+        localStorage.getItem(`${READER_PAGE_KEY_PREFIX}${key}`),
+      );
     } catch {}
   }
   const remoteDoc = progressionCache.get(key);
@@ -329,8 +348,7 @@ async function saveConfig() {
     if (secrets.some((k) => state.confDirty[k])) {
       const a = state.form.ipb_member_id || "",
         b = state.form.ipb_pass_hash || "";
-      if (Boolean(a) !== Boolean(b))
-        throw Error(t("notice.missing_secrets"));
+      if (Boolean(a) !== Boolean(b)) throw Error(t("notice.missing_secrets"));
       patch.ipb_member_id = a || null;
       patch.ipb_pass_hash = b || null;
     }
@@ -349,47 +367,69 @@ async function loadHome(options = {}) {
     state.home = r.data;
     state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     if (!options.preserveDrafts) {
-      state.navigation = (Array.isArray(r.data.navigation) ? r.data.navigation : []).map((x) => {
-        if (x.type === "preset" && (x.query === "toplists" || x.query === "home")) {
+      state.navigation = (
+        Array.isArray(r.data.navigation) ? r.data.navigation : []
+      ).map((x) => {
+        if (
+          x.type === "preset" &&
+          (x.query === "toplists" || x.query === "home")
+        ) {
           return { ...x, type: "page", query: x.query };
         }
         return x;
       });
-      if (Array.isArray(r.data.search_facets) && r.data.search_facets.length > 0) {
+      if (
+        Array.isArray(r.data.search_facets) &&
+        r.data.search_facets.length > 0
+      ) {
         state.searchFacets = structuredClone(r.data.search_facets);
-      } else if (Array.isArray(r.data.facet_sets) && r.data.facet_sets.length > 0 && Array.isArray(r.data.facet_sets[0].items)) {
+      } else if (
+        Array.isArray(r.data.facet_sets) &&
+        r.data.facet_sets.length > 0 &&
+        Array.isArray(r.data.facet_sets[0].items)
+      ) {
         state.searchFacets = structuredClone(r.data.facet_sets[0].items);
       } else {
         state.searchFacets = createDefaultSearchFacets();
       }
-      state.facetSets = Array.isArray(r.data.facet_sets) ? structuredClone(r.data.facet_sets) : [];
-      const rawPages = (Array.isArray(r.data.pages) && r.data.pages.length > 0)
-        ? r.data.pages.filter((p) => !BUILTIN_PAGE_IDS.has(p.id))
+      state.facetSets = Array.isArray(r.data.facet_sets)
+        ? structuredClone(r.data.facet_sets)
         : [];
+      const rawPages =
+        Array.isArray(r.data.pages) && r.data.pages.length > 0
+          ? r.data.pages.filter((p) => !BUILTIN_PAGE_IDS.has(p.id))
+          : [];
       if (rawPages.length > 0) {
         state.pages = rawPages.map((p) => {
           const secs = p.sections || [];
-          const initialMode = p.mode ? normalizeMode(p.mode) : (chooseInitialHomeMode(secs) || "publications");
+          const initialMode = p.mode
+            ? normalizeMode(p.mode)
+            : chooseInitialHomeMode(secs) || "publications";
           return {
             id: p.id,
-            title: p.title || (p.id === "home" ? t("home_editor.home_page_title") : p.id),
+            title:
+              p.title ||
+              (p.id === "home" ? t("home_editor.home_page_title") : p.id),
             mode: initialMode,
             layout: splitHomeSections(secs),
           };
         });
       } else {
         const sections = r.data.sections || [];
-        state.pages = [{
-          id: "home",
-          title: t("home_editor.home_page_title"),
-          mode: chooseInitialHomeMode(sections) || "publications",
-          layout: splitHomeSections(sections),
-        }];
+        state.pages = [
+          {
+            id: "home",
+            title: t("home_editor.home_page_title"),
+            mode: chooseInitialHomeMode(sections) || "publications",
+            layout: splitHomeSections(sections),
+          },
+        ];
       }
       if (!state.pages.some((p) => p.id === state.activePageId)) {
         state.activePageId = "home";
       }
-      const active = state.pages.find((p) => p.id === state.activePageId) || state.pages[0];
+      const active =
+        state.pages.find((p) => p.id === state.activePageId) || state.pages[0];
       state.layout = active.layout;
       state.homeMode = normalizeMode(active.mode);
       state.homeModeRequired = !active.mode;
@@ -408,7 +448,8 @@ async function loadHome(options = {}) {
 async function saveHome() {
   const payloadPages = state.pages.map((p) => ({
     id: p.id,
-    title: p.title || (p.id === "home" ? t("home_editor.home_page_title") : p.id),
+    title:
+      p.title || (p.id === "home" ? t("home_editor.home_page_title") : p.id),
     mode: normalizeMode(p.mode),
     sections: serializeHomeLayout(p.layout, p.mode),
   }));
@@ -455,7 +496,11 @@ async function saveHome() {
 }
 function selectActivePage(pageId) {
   state.activePageId = pageId;
-  if (pageId === "__global_nav__" || pageId === "__search_facets__" || pageId === "__facet_sets__") {
+  if (
+    pageId === "__global_nav__" ||
+    pageId === "__search_facets__" ||
+    pageId === "__facet_sets__"
+  ) {
     return;
   }
   const p = state.pages.find((x) => x.id === pageId);
@@ -464,7 +509,12 @@ function selectActivePage(pageId) {
   state.homeMode = normalizeMode(p.mode);
   state.homeModeRequired = !p.mode;
 }
-const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "archives", "history"]);
+const BUILTIN_PAGE_IDS = new Set([
+  "watched",
+  "favorites",
+  "archives",
+  "history",
+]);
 
 function addPage({ id, title, mode = "publications" }) {
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return false;
@@ -477,9 +527,17 @@ function addPage({ id, title, mode = "publications" }) {
     mode: normalized,
     layout: {
       navigation: [],
-      publication: mode === "publications"
-        ? { kind: "publication", group: false, title: t("home_editor.latest"), type: "preset", query: "latest", count: 10 }
-        : null,
+      publication:
+        mode === "publications"
+          ? {
+              kind: "publication",
+              group: false,
+              title: t("home_editor.latest"),
+              type: "preset",
+              query: "latest",
+              count: 10,
+            }
+          : null,
       facets: [],
       groups: [],
     },
@@ -569,7 +627,11 @@ function moveGlobalNavigation(index, delta) {
 function selectHomeMode(mode) {
   const normalized = normalizeMode(mode);
   const active = state.pages.find((p) => p.id === state.activePageId);
-  if (state.homeMode === normalized && (!active || active.mode === normalized) && !state.homeModeRequired) {
+  if (
+    state.homeMode === normalized &&
+    (!active || active.mode === normalized) &&
+    !state.homeModeRequired
+  ) {
     return;
   }
   state.homeMode = normalized;
@@ -615,7 +677,14 @@ function moveItem(collection, i, delta) {
 }
 function addPublication() {
   if (state.layout.publication) return;
-  state.layout.publication = { kind: "publication", group: false, title: t("home_editor.latest"), type: "preset", query: "latest", count: 10 };
+  state.layout.publication = {
+    kind: "publication",
+    group: false,
+    title: t("home_editor.latest"),
+    type: "preset",
+    query: "latest",
+    count: 10,
+  };
   state.homeDirty = true;
 }
 function removePublication() {
@@ -629,7 +698,9 @@ function addSearchFacet(item = {}) {
     categories: Array.isArray(item.categories) ? item.categories : [],
     rating: Number(item.rating) || 0,
     expunged: Boolean(item.expunged),
-    disable_filters: Array.isArray(item.disable_filters) ? item.disable_filters : [],
+    disable_filters: Array.isArray(item.disable_filters)
+      ? item.disable_filters
+      : [],
     query: item.query || "",
   });
   state.homeDirty = true;
@@ -678,7 +749,10 @@ function toggleSearchFacetFilter(target, filterName) {
 
 function addFacetSet(title = "", id = "") {
   if (!Array.isArray(state.facetSets)) state.facetSets = [];
-  const generatedId = (id || `set_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`)
+  const generatedId = (
+    id ||
+    `set_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+  )
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, "-");
@@ -706,7 +780,9 @@ function removeFacetSet(setIndex) {
   if (removed && removed.id) {
     for (const p of state.pages) {
       if (p.layout && Array.isArray(p.layout.facets)) {
-        p.layout.facets = p.layout.facets.filter((f) => f.facet_set !== removed.id);
+        p.layout.facets = p.layout.facets.filter(
+          (f) => f.facet_set !== removed.id,
+        );
       }
     }
   }
@@ -783,7 +859,9 @@ function movePageFacetReference(idx, delta) {
 
 function toggleFacetCategory(item, catName) {
   if (!Array.isArray(item.categories)) item.categories = [];
-  const idx = item.categories.findIndex((c) => c.toLowerCase() === catName.toLowerCase());
+  const idx = item.categories.findIndex(
+    (c) => c.toLowerCase() === catName.toLowerCase(),
+  );
   if (idx >= 0) {
     item.categories.splice(idx, 1);
   } else {
@@ -808,16 +886,23 @@ function addFacet() {
   addFacetSet();
 }
 function addGroupSection(kind) {
-  state.layout.groups.push(kind === "navigation"
-    ? {
-        kind: "navigation",
-        group: true,
-        title: t("home_editor.nav_group_default_title"),
-        items: [
-          { title: "", type: "preset", query: "latest" },
-        ],
-      }
-    : { kind: "publication", group: true, title: t("home_editor.popular"), type: "preset", query: "popular", count: 10 });
+  state.layout.groups.push(
+    kind === "navigation"
+      ? {
+          kind: "navigation",
+          group: true,
+          title: t("home_editor.nav_group_default_title"),
+          items: [{ title: "", type: "preset", query: "latest" }],
+        }
+      : {
+          kind: "publication",
+          group: true,
+          title: t("home_editor.popular"),
+          type: "preset",
+          query: "popular",
+          count: 10,
+        },
+  );
   state.homeDirty = true;
 }
 function addGroupNavigationItem(groupIndex, presetOrQuery = "latest") {
@@ -866,7 +951,12 @@ function dismissArchiveScan(scan = state.archiveScan) {
     state.archiveScanDismissedKey = k;
     localStorage.setItem(DISMISSED_SCAN_KEY, k);
   } else {
-    state.archiveScan = { status: "idle", imported: 0, skipped: 0, conflicts: 0 };
+    state.archiveScan = {
+      status: "idle",
+      imported: 0,
+      skipped: 0,
+      conflicts: 0,
+    };
   }
 }
 
@@ -882,10 +972,16 @@ async function loadArchiveScanStatus() {
   try {
     const wasRunning = state.archiveScan.status === "running";
     state.archiveScan = (await api("/api/archive/import/scan")).data;
-    if (wasRunning && state.archiveScan.status !== "running") await loadArchives();
+    if (wasRunning && state.archiveScan.status !== "running")
+      await loadArchives();
     scheduleArchiveScanAutoDismiss(state.archiveScan);
   } catch (e) {
-    if (e.status !== 401) state.archiveScan = { ...state.archiveScan, status: "error", error: e.message };
+    if (e.status !== 401)
+      state.archiveScan = {
+        ...state.archiveScan,
+        status: "error",
+        error: e.message,
+      };
   }
 }
 async function startArchiveScan() {
@@ -894,10 +990,17 @@ async function startArchiveScan() {
   state.archiveScanDismissedKey = "";
   localStorage.removeItem(DISMISSED_SCAN_KEY);
   try {
-    state.archiveScan = (await api("/api/archive/import/scan", { method: "POST" })).data;
+    state.archiveScan = (
+      await api("/api/archive/import/scan", { method: "POST" })
+    ).data;
     scheduleArchiveScanAutoDismiss(state.archiveScan);
   } catch (e) {
-    if (e.status !== 401) state.archiveScan = { ...state.archiveScan, status: "error", error: e.message };
+    if (e.status !== 401)
+      state.archiveScan = {
+        ...state.archiveScan,
+        status: "error",
+        error: e.message,
+      };
   }
 }
 function parseInput() {
@@ -926,8 +1029,12 @@ async function getQuote(action = "start", target = null) {
     ).data;
     if (state.archiveInput.trim() !== input)
       throw Error(t("notice.quote_expired"));
-    const option = (result.options || []).find((item) => item.available &&
-      (action !== "update" || String(item.or) === String(target.root.quality)));
+    const option = (result.options || []).find(
+      (item) =>
+        item.available &&
+        (action !== "update" ||
+          String(item.or) === String(target.root.quality)),
+    );
     if (!option) throw Error(result.error || t("notice.no_quality_option"));
     if (action === "update") {
       result.options = result.options.filter(
@@ -966,13 +1073,53 @@ function openArchiveConfirm() {
     return (state.error = t("notice.select_quality_tier"));
   state.confirmArchive = true;
 }
+function hasActiveArchives() {
+  const entries = state.archives || [];
+  return entries.some((a) =>
+    ["pending", "submitting", "staging", "downloading", "zipping"].includes(
+      a?.status,
+    ),
+  );
+}
+
+function setFavoriteOverride(gid, token, isFavorited, favcat = null) {
+  if (!gid || !token) return;
+  const key = `${gid}:${token}`;
+  const overrides = { ...(state.favoriteOverrides || {}) };
+  if (isFavorited) {
+    const catId = favcat != null ? Number(favcat) : 0;
+    const found = (state.favcats || []).find((c) => Number(c.id) === catId);
+    overrides[key] = {
+      isFavorited: true,
+      favcat: catId,
+      favcatName: found?.name || t("archive.favcat_default", { id: catId }),
+    };
+  } else {
+    overrides[key] = {
+      isFavorited: false,
+      favcat: null,
+      favcatName: "",
+    };
+  }
+  state.favoriteOverrides = overrides;
+}
+
 async function startArchive() {
   const update = state.quoteAction === "update";
-  const p = update ? state.quoteTarget?.target : state.quoteTarget || parseInput();
+  const p = update
+    ? state.quoteTarget?.target
+    : state.quoteTarget || parseInput();
   const option = state.quote?.options?.find(
     (o) => o.available && String(o.or) === String(state.selectedQuality),
   );
-  if (!p || !option || state.quoteFor !== state.archiveInput.trim() || (update && (!state.quoteTarget?.root || String(option.or) !== String(state.quoteTarget.root.quality))))
+  if (
+    !p ||
+    !option ||
+    state.quoteFor !== state.archiveInput.trim() ||
+    (update &&
+      (!state.quoteTarget?.root ||
+        String(option.or) !== String(state.quoteTarget.root.quality)))
+  )
     return (state.error = t("notice.quote_expired_or_invalid"));
   state.confirmArchive = false;
   const quality = state.selectedQuality;
@@ -995,7 +1142,11 @@ async function startArchive() {
       }
       await api("/api/archive/" + root.gid + "/" + root.token + "/update", {
         method: "POST",
-        body: JSON.stringify({ gid: target.gid, token: target.token, max_gp: maxGP }),
+        body: JSON.stringify({
+          gid: target.gid,
+          token: target.token,
+          max_gp: maxGP,
+        }),
       });
       state.notice = t("notice.update_submitted");
     } else {
@@ -1012,6 +1163,28 @@ async function startArchive() {
       state.notice = result.data.skipped
         ? t("notice.archive_skipped")
         : t("notice.archive_submitted");
+      if (result.data && !result.data.skipped) {
+        const itemGid = Number(p.gid);
+        const itemToken = String(p.token);
+        const list = [...(state.archives || [])];
+        const idx = list.findIndex(
+          (a) =>
+            (a.gid === itemGid || a.active_gid === itemGid) &&
+            (a.token === itemToken || a.active_token === itemToken),
+        );
+        if (idx >= 0) {
+          list[idx] = { ...list[idx], status: "pending" };
+        } else {
+          list.unshift({
+            gid: itemGid,
+            token: itemToken,
+            title: p.title || "",
+            status: "pending",
+            quality,
+          });
+        }
+        state.archives = list;
+      }
     }
     state.quote = null;
     state.quoteFor = "";
@@ -1050,7 +1223,9 @@ async function confirmFavoriteRemoval() {
     });
     if (result.data.ok !== true)
       throw Error(
-        result.data.detail || result.data.items?.[0]?.error || t("notice.fav_remove_failed"),
+        result.data.detail ||
+          result.data.items?.[0]?.error ||
+          t("notice.fav_remove_failed"),
       );
     if (state.deleteAfterFavoriteRemove && target.status !== "unarchived") {
       await api("/api/archive/" + target.gid + "/" + target.token, {
@@ -1064,6 +1239,7 @@ async function confirmFavoriteRemoval() {
           ? t("notice.fav_removed_deleted")
           : t("notice.fav_removed");
     state.deleteAfterFavoriteRemove = false;
+    setFavoriteOverride(target.gid, target.token, false);
     await loadArchives();
   });
 }
@@ -1083,7 +1259,9 @@ async function deleteArchive() {
       state.notice = res.retained_catalog
         ? t("notice.failed_cleared_catalog_kept")
         : t("notice.failed_cleared");
-    } else if (["pending", "downloading", "zipping", "submitting"].includes(a.status)) {
+    } else if (
+      ["pending", "downloading", "zipping", "submitting"].includes(a.status)
+    ) {
       state.notice = res.retained_catalog
         ? t("notice.task_cancelled_catalog_kept")
         : t("notice.task_cancelled");
@@ -1138,8 +1316,12 @@ async function favorite(a, action, favcat) {
       }),
     });
     if (r.data.ok === false)
-      throw Error(r.data.detail || r.data.items?.[0]?.error || t("notice.fav_op_failed"));
-    state.notice = action === "remove" ? t("notice.fav_removed") : t("notice.fav_updated");
+      throw Error(
+        r.data.detail || r.data.items?.[0]?.error || t("notice.fav_op_failed"),
+      );
+    state.notice =
+      action === "remove" ? t("notice.fav_removed") : t("notice.fav_updated");
+    setFavoriteOverride(a.gid, a.token, action !== "remove", favcat);
     await loadArchives();
   });
 }
@@ -1197,7 +1379,11 @@ function exitExploreSubRoute(popHistory = true) {
   } else {
     state.exploreSubRoute = null;
     if (typeof window !== "undefined") {
-      window.history.replaceState({ page: "explore", subRoute: null }, "", "#explore");
+      window.history.replaceState(
+        { page: "explore", subRoute: null },
+        "",
+        "#explore",
+      );
     }
   }
 }
@@ -1211,7 +1397,9 @@ function onPopState(e) {
         : "";
     const parts = rawHash.split("/");
     const rootPage = parts[0] || "dashboard";
-    if (["dashboard", "explore", "archive", "config", "home"].includes(rootPage)) {
+    if (
+      ["dashboard", "explore", "archive", "config", "home"].includes(rootPage)
+    ) {
       state.page = rootPage;
     }
     if (rootPage !== "explore" || !parts[1]) {
@@ -1315,7 +1503,9 @@ function init() {
     const rawHash = window.location.hash.replace(/^#\/?/, "");
     const parts = rawHash.split("/");
     const rootPage = parts[0];
-    if (["dashboard", "explore", "archive", "config", "home"].includes(rootPage)) {
+    if (
+      ["dashboard", "explore", "archive", "config", "home"].includes(rootPage)
+    ) {
       route(rootPage, false);
       if (rootPage === "explore" && window.history.state?.subRoute) {
         state.exploreSubRoute = window.history.state.subRoute;
@@ -1331,15 +1521,28 @@ function init() {
     window.addEventListener("popstate", onPopState);
   }
   timer = setInterval(() => {
-    if (state.authChecked && !state.authRequired && state.page === "dashboard") loadStatus();
+    if (state.authChecked && !state.authRequired && state.page === "dashboard")
+      loadStatus();
   }, 15000);
+  let archiveTicks = 0;
   archiveTimer = setInterval(() => {
-    if (state.authChecked && !state.authRequired && state.page === "archive") {
+    if (!state.authChecked || state.authRequired) return;
+    archiveTicks++;
+    const active = hasActiveArchives();
+    if (active) {
+      loadArchives();
+    } else if (state.page === "archive" && archiveTicks % 3 === 0) {
       loadArchives();
     }
-  }, 10000);
+  }, 3000);
   archiveScanTimer = setInterval(() => {
-    if (state.authChecked && !state.authRequired && state.page === "archive" && state.archiveScan.status === "running") loadArchiveScanStatus();
+    if (
+      state.authChecked &&
+      !state.authRequired &&
+      state.page === "archive" &&
+      state.archiveScan.status === "running"
+    )
+      loadArchiveScanStatus();
   }, 1000);
 }
 function destroy() {
@@ -1421,6 +1624,8 @@ export function useApp() {
     deleteArchive,
     clearCache,
     favorite,
+    setFavoriteOverride,
+    hasActiveArchives,
     requestFavoriteRemove,
     confirmFavoriteRemoval,
     syncFavorites,

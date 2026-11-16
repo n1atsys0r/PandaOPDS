@@ -137,7 +137,10 @@ export function resolveLatestProgress(localRecord, remoteDoc, pageCount) {
     pageCount > 1 ? pageIndex >= pageCount - 1 : pageIndex >= 0;
   const percent =
     pageCount > 1
-      ? Math.min(100, Math.max(0, Math.round((pageIndex / (pageCount - 1)) * 100)))
+      ? Math.min(
+          100,
+          Math.max(0, Math.round((pageIndex / (pageCount - 1)) * 100)),
+        )
       : 100;
 
   return {
@@ -180,4 +183,3 @@ export function shouldRecordProgress({
 
   return true;
 }
-

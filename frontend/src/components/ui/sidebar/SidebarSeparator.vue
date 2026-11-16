@@ -1,6 +1,6 @@
 <script setup>
 import { cn } from "cn";
-import { Separator } from '@/components/ui/separator';
+import { Separator } from "@/components/ui/separator";
 
 const props = defineProps({
   class: {
