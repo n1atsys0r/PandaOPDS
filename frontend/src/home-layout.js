@@ -1,17 +1,25 @@
 export function isKnownPreset(query) {
   if (!query) return false;
   return [
-    "latest", "popular", "watched", "favorites", "archives", "toplists",
+    "latest", "popular", "watched", "favorites", "archives", "history",
     "toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime",
   ].includes(query) || /^favorites:\d+$/.test(query);
 }
 
 export function splitHomeSections(sections = []) {
   return {
-    navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group).map((x) => ({
-      ...x,
-      type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : "preset")),
-    }))),
+    navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group).map((x) => {
+      let type = x.type;
+      if (!type) {
+        type = x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : (x.query === "toplists" ? "page" : "preset"));
+      } else if (type === "preset" && x.query === "toplists") {
+        type = "page";
+      }
+      return {
+        ...x,
+        type,
+      };
+    })),
     publication: structuredClone(sections.find((x) => x.kind === "publication" && !x.group) || null),
     facets: structuredClone(sections.filter((x) => x.kind === "facets" && !x.group).map((f) => ({
       facet_set: f.facet_set || "",
@@ -35,10 +43,18 @@ export function splitHomeSections(sections = []) {
             query: x.query || "latest",
           }];
         }
-        items = items.map((it) => ({
-          ...it,
-          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : "preset")),
-        }));
+        items = items.map((it) => {
+          let type = it.type;
+          if (!type) {
+            type = it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : (it.query === "toplists" ? "page" : "preset"));
+          } else if (type === "preset" && it.query === "toplists") {
+            type = "page";
+          }
+          return {
+            ...it,
+            type,
+          };
+        });
         return {
           ...x,
           items,
@@ -68,6 +84,7 @@ export function canUseFacets(source) {
   return source.query === "latest" ||
     source.query === "watched" ||
     source.query === "archives" ||
+    source.query === "history" ||
     ["toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime"].includes(source.query) ||
     source.query === "favorites" || /^favorites:\d+$/.test(source.query || "");
 }
@@ -80,7 +97,7 @@ export function createDefaultGlobalNavigation() {
   return [
     { kind: "navigation", group: false, title: "Watched", type: "preset", query: "watched" },
     { kind: "navigation", group: false, title: "Favorites", type: "preset", query: "favorites" },
-    { kind: "navigation", group: false, title: "Toplists", type: "preset", query: "toplists" },
+    { kind: "navigation", group: false, title: "Toplists", type: "page", query: "toplists" },
     { kind: "navigation", group: false, title: "Archives", type: "preset", query: "archives" },
   ];
 }
@@ -113,6 +130,23 @@ export function createDefaultHomePages() {
         groups: [
           { kind: "publication", group: true, title: "Popular", type: "preset", query: "popular", count: 20 },
           { kind: "publication", group: true, title: "Latest", type: "preset", query: "latest", count: 20 },
+          { kind: "publication", group: true, title: "Recently Read", type: "preset", query: "history", count: 20 },
+        ],
+      },
+    },
+    {
+      id: "toplists",
+      title: "Toplists",
+      mode: "groups",
+      layout: {
+        navigation: [],
+        publication: null,
+        facets: [],
+        groups: [
+          { kind: "publication", group: true, title: "Yesterday", type: "preset", query: "toplist:yesterday", count: 20 },
+          { kind: "publication", group: true, title: "Past Month", type: "preset", query: "toplist:month", count: 20 },
+          { kind: "publication", group: true, title: "Past Year", type: "preset", query: "toplist:year", count: 20 },
+          { kind: "publication", group: true, title: "All Time", type: "preset", query: "toplist:alltime", count: 20 },
         ],
       },
     },

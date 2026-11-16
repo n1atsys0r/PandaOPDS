@@ -512,6 +512,68 @@
         }
       }
     },
+    "/opds/v1.2/history": {
+      "get": {
+        "tags": [
+          "opds"
+        ],
+        "summary": "Recently Read Feed",
+        "description": "Recently Read shelf, ordered by latest reading progression timestamp — backed by local progression store.\n\nPagination mirrors toplist (`page` 1-based).",
+        "operationId": "history_feed_opds_v1_2_history_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/atom+xml;profile=opds-catalog;kind=acquisition": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/opds/v1.2/gallery/{gid}/{token}/chapters": {
       "get": {
         "tags": [
@@ -1403,6 +1465,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opds/v2.0/history": {
+      "get": {
+        "tags": [
+          "opds2"
+        ],
+        "summary": "Recently Read Feed",
+        "description": "Recently Read shelf, ordered by latest reading progression timestamp — backed by local progression store.\n\nSupports category facet filtering (`category`). Pagination mirrors toplist (`page` 1-based).",
+        "operationId": "history_feed_opds_v2_0_history_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            },
+            "example": 1
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/opds+json;profile=acquisition": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }

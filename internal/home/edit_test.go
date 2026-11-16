@@ -267,12 +267,12 @@ count = 20
 	if href := BuildHref("page", "doujin"); href != "/opds/v2.0/page/doujin" {
 		t.Fatalf("expected /opds/v2.0/page/doujin, got %s", href)
 	}
-	if href := BuildHref("preset", "toplists"); href != "/opds/v2.0/page/toplists" {
+	if href := BuildHref("page", "toplists"); href != "/opds/v2.0/page/toplists" {
 		t.Fatalf("expected /opds/v2.0/page/toplists, got %s", href)
 	}
-	// Test ResolvePreset toplists and page: alias
-	if kind, arg, err := ResolvePreset("toplists"); err != nil || kind != "toplists" || arg != "" {
-		t.Fatalf("ResolvePreset(toplists) failed: kind=%s, arg=%s, err=%v", kind, arg, err)
+	// Test ResolvePreset toplists is removed from presets
+	if _, _, err := ResolvePreset("toplists"); err == nil {
+		t.Fatalf("expected ResolvePreset(toplists) to fail because it is removed from presets")
 	}
 	if kind, arg, err := ResolvePreset("page:doujin"); err != nil || kind != "page" || arg != "doujin" {
 		t.Fatalf("ResolvePreset(page:doujin) failed: kind=%s, arg=%s, err=%v", kind, arg, err)
@@ -304,8 +304,8 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 		t.Fatalf("Default() must pass Validate(): %v", err)
 	}
 
-	if len(c.Pages) != 1 || c.Pages[0].ID != "home" {
-		t.Fatalf("expected 1 page ('home'), got %d", len(c.Pages))
+	if len(c.Pages) != 2 || c.Pages[0].ID != "home" || c.Pages[1].ID != "toplists" {
+		t.Fatalf("expected 2 pages ('home', 'toplists'), got %d", len(c.Pages))
 	}
 
 	// Verify 4 top navigation items globally
@@ -314,8 +314,12 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 		t.Fatalf("global navigation has %d items, want 4", len(navs))
 	}
 	for j, navID := range []string{"watched", "favorites", "toplists", "archives"} {
-		if navs[j].Type != "preset" || navs[j].Query != navID {
-			t.Errorf("global nav[%d] = {%s, %s}, want {preset, %s}", j, navs[j].Type, navs[j].Query, navID)
+		wantType := "preset"
+		if navID == "toplists" {
+			wantType = "page"
+		}
+		if navs[j].Type != wantType || navs[j].Query != navID {
+			t.Errorf("global nav[%d] = {%s, %s}, want {%s, %s}", j, navs[j].Type, navs[j].Query, wantType, navID)
 		}
 	}
 
@@ -330,8 +334,8 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 			homePubs = append(homePubs, s)
 		}
 	}
-	if len(homePubs) != 2 || homePubs[0].Query != "popular" || homePubs[1].Query != "latest" {
-		t.Errorf("home publications = %+v, want Popular then Latest", homePubs)
+	if len(homePubs) != 3 || homePubs[0].Query != "popular" || homePubs[1].Query != "latest" || homePubs[2].Query != "history" {
+		t.Errorf("home publications = %+v, want Popular then Latest then History", homePubs)
 	}
 
 	// Page: watched (publications mode, Watched publication)
@@ -552,5 +556,41 @@ facet_set = "chinese_filter"
 	badConfig.Pages[0].Sections[1].FacetSet = "non_existent"
 	if err := Validate(badConfig); err == nil {
 		t.Fatal("expected error for unknown facet set reference, got nil")
+	}
+}
+
+func TestLegacyPresetToplistsMigration(t *testing.T) {
+	legacyToml := `
+[[navigation]]
+kind = "navigation"
+title = "Toplists"
+type = "preset"
+query = "toplists"
+
+[[page]]
+id = "home"
+title = "Home"
+mode = "groups"
+[[page.section]]
+kind = "publication"
+group = true
+title = "Popular"
+type = "preset"
+query = "popular"
+count = 20
+`
+	cfg, err := decodeHome([]byte(legacyToml), false)
+	if err != nil {
+		t.Fatalf("decodeHome legacy toplists failed: %v", err)
+	}
+	if len(cfg.Navigation) != 1 {
+		t.Fatalf("expected 1 navigation item, got %d", len(cfg.Navigation))
+	}
+	nav := cfg.Navigation[0]
+	if nav.Type != "page" || nav.Query != "toplists" {
+		t.Errorf("migrated nav = {%s, %s}, want {page, toplists}", nav.Type, nav.Query)
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("migrated config should pass Validate(): %v", err)
 	}
 }

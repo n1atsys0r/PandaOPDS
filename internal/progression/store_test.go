@@ -185,3 +185,67 @@ func TestCapEvictsOldestUnarchivedAndKeepsArchivedWork(t *testing.T) {
 		t.Fatalf("former archive record was lost during demotion: %#v", docs)
 	}
 }
+
+func TestListHistoryAndSnapshot(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Put 3 items with different timestamps
+	t1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	doc1 := Document{Modified: t1, Device: Device{ID: "urn:uuid:dev", Name: "Reader"}, Progression: 0.1}
+	doc2 := Document{Modified: t2, Device: Device{ID: "urn:uuid:dev", Name: "Reader"}, Progression: 0.5}
+	doc3 := Document{Modified: t3, Device: Device{ID: "urn:uuid:dev", Name: "Reader"}, Progression: 0.9}
+
+	if _, _, err := s.Put(101, "tok1", doc1); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, _, err := s.Put(102, "tok2", doc2); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, _, err := s.Put(103, "tok3", doc3); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set snapshot on item 102
+	snap := Snapshot{
+		Title:    "Gallery Two",
+		Category: "Manga",
+		CoverURL: "https://example.com/cover2.jpg",
+		Rating:   4.5,
+	}
+	if err := s.SetSnapshot(102, "tok2", snap); err != nil {
+		t.Fatal(err)
+	}
+
+	// List history: should be ordered by recent write (103, 102, 101)
+	items, total, err := s.ListHistory(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 {
+		t.Fatalf("expected total 3, got %d", total)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+	if items[0].GID != 103 || items[1].GID != 102 || items[2].GID != 101 {
+		t.Fatalf("items out of order: %d, %d, %d", items[0].GID, items[1].GID, items[2].GID)
+	}
+	if items[1].Snapshot == nil || items[1].Snapshot.Title != "Gallery Two" {
+		t.Fatalf("snapshot not attached or incorrect: %#v", items[1].Snapshot)
+	}
+
+	// Pagination test
+	p2, total2, err := s.ListHistory(1, 1)
+	if err != nil || total2 != 3 || len(p2) != 1 || p2[0].GID != 102 {
+		t.Fatalf("pagination failed: total=%d, items=%#v, err=%v", total2, p2, err)
+	}
+}

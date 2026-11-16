@@ -16,7 +16,7 @@
 #   items        = navigation 分组包含的子导航项列表，各子项拥有独立的 title、type 和 query
 #
 # 顶层 publications 与 groups 互斥；顶层 navigation 可与其中任一形式并存。
-# 内置预设：latest、popular、watched、favorites、favorites:N、archives、
+# 内置预设：latest、popular、watched、favorites、favorites:N、archives、history、
 # toplist:yesterday、toplist:month、toplist:year、toplist:alltime。
 
 # ================= 主页 (Home) =================
@@ -54,7 +54,7 @@ title = "Archives"
 type = "page"
 query = "archives"
 
-# ---- 浏览组 (Popular > Latest) ----
+# ---- 浏览组 (Popular > Latest > Recently Read) ----
 [[page.section]]
 kind = "publication"
 group = true
@@ -69,6 +69,14 @@ group = true
 title = "Latest"
 type = "preset"
 query = "latest"
+count = 20
+
+[[page.section]]
+kind = "publication"
+group = true
+title = "Recently Read"
+type = "preset"
+query = "history"
 count = 20
 
 # ================= 页面: Watched =================

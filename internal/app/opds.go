@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -257,6 +258,23 @@ func (s *Server) archives12(w http.ResponseWriter, r *http.Request) {
 	}
 	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(items, "E-Hentai: Archives", "archives", "", next, nil)))
 }
+
+func (s *Server) history12(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	info, err := s.HistoryGalleries(r.Context(), page, 20)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	next := ""
+	if info.NextPage != nil {
+		next = s.builder().Href(fmt.Sprintf("/opds/v1.2/history?page=%d", *info.NextPage))
+	}
+	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=60"}, []byte(s.builder().AtomList(info.Galleries, "E-Hentai: Recently Read", "history", "", next, nil)))
+}
 func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
 	if e != nil {
@@ -280,6 +298,20 @@ func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 	item := eh.GalleryListItem{GID: gid, Token: token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: d.Category, PublishTime: d.PublishTime, PageCount: &d.ImageCount}
 	if s.Progression != nil {
 		observeProgressionVersions(s.Progression, gid, token, activeGID, activeToken, d.NewerVersions)
+		cnt := d.ImageCount
+		snap := progression.Snapshot{
+			Title:       d.Title,
+			TitleJPN:    d.TitleJPN,
+			Category:    d.Category,
+			CoverURL:    d.CoverURL,
+			PageCount:   &cnt,
+			Rating:      d.Rating,
+			PublishTime: d.PublishTime,
+		}
+		_ = s.Progression.SetSnapshot(gid, token, snap)
+		if activeGID != gid || activeToken != token {
+			_ = s.Progression.SetSnapshot(activeGID, activeToken, snap)
+		}
 	}
 	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomChapterVersion(gid, token, item, title, author)))
 }
@@ -506,6 +538,44 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 	facets := s.builder().CategoryFacets("/opds/v2.0/archives", "", category)
 	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, facets)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
+}
+
+func (s *Server) history20(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	info, err := s.HistoryGalleries(r.Context(), page, 20)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	category := r.URL.Query().Get("category")
+	items := info.Galleries
+	if category != "" {
+		filtered := make([]eh.GalleryListItem, 0, len(items))
+		for _, item := range items {
+			if strings.EqualFold(item.Category, category) {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	pubs := []map[string]any{}
+	for _, item := range items {
+		pubs = append(pubs, s.builder().Publication(item, false))
+	}
+	next := ""
+	if info.NextPage != nil {
+		nextURL := fmt.Sprintf("/opds/v2.0/history?page=%d", *info.NextPage)
+		if category != "" {
+			nextURL += "&category=" + url.QueryEscape(category)
+		}
+		next = s.builder().Href(nextURL)
+	}
+	facets := s.builder().CategoryFacets("/opds/v2.0/history", "", category)
+	doc := s.builder().Acquisition("E-Hentai: Recently Read", "urn:ehentai:history", "/opds/v2.0/history", pubs, next, facets)
+	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=60"}, s.builder().JSON(doc))
 }
 func (s *Server) pageV20(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -964,6 +1034,8 @@ func (s *Server) fetchHomeSection(ctx context.Context, sec home.Section) (eh.Gal
 		return s.Service.Favorites(ctx, "", arg)
 	case "archives":
 		return eh.GalleryPageInfo{Galleries: s.Service.ArchivedGalleries(1)}, nil
+	case "history":
+		return s.HistoryGalleries(ctx, 1, 20)
 	case "toplist":
 		return s.Service.Toplist(ctx, arg, 1)
 	}
@@ -1050,6 +1122,20 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 	}
 	if s.Progression != nil {
 		observeProgressionVersions(s.Progression, gid, token, activeGID, activeToken, d.NewerVersions)
+		cnt := d.ImageCount
+		snap := progression.Snapshot{
+			Title:       d.Title,
+			TitleJPN:    d.TitleJPN,
+			Category:    d.Category,
+			CoverURL:    d.CoverURL,
+			PageCount:   &cnt,
+			Rating:      d.Rating,
+			PublishTime: d.PublishTime,
+		}
+		_ = s.Progression.SetSnapshot(gid, token, snap)
+		if activeGID != gid || activeToken != token {
+			_ = s.Progression.SetSnapshot(activeGID, activeToken, snap)
+		}
 	}
 	if activeGID == gid && activeToken == token && s.Store.IsReady(gid, token) {
 		if n := s.Store.PageCount(gid, token); n > 0 {
@@ -1166,3 +1252,169 @@ func (s *Server) rewriteCommentHTML(content string) string {
 func isoNow() string { return feed.FormatDate("") }
 
 var _ = sort.Strings
+
+func (s *Server) HistoryGalleries(ctx context.Context, page, pageSize int) (eh.GalleryPageInfo, error) {
+	if s.Progression == nil {
+		return eh.GalleryPageInfo{}, nil
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * pageSize
+	items, total, err := s.Progression.ListHistory(offset, pageSize)
+	if err != nil {
+		return eh.GalleryPageInfo{}, err
+	}
+	galleries := make([]eh.GalleryListItem, 0, len(items))
+	var missingList []eh.GalleryRef
+	for _, it := range items {
+		if it.Snapshot != nil {
+			title := it.Snapshot.Title
+			if it.Snapshot.TitleJPN != "" {
+				title = it.Snapshot.TitleJPN
+			}
+			galleries = append(galleries, eh.GalleryListItem{
+				GID:         it.GID,
+				Token:       it.Token,
+				Title:       title,
+				Category:    it.Snapshot.Category,
+				CoverURL:    it.Snapshot.CoverURL,
+				PageCount:   it.Snapshot.PageCount,
+				Rating:      it.Snapshot.Rating,
+				PublishTime: it.Snapshot.PublishTime,
+				Language:    it.Snapshot.Language,
+				Expunged:    it.Snapshot.Expunged,
+			})
+		} else {
+			// Snapshot is missing: check archive first
+			if s.Store != nil {
+				if snap, ok := s.Store.GetMetadataSnapshot(it.GID, it.Token); ok {
+					title := toString(snap["title_jpn"])
+					if title == "" {
+						title = toString(snap["title"])
+					}
+					cat := toString(snap["category"])
+					rating := toFloat(snap["rating"])
+					count := int(toInt64(snap["filecount"]))
+					publishTime := ""
+					if posted := toInt64(snap["posted"]); posted > 0 {
+						publishTime = time.Unix(posted, 0).UTC().Format(time.RFC3339)
+					}
+					cov := ""
+					if thumb := toString(snap["thumb"]); thumb != "" {
+						cov = thumb
+					}
+					snapshot := progression.Snapshot{
+						Title:       toString(snap["title"]),
+						TitleJPN:    toString(snap["title_jpn"]),
+						Category:    cat,
+						CoverURL:    cov,
+						PageCount:   &count,
+						Rating:      rating,
+						PublishTime: publishTime,
+					}
+					_ = s.Progression.SetSnapshot(it.GID, it.Token, snapshot)
+					galleries = append(galleries, eh.GalleryListItem{
+						GID:         it.GID,
+						Token:       it.Token,
+						Title:       title,
+						Category:    cat,
+						CoverURL:    cov,
+						PageCount:   &count,
+						Rating:      rating,
+						PublishTime: publishTime,
+					})
+					continue
+				}
+			}
+			missingList = append(missingList, eh.GalleryRef{GID: it.GID, Token: it.Token})
+			title := fmt.Sprintf("Gallery #%d", it.GID)
+			if it.Doc.Title != nil && *it.Doc.Title != "" {
+				title = *it.Doc.Title
+			}
+			galleries = append(galleries, eh.GalleryListItem{
+				GID:      it.GID,
+				Token:    it.Token,
+				Title:    title,
+				Category: "Misc",
+			})
+		}
+	}
+
+	if len(missingList) > 0 && s.Service != nil && s.Service.Client != nil {
+		go func(missing []eh.GalleryRef) {
+			bCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			results, err := s.Service.Client.GDataBatch(bCtx, missing)
+			if err == nil {
+				for _, g := range results {
+					count := g.Filecount
+					publishTime := ""
+					if g.Posted > 0 {
+						publishTime = time.Unix(g.Posted, 0).UTC().Format(time.RFC3339)
+					}
+					snap := progression.Snapshot{
+						Title:       g.Title,
+						TitleJPN:    g.TitleJPN,
+						Category:    g.Category,
+						CoverURL:    g.Thumb,
+						PageCount:   &count,
+						Rating:      g.Rating,
+						PublishTime: publishTime,
+						Language:    g.Language(),
+						Expunged:    g.Expunged,
+					}
+					_ = s.Progression.SetSnapshot(g.GID, g.Token, snap)
+				}
+			}
+		}(missingList)
+	}
+
+	var nextPage *int
+	if offset+len(galleries) < total {
+		np := page + 1
+		nextPage = &np
+	}
+	return eh.GalleryPageInfo{
+		Galleries:  galleries,
+		TotalCount: &total,
+		NextPage:   nextPage,
+	}, nil
+}
+
+func toString(v any) string { s, _ := v.(string); return s }
+
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	}
+	return 0
+}
+
+func toFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	}
+	return 0
+}

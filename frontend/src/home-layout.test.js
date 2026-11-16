@@ -57,6 +57,7 @@ test("publication layout serializes clean publication entity", () => {
   assert.equal(canUseFacets(drafts.publication), true);
   assert.equal(canUseFacets({ type: "preset", query: "watched" }), true);
   assert.equal(canUseFacets({ type: "preset", query: "archives" }), true);
+  assert.equal(canUseFacets({ type: "preset", query: "history" }), true);
   assert.equal(chooseInitialHomeMode([{ kind: "publication", group: false }, { kind: "publication", group: true }]), "");
 });
 
@@ -239,15 +240,36 @@ test("createDefaultGlobalNavigation and createDefaultHomePages decouple top navi
   assert.equal(globalNav.length, 4);
   assert.deepEqual(globalNav.map((n) => n.query), ["watched", "favorites", "toplists", "archives"]);
   assert.equal(globalNav.every((n) => n.kind === "navigation" && !n.group), true);
-  assert.equal(globalNav.every((n) => n.type === "preset"), true);
-  assert.equal(isKnownPreset("toplists"), true);
+  assert.deepEqual(globalNav.map((n) => n.type), ["preset", "preset", "page", "preset"]);
+  assert.equal(isKnownPreset("toplists"), false);
+  assert.equal(isKnownPreset("history"), true);
 
   const pages = createDefaultHomePages();
-  assert.equal(pages.length, 1);
+  assert.equal(pages.length, 2);
   assert.equal(pages[0].id, "home");
   assert.equal(pages[0].mode, "groups");
-  assert.equal(pages[0].layout.groups.length, 2);
+  assert.equal(pages[0].layout.groups.length, 3);
+  assert.deepEqual(
+    pages[0].layout.groups.map((g) => g.query),
+    ["popular", "latest", "history"]
+  );
   assert.deepEqual(pages[0].layout.navigation, []);
+
+  assert.equal(pages[1].id, "toplists");
+  assert.equal(pages[1].mode, "groups");
+  assert.equal(pages[1].layout.groups.length, 4);
+  assert.deepEqual(
+    pages[1].layout.groups.map((g) => g.query),
+    ["toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime"]
+  );
+
+  // Legacy preset:toplists navigation auto-migrates to page:toplists
+  const legacySections = [
+    { kind: "navigation", group: false, title: "Toplists", type: "preset", query: "toplists" },
+  ];
+  const split = splitHomeSections(legacySections);
+  assert.equal(split.navigation[0].type, "page");
+  assert.equal(split.navigation[0].query, "toplists");
 });
 
 test("createDefaultSearchFacets returns 10 editable categories", () => {

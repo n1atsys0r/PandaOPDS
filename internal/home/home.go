@@ -93,7 +93,7 @@ func Default() Config {
 	topNav := []Section{
 		{Kind: "navigation", Title: "Watched", Type: "preset", Query: "watched"},
 		{Kind: "navigation", Title: "Favorites", Type: "preset", Query: "favorites"},
-		{Kind: "navigation", Title: "Toplists", Type: "preset", Query: "toplists"},
+		{Kind: "navigation", Title: "Toplists", Type: "page", Query: "toplists"},
 		{Kind: "navigation", Title: "Archives", Type: "preset", Query: "archives"},
 	}
 
@@ -104,20 +104,33 @@ func Default() Config {
 		Sections: []Section{
 			{Group: true, Kind: "publication", Title: "Popular", Type: "preset", Query: "popular", Count: intp(20)},
 			{Group: true, Kind: "publication", Title: "Latest", Type: "preset", Query: "latest", Count: intp(20)},
+			{Group: true, Kind: "publication", Title: "Recently Read", Type: "preset", Query: "history", Count: intp(20)},
+		},
+	}
+
+	toplistsPage := Page{
+		ID:    "toplists",
+		Title: "Toplists",
+		Mode:  "groups",
+		Sections: []Section{
+			{Group: true, Kind: "publication", Title: "Yesterday", Type: "preset", Query: "toplist:yesterday", Count: intp(20)},
+			{Group: true, Kind: "publication", Title: "Past Month", Type: "preset", Query: "toplist:month", Count: intp(20)},
+			{Group: true, Kind: "publication", Title: "Past Year", Type: "preset", Query: "toplist:year", Count: intp(20)},
+			{Group: true, Kind: "publication", Title: "All Time", Type: "preset", Query: "toplist:alltime", Count: intp(20)},
 		},
 	}
 
 	return Config{
 		Navigation:   topNav,
 		SearchFacets: DefaultSearchFacets(),
-		Pages:        []Page{homePage},
+		Pages:        []Page{homePage, toplistsPage},
 		Sections:     homePage.Sections,
 	}
 }
 func intp(v int) *int { return &v }
 
 func IsBuiltinPageID(id string) bool {
-	return id == "watched" || id == "favorites" || id == "toplists" || id == "archives"
+	return id == "watched" || id == "favorites" || id == "archives"
 }
 
 func (c Config) GlobalNavigation() []Section {
@@ -266,7 +279,7 @@ func ValidateSection(s Section) error {
 			}
 			if s.Type == "preset" {
 				kind, _, _ := ResolvePreset(s.Query)
-				if kind != "search" && kind != "toplist" && kind != "favorites" && kind != "watched" && kind != "archives" {
+				if kind != "search" && kind != "toplist" && kind != "favorites" && kind != "watched" && kind != "archives" && kind != "history" {
 					return fmt.Errorf("preset has no facet provider: %s", s.Query)
 				}
 			}
@@ -292,7 +305,7 @@ func ValidateSection(s Section) error {
 	}
 	if s.Kind == "facets" && s.Type == "preset" && s.FacetSet == "" && len(s.Items) == 0 {
 		kind, _, _ := ResolvePreset(s.Query)
-		if kind != "search" && kind != "toplist" && kind != "favorites" && kind != "watched" && kind != "archives" {
+		if kind != "search" && kind != "toplist" && kind != "favorites" && kind != "watched" && kind != "archives" && kind != "history" {
 			return fmt.Errorf("preset has no facet provider: %s", s.Query)
 		}
 	}
@@ -682,6 +695,15 @@ func decodeRawSections(raw []rawSection, legacy bool) ([]Section, error) {
 		if len(m.Items) > 0 {
 			s.Items = append(s.Items, m.Items...)
 		}
+		// Migrate legacy preset:toplists to page:toplists
+		if s.Type == "preset" && s.Query == "toplists" {
+			s.Type = "page"
+		}
+		for i := range s.Items {
+			if s.Items[i].Type == "preset" && s.Items[i].Query == "toplists" {
+				s.Items[i].Type = "page"
+			}
+		}
 		if v, ok := m.Group.(bool); ok {
 			s.Group = v
 		} else if _, ok := m.Group.(string); ok {
@@ -774,10 +796,8 @@ func ResolvePreset(q string) (kind, arg string, err error) {
 	switch q {
 	case "latest":
 		return "search", "", nil
-	case "popular", "watched", "favorites", "archives":
+	case "popular", "watched", "favorites", "archives", "history":
 		return q, "", nil
-	case "toplists":
-		return "toplists", "", nil
 	}
 	if strings.HasPrefix(q, "page:") {
 		arg = strings.TrimPrefix(q, "page:")
@@ -840,6 +860,8 @@ func BuildHref(typ, query string) string {
 		return base + "/page/toplists"
 	case "archives":
 		return base + "/archives"
+	case "history":
+		return base + "/history"
 	}
 	return base + "/gallery"
 }

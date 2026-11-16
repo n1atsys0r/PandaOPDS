@@ -30,11 +30,25 @@ type Document struct {
 	Title       *string   `json:"title,omitempty"`
 	References  []string  `json:"references,omitempty"`
 }
+
+type Snapshot struct {
+	Title       string   `json:"title"`
+	TitleJPN    string   `json:"title_jpn,omitempty"`
+	Category    string   `json:"category,omitempty"`
+	CoverURL    string   `json:"cover_url,omitempty"`
+	PageCount   *int     `json:"page_count,omitempty"`
+	Rating      float64  `json:"rating,omitempty"`
+	PublishTime string   `json:"publish_time,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	Expunged    bool     `json:"expunged,omitempty"`
+}
+
 type stored struct {
-	GID     int      `json:"gid"`
-	Token   string   `json:"token"`
-	Doc     Document `json:"doc"`
-	Written int64    `json:"written"`
+	GID      int       `json:"gid"`
+	Token    string    `json:"token"`
+	Doc      Document  `json:"doc"`
+	Written  int64     `json:"written"`
+	Snapshot *Snapshot `json:"snapshot,omitempty"`
 }
 type Store struct{ db *bolt.DB }
 
@@ -276,7 +290,7 @@ func (s *Store) Put(gid int, token string, d Document) (int, Document, error) {
 				return err
 			}
 		}
-		x := stored{GID: gid, Token: token, Doc: d, Written: time.Now().UnixNano()}
+		x := stored{GID: gid, Token: token, Doc: d, Written: time.Now().UnixNano(), Snapshot: old.Snapshot}
 		raw, e := json.Marshal(x)
 		if e != nil {
 			return e
@@ -296,6 +310,85 @@ func (s *Store) Put(gid int, token string, d Document) (int, Document, error) {
 		return nil
 	})
 	return status, result, err
+}
+
+func (s *Store) SetSnapshot(gid int, token string, snap Snapshot) error {
+	token = strings.ToLower(token)
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		g, t := readAlias(b, gid, token)
+		key := recKey(g, t)
+		v := b.Get(key)
+		if v == nil {
+			return nil
+		}
+		var x stored
+		if err := json.Unmarshal(v, &x); err != nil {
+			return err
+		}
+		x.Snapshot = &snap
+		raw, err := json.Marshal(x)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, raw)
+	})
+}
+
+type HistoryItem struct {
+	GID      int       `json:"gid"`
+	Token    string    `json:"token"`
+	Written  int64     `json:"written"`
+	Doc      Document  `json:"doc"`
+	Snapshot *Snapshot `json:"snapshot,omitempty"`
+}
+
+func (s *Store) ListHistory(offset, limit int) ([]HistoryItem, int, error) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var items []HistoryItem
+	total := 0
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		c := b.Cursor()
+		k, _ := c.Seek([]byte("u0"))
+		if k == nil || !strings.HasPrefix(string(k), "u/") {
+			k, _ = c.Prev()
+		}
+		for ; k != nil && strings.HasPrefix(string(k), "u/"); k, _ = c.Prev() {
+			parts := strings.SplitN(string(k)[2:], "/", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			id := parts[1]
+			v := b.Get([]byte("r/" + id))
+			if v == nil {
+				continue
+			}
+			total++
+			if total <= offset {
+				continue
+			}
+			if len(items) < limit {
+				var x stored
+				if err := json.Unmarshal(v, &x); err == nil {
+					items = append(items, HistoryItem{
+						GID:      x.GID,
+						Token:    x.Token,
+						Written:  x.Written,
+						Doc:      x.Doc,
+						Snapshot: x.Snapshot,
+					})
+				}
+			}
+		}
+		return nil
+	})
+	return items, total, err
 }
 func makeRoom(b *bolt.Bucket, additional int) error {
 	protected := map[string]bool{}

@@ -62,6 +62,11 @@ function getPageDisplayTitle(page) {
       return t("home_editor.home_page_title");
     }
   }
+  if (page.id === "toplists") {
+    if (!page.title || page.title === "Toplists" || page.title === "排行榜") {
+      return t("home_editor.toplists_page_title");
+    }
+  }
   return page.title || page.id;
 }
 
@@ -70,6 +75,7 @@ function getPageTitle(pageId) {
   const p = s.pages.value.find((x) => x.id === pageId);
   if (p) return getPageDisplayTitle(p);
   if (pageId === "home") return t("home_editor.home_page_title");
+  if (pageId === "toplists") return t("home_editor.toplists_page_title");
   return pageId;
 }
 
@@ -102,7 +108,7 @@ function handleAddPageTitleInput(val) {
   }
 }
 
-const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "toplists", "archives"]);
+const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "archives", "history"]);
 
 function confirmAddPage() {
   const title = addPageForm.value.title.trim();
@@ -422,12 +428,12 @@ const PRESET_GROUPS = computed(() => [
       { value: "watched", label: t("home_editor.watched") },
       { value: "favorites", label: t("home_editor.favorites") },
       { value: "archives", label: t("home_editor.archives") },
+      { value: "history", label: t("home_editor.history") },
     ],
   },
   {
     label: t("home_editor.preset_toplist"),
     options: [
-      { value: "toplists", label: t("home_editor.toplists_all") },
       { value: "toplist:yesterday", label: t("home_editor.toplist_yesterday") },
       { value: "toplist:month", label: t("home_editor.toplist_month") },
       { value: "toplist:year", label: t("home_editor.toplist_year") },
@@ -1047,14 +1053,17 @@ function handleGroupKindChange(item) {
                   <div
                     v-for="(fItem, fIdx) in s.searchFacets.value"
                     :key="'sf-' + fIdx"
-                    class="rounded-xl border border-border bg-card shadow-xs overflow-hidden"
+                    class="home-item-card rounded-xl border border-border bg-card transition-[border-color,box-shadow] duration-150 overflow-hidden shadow-xs hover:border-border/80"
+                    :class="{
+                      'ring-1 ring-primary/20 border-primary/30': isExpanded(fItem),
+                    }"
                   >
                     <!-- Capsule Header Bar -->
                     <div
-                      class="flex items-center justify-between gap-3 px-3.5 py-2.5 bg-muted/30 cursor-pointer select-none"
+                      class="home-item-bar flex items-center justify-between gap-3 px-3.5 py-2.5 cursor-pointer select-none transition-colors hover:bg-muted/30"
                       @click="toggleExpand(fItem)"
                     >
-                      <div class="flex items-center gap-2.5 flex-1 min-w-0" @click.stop>
+                      <div class="flex items-center gap-2.5 flex-1 min-w-0">
                         <span class="size-5 rounded text-[11px] font-mono font-medium flex items-center justify-center shrink-0 bg-muted text-muted-foreground">
                           {{ fIdx + 1 }}
                         </span>
@@ -1062,6 +1071,7 @@ function handleGroupKindChange(item) {
                           v-model="fItem.title"
                           :placeholder="t('home_editor.facet_item_title_placeholder')"
                           class="h-7 text-xs bg-background dark:bg-input/30 font-medium max-w-[160px] sm:max-w-[220px]"
+                          @click.stop
                           @update:model-value="s.homeDirty.value = true"
                         />
                         <!-- Badges Summary -->
@@ -1101,6 +1111,8 @@ function handleGroupKindChange(item) {
                           variant="ghost"
                           size="icon-xs"
                           :disabled="fIdx === 0"
+                          :aria-label="t('home_editor.reorder_up')"
+                          :title="t('home_editor.reorder_up')"
                           @click="s.moveSearchFacet(fIdx, -1)"
                         >
                           <ChevronUp class="size-3.5" />
@@ -1109,6 +1121,8 @@ function handleGroupKindChange(item) {
                           variant="ghost"
                           size="icon-xs"
                           :disabled="fIdx === s.searchFacets.value.length - 1"
+                          :aria-label="t('home_editor.reorder_down')"
+                          :title="t('home_editor.reorder_down')"
                           @click="s.moveSearchFacet(fIdx, 1)"
                         >
                           <ChevronDown class="size-3.5" />
@@ -1117,13 +1131,18 @@ function handleGroupKindChange(item) {
                           variant="ghost"
                           size="icon-xs"
                           class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          :aria-label="t('home_editor.delete')"
+                          :title="t('home_editor.delete')"
                           @click="s.removeSearchFacet(fIdx)"
                         >
                           <Trash2 class="size-3.5" />
                         </Button>
+                        <Separator orientation="vertical" class="h-3.5 mx-1" />
                         <Button
                           variant="ghost"
                           size="icon-xs"
+                          :aria-expanded="isExpanded(fItem)"
+                          :title="isExpanded(fItem) ? t('home_editor.collapse') : t('home_editor.expand')"
                           @click="toggleExpand(fItem)"
                         >
                           <ChevronRight

@@ -349,7 +349,12 @@ async function loadHome(options = {}) {
     state.home = r.data;
     state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     if (!options.preserveDrafts) {
-      state.navigation = Array.isArray(r.data.navigation) ? r.data.navigation : [];
+      state.navigation = (Array.isArray(r.data.navigation) ? r.data.navigation : []).map((x) => {
+        if (x.type === "preset" && x.query === "toplists") {
+          return { ...x, type: "page", query: "toplists" };
+        }
+        return x;
+      });
       if (Array.isArray(r.data.search_facets) && r.data.search_facets.length > 0) {
         state.searchFacets = structuredClone(r.data.search_facets);
       } else if (Array.isArray(r.data.facet_sets) && r.data.facet_sets.length > 0 && Array.isArray(r.data.facet_sets[0].items)) {
@@ -459,7 +464,7 @@ function selectActivePage(pageId) {
   state.homeMode = normalizeMode(p.mode);
   state.homeModeRequired = !p.mode;
 }
-const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "toplists", "archives"]);
+const BUILTIN_PAGE_IDS = new Set(["watched", "favorites", "archives", "history"]);
 
 function addPage({ id, title, mode = "publications" }) {
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return false;
