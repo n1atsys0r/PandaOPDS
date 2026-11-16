@@ -179,7 +179,9 @@ test("page navigation items serialize and validate cleanly", () => {
   assert.equal(serialized[0].kind, "navigation");
   assert.equal(serialized[0].type, "page");
   assert.equal(serialized[0].query, "doujin");
+  assert.equal(serialized[0].title, "");
   assert.equal(serialized[1].query, "home");
+  assert.equal(serialized[1].title, "");
 });
 
 test("navigation items support preset, search, and page types cleanly", () => {
@@ -211,6 +213,7 @@ test("navigation items support preset, search, and page types cleanly", () => {
   // Top navigation items
   assert.equal(serialized[0].type, "page");
   assert.equal(serialized[0].query, "doujin");
+  assert.equal(serialized[0].title, "");
   assert.equal(serialized[1].type, "preset");
   assert.equal(serialized[1].query, "popular");
   assert.equal(serialized[2].type, "search");
@@ -221,6 +224,7 @@ test("navigation items support preset, search, and page types cleanly", () => {
   assert.equal(serialized[3].group, true);
   assert.equal(serialized[3].items.length, 3);
   assert.equal(serialized[3].items[0].type, "page");
+  assert.equal(serialized[3].items[0].title, "");
   assert.equal(serialized[3].items[1].type, "preset");
   assert.equal(serialized[3].items[1].query, "toplist:yesterday");
   assert.equal(serialized[3].items[2].type, "search");
@@ -237,10 +241,12 @@ test("navigation items support preset, search, and page types cleanly", () => {
 
 test("createDefaultGlobalNavigation and createDefaultHomePages decouple top navigation from pages", () => {
   const globalNav = createDefaultGlobalNavigation();
-  assert.equal(globalNav.length, 4);
-  assert.deepEqual(globalNav.map((n) => n.query), ["watched", "favorites", "toplists", "archives"]);
+  assert.equal(globalNav.length, 5);
+  assert.deepEqual(globalNav.map((n) => n.query), ["home", "watched", "favorites", "toplists", "archives"]);
   assert.equal(globalNav.every((n) => n.kind === "navigation" && !n.group), true);
-  assert.deepEqual(globalNav.map((n) => n.type), ["preset", "preset", "page", "preset"]);
+  assert.deepEqual(globalNav.map((n) => n.type), ["page", "preset", "preset", "page", "preset"]);
+  assert.equal(globalNav[0].title, "");
+  assert.equal(globalNav[3].title, "");
   assert.equal(isKnownPreset("toplists"), false);
   assert.equal(isKnownPreset("history"), true);
 

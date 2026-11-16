@@ -361,6 +361,7 @@ const homeReplaceWarning = computed(() => {
 
 function handleNavTypeChange(item) {
   if (item.type === "page") {
+    item.title = "";
     if (!item.query || !s.pages.value.some((p) => p.id === item.query)) {
       item.query = s.pages.value[0]?.id || "home";
     }
@@ -887,7 +888,10 @@ function handleGroupKindChange(item) {
                           </select>
                         </div>
 
-                        <div class="sm:col-span-4 flex flex-col gap-1.5">
+                        <div
+                          :class="nav.type === 'page' ? 'sm:col-span-9' : 'sm:col-span-4'"
+                          class="flex flex-col gap-1.5"
+                        >
                           <label class="text-xs font-medium text-foreground">
                             {{ nav.type === "page" ? t("home_editor.target_page") : (nav.type === "preset" ? t("home_editor.preset_name") : t("home_editor.search_query")) }}
                           </label>
@@ -903,7 +907,7 @@ function handleGroupKindChange(item) {
                               :key="p.id"
                               :value="p.id"
                             >
-                              {{ p.title || p.id }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
+                              {{ getPageDisplayTitle(p) }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
                             </option>
                           </select>
 
@@ -948,7 +952,10 @@ function handleGroupKindChange(item) {
                           />
                         </div>
 
-                        <div class="sm:col-span-5 flex flex-col gap-1.5">
+                        <div
+                          v-if="nav.type !== 'page'"
+                          class="sm:col-span-5 flex flex-col gap-1.5"
+                        >
                           <label class="text-xs font-medium text-foreground">
                             {{ t("home_editor.nav_title_label") }}
                           </label>
@@ -1691,7 +1698,9 @@ function handleGroupKindChange(item) {
                                 </div>
 
                                 <!-- Target Value Control -->
-                                <div class="w-full sm:w-44 md:w-52 shrink-0">
+                                <div
+                                  :class="subItem.type === 'page' ? 'flex-1 min-w-[180px]' : 'w-full sm:w-44 md:w-52 shrink-0'"
+                                >
                                   <!-- If page -->
                                   <select
                                     v-if="subItem.type === 'page'"
@@ -1704,7 +1713,7 @@ function handleGroupKindChange(item) {
                                       :key="p.id"
                                       :value="p.id"
                                     >
-                                      {{ p.title || p.id }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
+                                      {{ getPageDisplayTitle(p) }} ({{ p.id === 'home' ? '/' : '/page/' + p.id }})
                                     </option>
                                   </select>
 
@@ -1750,7 +1759,10 @@ function handleGroupKindChange(item) {
                                 </div>
 
                                 <!-- Navigation Title -->
-                                <div class="flex-1 min-w-[120px]">
+                                <div
+                                  v-if="subItem.type !== 'page'"
+                                  class="flex-1 min-w-[120px]"
+                                >
                                   <Input
                                     v-model="subItem.title"
                                     :placeholder="getNavTargetTitle(subItem) || t('home_editor.nav_item_title_placeholder')"

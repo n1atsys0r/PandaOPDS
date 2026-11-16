@@ -62,7 +62,7 @@ func (s *Server) currentHome() (home.Config, bool, any) {
 	}
 	return cfg, false, nil
 }
-func formatSectionMaps(secs []home.Section) []map[string]any {
+func formatSectionMaps(cfg home.Config, secs []home.Section) []map[string]any {
 	sections := []map[string]any{}
 	for _, sec := range secs {
 		count := 0
@@ -71,7 +71,14 @@ func formatSectionMaps(secs []home.Section) []map[string]any {
 		}
 		title := sec.Title
 		if title == "" {
-			title = sec.Query
+			if sec.Type == "page" {
+				if p, ok := cfg.FindPage(sec.Query); ok && p.Title != "" {
+					title = p.Title
+				}
+			}
+			if title == "" {
+				title = sec.Query
+			}
 		}
 		secMap := map[string]any{"kind": sec.Kind, "title": title, "type": sec.Type, "query": sec.Query, "count": count, "group": sec.Group, "href": home.BuildHref(sec.Type, sec.Query), "auth_required": home.AuthRequired(sec)}
 		if sec.FacetSet != "" {
@@ -82,7 +89,14 @@ func formatSectionMaps(secs []home.Section) []map[string]any {
 			for i, it := range sec.Items {
 				itTitle := it.Title
 				if itTitle == "" {
-					itTitle = it.Query
+					if it.Type == "page" {
+						if p, ok := cfg.FindPage(it.Query); ok && p.Title != "" {
+							itTitle = p.Title
+						}
+					}
+					if itTitle == "" {
+						itTitle = it.Query
+					}
 				}
 				itMap := map[string]any{
 					"title":         itTitle,
@@ -120,7 +134,7 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 			"id":       p.ID,
 			"title":    p.Title,
 			"mode":     p.Mode,
-			"sections": formatSectionMaps(p.Sections),
+			"sections": formatSectionMaps(cfg, p.Sections),
 		})
 	}
 	writeJSON(w, 200, map[string]any{
@@ -128,8 +142,8 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 		"using_file": using,
 		"error":      err,
 		"mode":       cfg.HomePage().Mode,
-		"sections":   formatSectionMaps(cfg.HomePage().Sections),
-		"navigation":    formatSectionMaps(cfg.GlobalNavigation()),
+		"sections":   formatSectionMaps(cfg, cfg.HomePage().Sections),
+		"navigation":    formatSectionMaps(cfg, cfg.GlobalNavigation()),
 		"search_facets": formatSearchFacets(cfg.GetSearchFacets()),
 		"facet_sets":    formatFacetSets(cfg.FacetSets),
 		"pages":      pages,

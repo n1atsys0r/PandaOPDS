@@ -350,8 +350,8 @@ async function loadHome(options = {}) {
     state.homeTag = (r.headers.get("ETag") || "").replace(/^W\//i, "");
     if (!options.preserveDrafts) {
       state.navigation = (Array.isArray(r.data.navigation) ? r.data.navigation : []).map((x) => {
-        if (x.type === "preset" && x.query === "toplists") {
-          return { ...x, type: "page", query: "toplists" };
+        if (x.type === "preset" && (x.query === "toplists" || x.query === "home")) {
+          return { ...x, type: "page", query: x.query };
         }
         return x;
       });

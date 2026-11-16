@@ -626,7 +626,17 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 		if sec.Type == "preset" && sec.Query == "archives" && s.Store.ReadyCount() == 0 {
 			continue
 		}
-		title := firstNonEmpty(sec.Title, sec.Query)
+		title := sec.Title
+		if title == "" {
+			if sec.Type == "page" {
+				if p, ok := cfg.FindPage(sec.Query); ok && p.Title != "" {
+					title = p.Title
+				}
+			}
+			if title == "" {
+				title = sec.Query
+			}
+		}
 		href := s.builder().Href(home.BuildHref(sec.Type, sec.Query))
 		rootNav = append(rootNav, map[string]any{
 			"title": title,
@@ -640,7 +650,17 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 	rootPubs := []map[string]any{}
 	var rootSource homePreviewKey
 	for _, sec := range sections {
-		title := firstNonEmpty(sec.Title, sec.Query)
+		title := sec.Title
+		if title == "" {
+			if sec.Type == "page" {
+				if p, ok := cfg.FindPage(sec.Query); ok && p.Title != "" {
+					title = p.Title
+				}
+			}
+			if title == "" {
+				title = sec.Query
+			}
+		}
 		href := s.builder().Href(home.BuildHref(sec.Type, sec.Query))
 		if sec.Kind == "navigation" {
 			if sec.Group {
@@ -656,7 +676,17 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 					if it.Type == "preset" && it.Query == "archives" && s.Store.ReadyCount() == 0 {
 						continue
 					}
-					itTitle := firstNonEmpty(it.Title, it.Query)
+					itTitle := it.Title
+					if itTitle == "" {
+						if it.Type == "page" {
+							if p, ok := cfg.FindPage(it.Query); ok && p.Title != "" {
+								itTitle = p.Title
+							}
+						}
+						if itTitle == "" {
+							itTitle = it.Query
+						}
+					}
 					itHref := s.builder().Href(home.BuildHref(it.Type, it.Query))
 					navLinks = append(navLinks, map[string]any{
 						"title": itTitle,

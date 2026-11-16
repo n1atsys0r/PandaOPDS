@@ -11,8 +11,8 @@ export function splitHomeSections(sections = []) {
     navigation: structuredClone(sections.filter((x) => x.kind === "navigation" && !x.group).map((x) => {
       let type = x.type;
       if (!type) {
-        type = x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : (x.query === "toplists" ? "page" : "preset"));
-      } else if (type === "preset" && x.query === "toplists") {
+        type = x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : (x.query === "toplists" || x.query === "home" ? "page" : "preset"));
+      } else if (type === "preset" && (x.query === "toplists" || x.query === "home")) {
         type = "page";
       }
       return {
@@ -46,8 +46,8 @@ export function splitHomeSections(sections = []) {
         items = items.map((it) => {
           let type = it.type;
           if (!type) {
-            type = it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : (it.query === "toplists" ? "page" : "preset"));
-          } else if (type === "preset" && it.query === "toplists") {
+            type = it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : (it.query === "toplists" || it.query === "home" ? "page" : "preset"));
+          } else if (type === "preset" && (it.query === "toplists" || it.query === "home")) {
             type = "page";
           }
           return {
@@ -95,9 +95,10 @@ export function isValidSlug(slug) {
 
 export function createDefaultGlobalNavigation() {
   return [
+    { kind: "navigation", group: false, title: "", type: "page", query: "home" },
     { kind: "navigation", group: false, title: "Watched", type: "preset", query: "watched" },
     { kind: "navigation", group: false, title: "Favorites", type: "preset", query: "favorites" },
-    { kind: "navigation", group: false, title: "Toplists", type: "page", query: "toplists" },
+    { kind: "navigation", group: false, title: "", type: "page", query: "toplists" },
     { kind: "navigation", group: false, title: "Archives", type: "preset", query: "archives" },
   ];
 }
@@ -177,16 +178,17 @@ export function serializeHomeLayout(layout, mode) {
     kind: "navigation",
     group: false,
     count: null,
-    type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : "preset")),
+    type: x.type || (x.query && isKnownPreset(x.query) ? "preset" : (x.type === "search" ? "search" : (x.query === "toplists" || x.query === "home" ? "page" : "preset"))),
     query: x.query || (x.type === "preset" ? "latest" : x.type === "search" ? "" : "latest"),
+    title: (x.type === "page" || (!x.type && (x.query === "toplists" || x.query === "home"))) ? "" : (x.title || ""),
   }));
   let content = [];
   if (normalizedMode === "groups") {
     content = (layout.groups || []).map((x) => {
       if (x.kind === "navigation") {
         const items = (x.items || []).map((it) => ({
-          title: it.title || "",
-          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : "preset")),
+          title: (it.type === "page" || (!it.type && (it.query === "toplists" || it.query === "home"))) ? "" : (it.title || ""),
+          type: it.type || (it.query && isKnownPreset(it.query) ? "preset" : (it.type === "search" ? "search" : (it.query === "toplists" || it.query === "home" ? "page" : "preset"))),
           query: it.query || (it.type === "preset" ? "latest" : it.type === "search" ? "" : "latest"),
         }));
         const first = items[0] || { type: "preset", query: "latest" };

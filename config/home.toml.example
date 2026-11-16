@@ -29,6 +29,12 @@ mode = "groups"
 [[page.section]]
 kind = "navigation"
 group = false
+type = "page"
+query = "home"
+
+[[page.section]]
+kind = "navigation"
+group = false
 title = "Watched"
 type = "page"
 query = "watched"
@@ -43,7 +49,6 @@ query = "favorites"
 [[page.section]]
 kind = "navigation"
 group = false
-title = "Toplists"
 type = "page"
 query = "toplists"
 

@@ -91,6 +91,7 @@ func (c Config) GetFacetSet(id string) *FacetSet {
 
 func Default() Config {
 	topNav := []Section{
+		{Kind: "navigation", Type: "page", Query: "home"},
 		{Kind: "navigation", Title: "Watched", Type: "preset", Query: "watched"},
 		{Kind: "navigation", Title: "Favorites", Type: "preset", Query: "favorites"},
 		{Kind: "navigation", Title: "Toplists", Type: "page", Query: "toplists"},

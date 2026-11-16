@@ -308,14 +308,14 @@ func TestDefaultPresetConfiguration(t *testing.T) {
 		t.Fatalf("expected 2 pages ('home', 'toplists'), got %d", len(c.Pages))
 	}
 
-	// Verify 4 top navigation items globally
+	// Verify 5 top navigation items globally (Home is first)
 	navs := c.GlobalNavigation()
-	if len(navs) != 4 {
-		t.Fatalf("global navigation has %d items, want 4", len(navs))
+	if len(navs) != 5 {
+		t.Fatalf("global navigation has %d items, want 5", len(navs))
 	}
-	for j, navID := range []string{"watched", "favorites", "toplists", "archives"} {
+	for j, navID := range []string{"home", "watched", "favorites", "toplists", "archives"} {
 		wantType := "preset"
-		if navID == "toplists" {
+		if navID == "home" || navID == "toplists" {
 			wantType = "page"
 		}
 		if navs[j].Type != wantType || navs[j].Query != navID {
