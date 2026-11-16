@@ -361,6 +361,13 @@ func (s *Store) flatOwnedLocked(rec *rootRecord) bool {
 	if rec == nil {
 		return false
 	}
+	return s.flatOwnedWithMetaLocked(rec, rec.meta)
+}
+
+func (s *Store) flatOwnedWithMetaLocked(rec *rootRecord, expectedMeta map[string]any) bool {
+	if rec == nil {
+		return false
+	}
 	stateFile := rec.stateFileName
 	if stateFile == "" {
 		stateFile = metaName
@@ -383,13 +390,13 @@ func (s *Store) flatOwnedLocked(rec *rootRecord) bool {
 	if json.Unmarshal(b, &disk) != nil {
 		return false
 	}
-	if toInt(disk["gid"]) != toInt(rec.meta["gid"]) || toString(disk["token"]) != toString(rec.meta["token"]) {
+	if toInt(disk["gid"]) != toInt(expectedMeta["gid"]) || toString(disk["token"]) != toString(expectedMeta["token"]) {
 		return false
 	}
 	if rec.legacy {
 		return toString(disk["layout"]) != "flat" && toString(disk["layout"]) != versionDirLayout
 	}
-	return toString(disk["layout"]) == toString(rec.meta["layout"])
+	return toString(disk["layout"]) == toString(expectedMeta["layout"])
 }
 
 func (s *Store) rootIdentity(rec *rootRecord) (int, string) {
@@ -656,7 +663,17 @@ func (s *Store) persistLocked(rec *rootRecord) error {
 	if rec == nil {
 		return errors.New("archive root not found")
 	}
-	if !s.flatOwnedLocked(rec) {
+	return s.persistWithExpectedMetaLocked(rec, rec.meta)
+}
+
+// persistWithExpectedMetaLocked validates the current on-disk record against
+// expectedMeta while writing rec.meta. This supports intentional metadata
+// transitions without bypassing the existing ownership check.
+func (s *Store) persistWithExpectedMetaLocked(rec *rootRecord, expectedMeta map[string]any) error {
+	if rec == nil {
+		return errors.New("archive root not found")
+	}
+	if !s.flatOwnedWithMetaLocked(rec, expectedMeta) {
 		return errors.New("archive root ownership conflict")
 	}
 	if err := os.MkdirAll(rec.dir, 0o755); err != nil {
@@ -1987,7 +2004,7 @@ func (s *Store) ResetToUnarchivedWithError(gid int, token string) error {
 	}
 	oldMeta := rec.meta
 	rec.meta = nextMeta
-	if err := s.persistLocked(rec); err != nil {
+	if err := s.persistWithExpectedMetaLocked(rec, oldMeta); err != nil {
 		rec.meta = oldMeta
 		return fmt.Errorf("persist unarchived state for gid %d: %w", rootGID, archiveDeleteCause(err))
 	}
