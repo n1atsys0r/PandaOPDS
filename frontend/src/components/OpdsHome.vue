@@ -292,6 +292,26 @@ const FAVCAT_PALETTE = [
   { bg: "rgba(236, 72, 153, 0.22)", border: "rgba(236, 72, 153, 0.45)", text: "#f472b6" },   // 9: 粉
 ];
 
+const FAVCAT_SOLID_COLORS = [
+  "#6b7280", // 0: 灰
+  "#ef4444", // 1: 红
+  "#f97316", // 2: 橙
+  "#eab308", // 3: 黄
+  "#22c55e", // 4: 绿
+  "#84cc16", // 5: 黄绿
+  "#06b6d4", // 6: 青
+  "#3b82f6", // 7: 蓝
+  "#a855f7", // 8: 紫
+  "#ec4899", // 9: 粉
+];
+
+function getFavcatDiamondStyle(favcatId) {
+  const color = FAVCAT_SOLID_COLORS[favcatId] || FAVCAT_SOLID_COLORS[0];
+  return {
+    backgroundColor: color,
+  };
+}
+
 const currentFavcatInfo = computed(() => {
   const meta = selectedPub.value?.raw?.metadata || {};
   const belongs = meta.belongsTo;
@@ -1048,11 +1068,34 @@ function normalizeFacetGroups(facets, currentFeedHref) {
         activeIndex = rawLinks.findIndex((l) => areUrlsMatching(l.href, currentFeedHref));
       }
 
-      const links = rawLinks.map((l, lIdx) => ({
-        title: l.title || l.href || "",
-        href: l.href,
-        isActive: lIdx === activeIndex,
-      }));
+      const isFavoritesGroup =
+        title.toLowerCase().includes("favorite") ||
+        title.toLowerCase().includes("folder") ||
+        title.includes("收藏") ||
+        rawLinks.some((l) => /[?&]favcat=\d+/.test(l.href || "") || /favorites:\d+/.test(l.href || ""));
+
+      const links = rawLinks.map((l, lIdx) => {
+        let favcatId = null;
+        if (isFavoritesGroup || /[?&]favcat=\d+/.test(l.href || "") || /favorites:\d+/.test(l.href || "")) {
+          const m = String(l.href || "").match(/[?&]favcat=(\d+)/) || String(l.href || "").match(/favorites:(\d+)/);
+          if (m) {
+            favcatId = parseInt(m[1], 10);
+          } else {
+            const mTitle = String(l.title || "").match(/^(?:favorites|收藏夹)\s*(\d+)$/i);
+            if (mTitle) {
+              favcatId = parseInt(mTitle[1], 10);
+            } else if (lIdx >= 0 && lIdx <= 9 && rawLinks.length === 10) {
+              favcatId = lIdx;
+            }
+          }
+        }
+        return {
+          title: l.title || l.href || "",
+          href: l.href,
+          isActive: lIdx === activeIndex,
+          favcatId: favcatId != null && favcatId >= 0 && favcatId <= 9 ? favcatId : null,
+        };
+      });
 
       return {
         id: `facet-grp-${gIdx}`,
@@ -2046,47 +2089,46 @@ onUnmounted(() => {
       {{ error || routeError }}
     </div>
 
-    <!-- Global Top Navigation Bar (Permanent, unified across catalog and sub-routes) -->
+    <!-- Global Top Navigation Bar (Permanent, unified segmented control across catalog and sub-routes) -->
     <nav
       v-if="globalNavItems.length || (loading && !catalog)"
-      class="flex flex-wrap items-center gap-2.5 pt-0.5"
+      class="flex items-center overflow-x-auto no-scrollbar py-0.5"
       :aria-label="t('explore.nav_label')"
     >
-      <template v-if="globalNavItems.length">
+      <div
+        v-if="globalNavItems.length"
+        class="inline-flex items-center gap-1 p-1 rounded-full bg-muted/70 border border-border/40 text-muted-foreground shrink-0 select-none"
+      >
         <button
           v-for="nav in globalNavItems"
           :key="nav.href"
           type="button"
-          class="group inline-flex items-center gap-2 h-9 px-3.5 text-xs sm:text-sm font-medium rounded-full border transition-all duration-200 active:scale-[0.98] cursor-pointer select-none"
+          class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs sm:text-sm font-medium rounded-full transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98]"
           :class="isNavActive(nav)
-            ? 'bg-primary text-primary-foreground border-primary shadow-xs font-semibold'
-            : 'border-border/80 bg-card hover:bg-accent/40 hover:border-border text-foreground shadow-2xs hover:shadow-xs'"
+            ? 'bg-background text-foreground shadow-xs font-semibold'
+            : 'text-muted-foreground hover:text-foreground hover:bg-background/40'"
           @click="drillDown(nav)"
         >
           <component
             :is="nav.icon"
             class="size-4 shrink-0 transition-colors"
-            :class="isNavActive(nav) ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'"
+            :class="isNavActive(nav) ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'"
           />
-          <span
-            class="tracking-tight"
-            :class="isNavActive(nav) ? 'text-primary-foreground' : 'text-foreground/90 group-hover:text-foreground'"
-          >
+          <span class="tracking-tight">
             {{ nav.title }}
           </span>
-          <ChevronRight
-            class="size-3.5 transition-all duration-200 group-hover:translate-x-0.5"
-            :class="isNavActive(nav) ? 'text-primary-foreground/70' : 'text-muted-foreground/40 group-hover:text-foreground/80'"
-          />
         </button>
-      </template>
-      <template v-else>
+      </div>
+      <div
+        v-else
+        class="inline-flex items-center gap-1 p-1 rounded-full bg-muted/40 border border-border/40 shrink-0"
+      >
         <div
-          v-for="i in 4"
+          v-for="i in 5"
           :key="i"
-          class="h-9 w-28 bg-muted/60 rounded-full animate-pulse"
+          class="h-8 w-24 bg-muted/80 rounded-full animate-pulse"
         />
-      </template>
+      </div>
     </nav>
 
     <!-- Loading Skeleton -->
@@ -2108,7 +2150,7 @@ onUnmounted(() => {
       <!-- Facet Filter Rails (Root Catalog) -->
       <div
         v-if="homeFacets.length"
-        class="space-y-2 pt-0.5"
+        class="space-y-2 -mt-1 mb-5"
       >
         <div
           v-for="grp in homeFacets"
@@ -2116,24 +2158,29 @@ onUnmounted(() => {
           class="overflow-hidden"
         >
           <div
-            class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
+            class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
             :aria-label="grp.title || t('explore.facets_label')"
           >
             <button
               v-for="link in grp.links"
               :key="link.title || link.href"
               type="button"
-              class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
+              class="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
               :class="link.isActive
-                ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
-                : 'bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/50 hover:border-border/80'"
+                ? 'bg-muted text-foreground font-medium border border-transparent'
+                : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'"
               :aria-pressed="link.isActive"
               @click="onFacetClick(link)"
             >
+              <span
+                v-if="link.favcatId != null"
+                class="inline-block size-2 rotate-45 rounded-[1.5px] shrink-0"
+                :style="getFavcatDiamondStyle(link.favcatId)"
+                aria-hidden="true"
+              />
               <span class="tracking-tight whitespace-nowrap">
                 {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
               </span>
-              <X v-if="link.isActive" class="size-3 ml-0.5 opacity-70 group-hover:opacity-100" />
             </button>
           </div>
         </div>
@@ -2324,7 +2371,7 @@ onUnmounted(() => {
     </div>
 
     <!-- ================= DRILL-DOWN VIEW ================= -->
-    <div v-else class="space-y-6">
+    <div v-else :class="routeFacets.length ? 'space-y-5 -mt-1' : 'space-y-6'">
       <div v-if="!routeFeed && routeLoading" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse">
         <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
       </div>
@@ -2334,7 +2381,7 @@ onUnmounted(() => {
         <!-- Route Facets for Groups Mode (if present) -->
         <div
           v-if="routeFacets.length"
-          class="space-y-2 pt-0.5"
+          class="space-y-2"
         >
           <div
             v-for="grp in routeFacets"
@@ -2342,24 +2389,29 @@ onUnmounted(() => {
             class="overflow-hidden"
           >
             <div
-              class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
+              class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
               :aria-label="grp.title || t('explore.facets_label')"
             >
               <button
                 v-for="link in grp.links"
                 :key="link.title || link.href"
                 type="button"
-                class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
+                class="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
                 :class="link.isActive
-                  ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
-                  : 'bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/50 hover:border-border/80'"
+                  ? 'bg-muted text-foreground font-medium border border-transparent'
+                  : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'"
                 :aria-pressed="link.isActive"
                 @click="onFacetClick(link)"
               >
+                <span
+                  v-if="link.favcatId != null"
+                  class="inline-block size-2 rotate-45 rounded-[1.5px] shrink-0"
+                  :style="getFavcatDiamondStyle(link.favcatId)"
+                  aria-hidden="true"
+                />
                 <span class="tracking-tight whitespace-nowrap">
                   {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
                 </span>
-                <X v-if="link.isActive" class="size-3 ml-0.5 opacity-70 group-hover:opacity-100" />
               </button>
             </div>
           </div>
@@ -2368,7 +2420,7 @@ onUnmounted(() => {
         <!-- Shelves and Navigation groups -->
         <div
           v-if="routeLoading"
-          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse pt-2"
+          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse"
         >
           <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
         </div>
@@ -2562,7 +2614,7 @@ onUnmounted(() => {
         <!-- Route Facet Rails (Interactive Pill Filter Rail) -->
         <div
           v-if="routeFacets.length"
-          class="space-y-2 pt-0.5"
+          class="space-y-2"
         >
           <div
             v-for="grp in routeFacets"
@@ -2570,24 +2622,29 @@ onUnmounted(() => {
             class="overflow-hidden"
           >
             <div
-              class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
+              class="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1 -my-1"
               :aria-label="grp.title || t('explore.facets_label')"
             >
               <button
                 v-for="link in grp.links"
                 :key="link.title || link.href"
                 type="button"
-                class="group inline-flex items-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
+                class="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 text-xs font-medium rounded-full transition-all duration-150 shrink-0 cursor-pointer select-none active:scale-[0.98]"
                 :class="link.isActive
-                  ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
-                  : 'bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/50 hover:border-border/80'"
+                  ? 'bg-muted text-foreground font-medium border border-transparent'
+                  : 'bg-transparent text-foreground/80 hover:text-foreground border border-border/80 hover:border-border hover:bg-muted/30'"
                 :aria-pressed="link.isActive"
                 @click="onFacetClick(link)"
               >
+                <span
+                  v-if="link.favcatId != null"
+                  class="inline-block size-2 rotate-45 rounded-[1.5px] shrink-0"
+                  :style="getFavcatDiamondStyle(link.favcatId)"
+                  aria-hidden="true"
+                />
                 <span class="tracking-tight whitespace-nowrap">
                   {{ link.title.toLowerCase() === 'all' ? t('common.all') : link.title }}
                 </span>
-                <X v-if="link.isActive" class="size-3 ml-0.5 opacity-70 group-hover:opacity-100" />
               </button>
             </div>
           </div>
@@ -2596,7 +2653,7 @@ onUnmounted(() => {
         <!-- Publications Grid / In-Place Loading Skeleton / Empty State -->
         <div
           v-if="routeLoading"
-          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse pt-2"
+          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 animate-pulse"
         >
           <div v-for="i in 12" :key="i" class="aspect-[1/1.414] bg-muted rounded-lg" />
         </div>
