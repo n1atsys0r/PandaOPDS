@@ -343,7 +343,24 @@ type HistoryItem struct {
 	Snapshot *Snapshot `json:"snapshot,omitempty"`
 }
 
+func MatchReadingStatus(hasRecord bool, progression float64, filter string) bool {
+	switch strings.ToLower(filter) {
+	case "unread":
+		return !hasRecord || progression < 0.01
+	case "reading":
+		return hasRecord && progression >= 0.01 && progression < 0.95
+	case "completed":
+		return hasRecord && progression >= 0.95
+	default:
+		return true
+	}
+}
+
 func (s *Store) ListHistory(offset, limit int) ([]HistoryItem, int, error) {
+	return s.ListHistoryFiltered(offset, limit, nil)
+}
+
+func (s *Store) ListHistoryFiltered(offset, limit int, predicate func(item HistoryItem) bool) ([]HistoryItem, int, error) {
 	if offset < 0 {
 		offset = 0
 	}
@@ -369,26 +386,62 @@ func (s *Store) ListHistory(offset, limit int) ([]HistoryItem, int, error) {
 			if v == nil {
 				continue
 			}
+			var x stored
+			if err := json.Unmarshal(v, &x); err != nil {
+				continue
+			}
+			item := HistoryItem{
+				GID:      x.GID,
+				Token:    x.Token,
+				Written:  x.Written,
+				Doc:      x.Doc,
+				Snapshot: x.Snapshot,
+			}
+			if predicate != nil && !predicate(item) {
+				continue
+			}
 			total++
 			if total <= offset {
 				continue
 			}
 			if len(items) < limit {
-				var x stored
-				if err := json.Unmarshal(v, &x); err == nil {
-					items = append(items, HistoryItem{
-						GID:      x.GID,
-						Token:    x.Token,
-						Written:  x.Written,
-						Doc:      x.Doc,
-						Snapshot: x.Snapshot,
-					})
-				}
+				items = append(items, item)
 			}
 		}
 		return nil
 	})
 	return items, total, err
+}
+
+// GetProgressions returns a snapshot map of work identity ("{gid}/{token}") to latest progression.
+func (s *Store) GetProgressions() (map[string]float64, error) {
+	if s == nil || s.db == nil {
+		return map[string]float64{}, nil
+	}
+	res := make(map[string]float64)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, v := c.Seek([]byte("r/")); k != nil && strings.HasPrefix(string(k), "r/"); k, v = c.Next() {
+			var x stored
+			if err := json.Unmarshal(v, &x); err == nil {
+				key := fmt.Sprintf("%d/%s", x.GID, strings.ToLower(x.Token))
+				res[key] = x.Doc.Progression
+			}
+		}
+		for k, v := c.Seek([]byte("a/")); k != nil && strings.HasPrefix(string(k), "a/"); k, v = c.Next() {
+			fromKey := strings.TrimPrefix(string(k), "a/")
+			targetKey := string(v)
+			if p, ok := res[targetKey]; ok {
+				res[fromKey] = p
+			}
+		}
+		return nil
+	})
+	return res, err
 }
 func makeRoom(b *bolt.Bucket, additional int) error {
 	protected := map[string]bool{}

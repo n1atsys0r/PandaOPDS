@@ -1478,7 +1478,7 @@
           "opds2"
         ],
         "summary": "Recently Read Feed",
-        "description": "Recently Read shelf, ordered by latest reading progression timestamp — backed by local progression store.\n\nSupports category facet filtering (`category`). Pagination mirrors toplist (`page` 1-based).",
+        "description": "Recently Read shelf, ordered by latest reading progression timestamp — backed by local progression store.\n\nPagination mirrors toplist (`page` 1-based).",
         "operationId": "history_feed_opds_v2_0_history_get",
         "parameters": [
           {
@@ -1491,15 +1491,6 @@
               "title": "Page"
             },
             "example": 1
-          },
-          {
-            "name": "category",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "title": "Category"
-            }
           }
         ],
         "responses": {

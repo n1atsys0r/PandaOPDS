@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -518,30 +519,25 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	category := r.URL.Query().Get("category")
-	items := s.Service.ArchivedGalleries(page)
-	if category != "" {
-		filtered := make([]eh.GalleryListItem, 0, len(items))
-		for _, item := range items {
-			if strings.EqualFold(item.Category, category) {
-				filtered = append(filtered, item)
-			}
-		}
-		items = filtered
+
+	info, err := s.ArchivedGalleriesFiltered(page, 100, category, "")
+	if err != nil {
+		writeError(w, err)
+		return
 	}
 	pubs := []map[string]any{}
-	for _, item := range items {
+	for _, item := range info.Galleries {
 		pubs = append(pubs, s.builder().Publication(item, false))
 	}
 	next := ""
-	if page*100 < s.Store.ReadyCount() {
-		nextURL := fmt.Sprintf("/opds/v2.0/archives?page=%d", page+1)
+	if info.NextPage != nil {
+		nextURL := fmt.Sprintf("/opds/v2.0/archives?page=%d", *info.NextPage)
 		if category != "" {
 			nextURL += "&category=" + url.QueryEscape(category)
 		}
 		next = s.builder().Href(nextURL)
 	}
-	facets := s.builder().CategoryFacets("/opds/v2.0/archives", "", category)
-	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, facets)
+	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, nil)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
 
@@ -550,24 +546,15 @@ func (s *Server) history20(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	info, err := s.HistoryGalleries(r.Context(), page, 20)
+	category := r.URL.Query().Get("category")
+
+	info, err := s.HistoryGalleriesFiltered(r.Context(), page, 20, category, "")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	category := r.URL.Query().Get("category")
-	items := info.Galleries
-	if category != "" {
-		filtered := make([]eh.GalleryListItem, 0, len(items))
-		for _, item := range items {
-			if strings.EqualFold(item.Category, category) {
-				filtered = append(filtered, item)
-			}
-		}
-		items = filtered
-	}
 	pubs := []map[string]any{}
-	for _, item := range items {
+	for _, item := range info.Galleries {
 		pubs = append(pubs, s.builder().Publication(item, false))
 	}
 	next := ""
@@ -578,8 +565,7 @@ func (s *Server) history20(w http.ResponseWriter, r *http.Request) {
 		}
 		next = s.builder().Href(nextURL)
 	}
-	facets := s.builder().CategoryFacets("/opds/v2.0/history", "", category)
-	doc := s.builder().Acquisition("E-Hentai: Recently Read", "urn:ehentai:history", "/opds/v2.0/history", pubs, next, facets)
+	doc := s.builder().Acquisition("E-Hentai: Recently Read", "urn:ehentai:history", "/opds/v2.0/history", pubs, next, nil)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=60"}, s.builder().JSON(doc))
 }
 func (s *Server) pageV20(w http.ResponseWriter, r *http.Request) {
@@ -940,12 +926,13 @@ func isParamsMatching(reqQuery, targetParams url.Values) bool {
 func (s *Server) homeFacetLinks(sec home.Section, info eh.GalleryPageInfo) []map[string]any {
 	builder := s.builder()
 	const galleryRoute = "/opds/v2.0/gallery"
-	if sec.Type == "search" || sec.Query == "latest" || sec.Query == "watched" || sec.Query == "archives" {
+	if sec.Query == "archives" || sec.Query == "history" {
+		return nil
+	}
+	if sec.Type == "search" || sec.Query == "latest" || sec.Query == "watched" {
 		targetRoute := galleryRoute
 		query := ""
-		if sec.Query == "archives" {
-			targetRoute = "/opds/v2.0/archives"
-		} else if sec.Type == "search" {
+		if sec.Type == "search" {
 			query = sec.Query
 		} else if sec.Query == "watched" {
 			query = "watched"
@@ -1287,6 +1274,10 @@ func isoNow() string { return feed.FormatDate("") }
 var _ = sort.Strings
 
 func (s *Server) HistoryGalleries(ctx context.Context, page, pageSize int) (eh.GalleryPageInfo, error) {
+	return s.HistoryGalleriesFiltered(ctx, page, pageSize, "", "")
+}
+
+func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize int, category, filter string) (eh.GalleryPageInfo, error) {
 	if s.Progression == nil {
 		return eh.GalleryPageInfo{}, nil
 	}
@@ -1297,7 +1288,29 @@ func (s *Server) HistoryGalleries(ctx context.Context, page, pageSize int) (eh.G
 		page = 1
 	}
 	offset := (page - 1) * pageSize
-	items, total, err := s.Progression.ListHistory(offset, pageSize)
+	predicate := func(it progression.HistoryItem) bool {
+		if filter != "" && !progression.MatchReadingStatus(true, it.Doc.Progression, filter) {
+			return false
+		}
+		if category != "" {
+			cat := ""
+			if it.Snapshot != nil {
+				cat = it.Snapshot.Category
+			} else if s.Store != nil {
+				if snap, ok := s.Store.GetMetadataSnapshot(it.GID, it.Token); ok {
+					cat = toString(snap["category"])
+				}
+			}
+			if cat == "" {
+				cat = "Misc"
+			}
+			if !strings.EqualFold(cat, category) {
+				return false
+			}
+		}
+		return true
+	}
+	items, total, err := s.Progression.ListHistoryFiltered(offset, pageSize, predicate)
 	if err != nil {
 		return eh.GalleryPageInfo{}, err
 	}
@@ -1450,4 +1463,84 @@ func toFloat(v any) float64 {
 		return f
 	}
 	return 0
+}
+
+func (s *Server) ArchivedGalleriesFiltered(page, pageSize int, category, filter string) (eh.GalleryPageInfo, error) {
+	if s.Store == nil || s.Service == nil {
+		return eh.GalleryPageInfo{}, nil
+	}
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	if page < 1 {
+		page = 1
+	}
+
+	var progressMap map[string]float64
+	if filter != "" && s.Progression != nil {
+		progressMap, _ = s.Progression.GetProgressions()
+	}
+
+	all := s.Store.ListReady(1, math.MaxInt)
+	var matched []eh.ArchiveInfo
+	for _, a := range all {
+		if filter != "" {
+			activeGID, activeToken := a.ActiveGID, a.ActiveToken
+			if activeGID <= 0 || activeToken == "" {
+				if s.Service != nil {
+					activeGID, activeToken, _ = s.Service.ResolveArchiveVersion(a.GID, a.Token)
+				}
+				if activeGID <= 0 || activeToken == "" {
+					activeGID, activeToken = a.GID, a.Token
+				}
+			}
+			p, has := progressMap[fmt.Sprintf("%d/%s", activeGID, strings.ToLower(activeToken))]
+			if !has {
+				p, has = progressMap[fmt.Sprintf("%d/%s", a.GID, strings.ToLower(a.Token))]
+			}
+			if !progression.MatchReadingStatus(has, p, filter) {
+				continue
+			}
+		}
+		if category != "" {
+			snap, ok := s.Store.GetMetadataSnapshot(a.ActiveGID, a.ActiveToken)
+			if !ok {
+				snap, _ = s.Store.GetMetadataSnapshot(a.GID, a.Token)
+			}
+			cat := ""
+			if snap != nil {
+				cat = toString(snap["category"])
+			}
+			if !strings.EqualFold(cat, category) {
+				continue
+			}
+		}
+		matched = append(matched, a)
+	}
+
+	total := len(matched)
+	start := (page - 1) * pageSize
+	if start >= total {
+		return eh.GalleryPageInfo{TotalCount: &total}, nil
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	galleries := make([]eh.GalleryListItem, 0, end-start)
+	for _, a := range matched[start:end] {
+		galleries = append(galleries, s.Service.ArchivedGalleryItem(a))
+	}
+
+	var nextPage *int
+	if end < total {
+		np := page + 1
+		nextPage = &np
+	}
+	return eh.GalleryPageInfo{
+		Galleries:  galleries,
+		TotalCount: &total,
+		NextPage:   nextPage,
+	}, nil
 }

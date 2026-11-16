@@ -1087,55 +1087,59 @@ func (s *Service) ArchivedGalleries(page int) []GalleryListItem {
 	}
 	items := []GalleryListItem{}
 	for _, a := range s.archive.ListReady(page, 100) {
-		activeGID, activeToken := a.ActiveGID, a.ActiveToken
-		if activeGID <= 0 || activeToken == "" {
-			var found bool
-			activeGID, activeToken, found = s.ResolveArchiveVersion(a.GID, a.Token)
-			if !found {
-				activeGID, activeToken = a.GID, a.Token
-			}
+		items = append(items, s.ArchivedGalleryItem(a))
+	}
+	return items
+}
+
+func (s *Service) ArchivedGalleryItem(a ArchiveInfo) GalleryListItem {
+	activeGID, activeToken := a.ActiveGID, a.ActiveToken
+	if activeGID <= 0 || activeToken == "" {
+		var found bool
+		activeGID, activeToken, found = s.ResolveArchiveVersion(a.GID, a.Token)
+		if !found {
+			activeGID, activeToken = a.GID, a.Token
 		}
-		snap, ok := s.archive.GetMetadataSnapshot(activeGID, activeToken)
-		title := a.Title
-		category := ""
-		rating := float64(0)
-		tags := []GalleryTag{}
-		if ok {
-			jpn := toString(snap["title_jpn"])
-			if jpn != "" {
-				title = jpn
-			} else if t := toString(snap["title"]); t != "" {
-				title = t
-			}
-			category = toString(snap["category"])
-			rating = toFloat(snap["rating"])
-			if raw, ok := snap["tags"].(map[string]any); ok {
-				for ns, v := range raw {
-					if list, ok := v.([]any); ok {
-						for _, entry := range list {
-							if m, ok := entry.(map[string]any); ok {
-								t := GalleryTag{Namespace: toString(m["namespace"]), Key: toString(m["key"]), Status: toString(m["status"])}
-								if t.Namespace == "" {
-									t.Namespace = ns
-								}
-								if t.Status == "" {
-									t.Status = "confidence"
-								}
-								tags = append(tags, t)
+	}
+	snap, ok := s.archive.GetMetadataSnapshot(activeGID, activeToken)
+	title := a.Title
+	category := ""
+	rating := float64(0)
+	tags := []GalleryTag{}
+	if ok {
+		jpn := toString(snap["title_jpn"])
+		if jpn != "" {
+			title = jpn
+		} else if t := toString(snap["title"]); t != "" {
+			title = t
+		}
+		category = toString(snap["category"])
+		rating = toFloat(snap["rating"])
+		if raw, ok := snap["tags"].(map[string]any); ok {
+			for ns, v := range raw {
+				if list, ok := v.([]any); ok {
+					for _, entry := range list {
+						if m, ok := entry.(map[string]any); ok {
+							t := GalleryTag{Namespace: toString(m["namespace"]), Key: toString(m["key"]), Status: toString(m["status"])}
+							if t.Namespace == "" {
+								t.Namespace = ns
 							}
+							if t.Status == "" {
+								t.Status = "confidence"
+							}
+							tags = append(tags, t)
 						}
 					}
 				}
 			}
 		}
-		count := a.PageCount
-		publishTime := ""
-		if posted := toInt64(snap["posted"]); ok && posted > 0 {
-			publishTime = time.Unix(posted, 0).UTC().Format("2006-01-02 15:04")
-		}
-		items = append(items, GalleryListItem{GID: a.GID, Token: a.Token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: category, PageCount: &count, Rating: rating, PublishTime: publishTime, Language: languageFromTags(tags), Tags: tags})
 	}
-	return items
+	count := a.PageCount
+	publishTime := ""
+	if posted := toInt64(snap["posted"]); ok && posted > 0 {
+		publishTime = time.Unix(posted, 0).UTC().Format("2006-01-02 15:04")
+	}
+	return GalleryListItem{GID: a.GID, Token: a.Token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: category, PageCount: &count, Rating: rating, PublishTime: publishTime, Language: languageFromTags(tags), Tags: tags}
 }
 func (s *Service) Status() map[string]any {
 	s.mu.Lock()

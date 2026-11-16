@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"pandaopds/internal/archive"
+	"pandaopds/internal/config"
+	"pandaopds/internal/eh"
 	"pandaopds/internal/home"
 	"pandaopds/internal/progression"
 )
@@ -85,8 +89,8 @@ func TestHistoryEndpoints(t *testing.T) {
 		return w
 	}
 
-	putProg := func(gid int, token, modified string) {
-		body := `{"modified":"` + modified + `","device":{"id":"urn:uuid:test","name":"Reader"},"progression":0.5}`
+	putProg := func(gid int, token, modified string, prog float64) {
+		body := fmt.Sprintf(`{"modified":"%s","device":{"id":"urn:uuid:test","name":"Reader"},"progression":%f}`, modified, prog)
 		r := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/opds/progression/%d/%s", gid, token), strings.NewReader(body))
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
@@ -95,13 +99,13 @@ func TestHistoryEndpoints(t *testing.T) {
 		}
 	}
 
-	putProg(101, "deadbeef01", "2026-01-01T10:00:00Z")
+	putProg(101, "deadbeef01", "2026-01-01T10:00:00Z", 0.5)
 	_ = s.Progression.SetSnapshot(101, "deadbeef01", progression.Snapshot{
 		Title:    "Gallery 101",
 		Category: "Manga",
 	})
 
-	putProg(202, "deadbeef02", "2026-01-01T12:00:00Z")
+	putProg(202, "deadbeef02", "2026-01-01T12:00:00Z", 0.96)
 	_ = s.Progression.SetSnapshot(202, "deadbeef02", progression.Snapshot{
 		Title:    "Gallery 202",
 		Category: "Doujinshi",
@@ -141,6 +145,11 @@ func TestHistoryEndpoints(t *testing.T) {
 		t.Fatalf("expected [Gallery 202, Gallery 101], got [%s, %s]", p0, p1)
 	}
 
+	// OPDS 2.0 history has no facets
+	if doc20["facets"] != nil {
+		t.Fatalf("expected no facets in history20, got %v", doc20["facets"])
+	}
+
 	// OPDS 2.0 category filtering
 	resFiltered := call(http.MethodGet, "/opds/v2.0/history?category=Manga")
 	if resFiltered.Code != 200 {
@@ -169,5 +178,105 @@ func TestHistoryEndpoints(t *testing.T) {
 	}
 	if homeSec.Galleries[0].GID != 202 || homeSec.Galleries[1].GID != 101 {
 		t.Fatalf("expected [202, 101], got [%d, %d]", homeSec.Galleries[0].GID, homeSec.Galleries[1].GID)
+	}
+}
+
+// TestArchiveEndpoints verifies archives feed does not emit facets.
+func TestArchiveEndpoints(t *testing.T) {
+	temp := t.TempDir()
+	archiveDir := filepath.Join(temp, "archives")
+	stateDir := filepath.Join(temp, "state")
+	cacheDir := filepath.Join(temp, "cache")
+	_ = os.MkdirAll(archiveDir, 0755)
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.MkdirAll(cacheDir, 0755)
+
+	store, err := archive.NewStoreWithState(archiveDir, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	progStore, err := progression.Open(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progStore.Close()
+
+	settings := config.Settings{
+		EHSite:          "e-hentai",
+		ArchiveDir:      archiveDir,
+		ArchiveStateDir: stateDir,
+		CacheDir:        cacheDir,
+	}
+	service := eh.NewService(settings, nil)
+	defer service.Close()
+	service.AttachArchive(store)
+
+	s := &Server{
+		Settings:    settings,
+		Service:     service,
+		Store:       store,
+		Progression: progStore,
+		mux:         http.NewServeMux(),
+	}
+	s.register()
+
+	// Seed 2 archives: 1001 (Manga), 1002 (Doujinshi)
+	for _, gid := range []int{1001, 1002} {
+		token := fmt.Sprintf("tok%d", gid)
+		if _, err := store.Upsert(gid, token, map[string]any{"status": "ready", "title": fmt.Sprintf("Archive %d", gid), "page_count": 10, "quality": "org"}); err != nil {
+			t.Fatal(err)
+		}
+		writeTestArchiveZIP(t, filepath.Join(archiveDir, fmt.Sprintf("%d.zip", gid)))
+		cat := "Manga"
+		if gid == 1002 {
+			cat = "Doujinshi"
+		}
+		if err := store.WriteMetadata(gid, token, map[string]any{
+			"gid":       gid,
+			"token":     token,
+			"title":     fmt.Sprintf("Archive %d", gid),
+			"title_jpn": fmt.Sprintf("Archive JPN %d", gid),
+			"category":  cat,
+			"filecount": 10,
+			"posted":    1700000000,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	call := func(url string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, url, nil)
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+
+	// 1. Default /opds/v2.0/archives: 2 items, no facets
+	resAll := call("/opds/v2.0/archives")
+	if resAll.Code != 200 {
+		t.Fatalf("archives code=%d body=%s", resAll.Code, resAll.Body.String())
+	}
+	var docAll map[string]any
+	_ = json.Unmarshal(resAll.Body.Bytes(), &docAll)
+	pubsAll, _ := docAll["publications"].([]any)
+	if len(pubsAll) != 2 {
+		t.Fatalf("expected 2 archives, got %d", len(pubsAll))
+	}
+	if docAll["facets"] != nil {
+		t.Fatalf("expected no facets in archives20, got %v", docAll["facets"])
+	}
+
+	// 2. Category filtering
+	resFiltered := call("/opds/v2.0/archives?category=Manga")
+	if resFiltered.Code != 200 {
+		t.Fatalf("archives filter code=%d", resFiltered.Code)
+	}
+	var docFiltered map[string]any
+	_ = json.Unmarshal(resFiltered.Body.Bytes(), &docFiltered)
+	pubsFiltered, _ := docFiltered["publications"].([]any)
+	if len(pubsFiltered) != 1 {
+		t.Fatalf("expected 1 archive for Manga, got %d", len(pubsFiltered))
 	}
 }

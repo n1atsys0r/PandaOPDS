@@ -249,3 +249,81 @@ func TestListHistoryAndSnapshot(t *testing.T) {
 		t.Fatalf("pagination failed: total=%d, items=%#v, err=%v", total2, p2, err)
 	}
 }
+
+func TestMatchReadingStatusAndFilteredHistory(t *testing.T) {
+	// 1. Boundary unit tests for MatchReadingStatus
+	cases := []struct {
+		hasRecord bool
+		prog      float64
+		filter    string
+		want      bool
+	}{
+		{false, 0.0, "unread", true},
+		{true, 0.0, "unread", true},
+		{true, 0.009, "unread", true},
+		{true, 0.01, "unread", false},
+		{true, 0.01, "reading", true},
+		{true, 0.5, "reading", true},
+		{true, 0.949, "reading", true},
+		{true, 0.95, "reading", false},
+		{true, 0.95, "completed", true},
+		{true, 0.98, "completed", true},
+		{true, 1.0, "completed", true},
+		{false, 0.0, "completed", false},
+		{true, 0.5, "", true},
+	}
+	for i, tc := range cases {
+		got := MatchReadingStatus(tc.hasRecord, tc.prog, tc.filter)
+		if got != tc.want {
+			t.Errorf("case %d MatchReadingStatus(%v, %v, %q) = %v, want %v", i, tc.hasRecord, tc.prog, tc.filter, got, tc.want)
+		}
+	}
+
+	// 2. Integration with store
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	// GID 1: Unread (0.005)
+	_, _, _ = s.Put(1, "tok1", Document{Modified: now.Add(time.Second), Device: Device{ID: "urn:uuid:dev", Name: "R"}, Progression: 0.005})
+	// GID 2: Reading (0.5)
+	_, _, _ = s.Put(2, "tok2", Document{Modified: now.Add(2 * time.Second), Device: Device{ID: "urn:uuid:dev", Name: "R"}, Progression: 0.5})
+	// GID 3: Completed (0.96)
+	_, _, _ = s.Put(3, "tok3", Document{Modified: now.Add(3 * time.Second), Device: Device{ID: "urn:uuid:dev", Name: "R"}, Progression: 0.96})
+
+	// Filter unread
+	unreadItems, unreadTotal, err := s.ListHistoryFiltered(0, 10, func(it HistoryItem) bool {
+		return MatchReadingStatus(true, it.Doc.Progression, "unread")
+	})
+	if err != nil || unreadTotal != 1 || len(unreadItems) != 1 || unreadItems[0].GID != 1 {
+		t.Fatalf("filter unread failed: total=%d, items=%+v, err=%v", unreadTotal, unreadItems, err)
+	}
+
+	// Filter reading
+	readingItems, readingTotal, err := s.ListHistoryFiltered(0, 10, func(it HistoryItem) bool {
+		return MatchReadingStatus(true, it.Doc.Progression, "reading")
+	})
+	if err != nil || readingTotal != 1 || len(readingItems) != 1 || readingItems[0].GID != 2 {
+		t.Fatalf("filter reading failed: total=%d, items=%+v, err=%v", readingTotal, readingItems, err)
+	}
+
+	// Filter completed
+	completedItems, completedTotal, err := s.ListHistoryFiltered(0, 10, func(it HistoryItem) bool {
+		return MatchReadingStatus(true, it.Doc.Progression, "completed")
+	})
+	if err != nil || completedTotal != 1 || len(completedItems) != 1 || completedItems[0].GID != 3 {
+		t.Fatalf("filter completed failed: total=%d, items=%+v, err=%v", completedTotal, completedItems, err)
+	}
+
+	// Test GetProgressions
+	progs, err := s.GetProgressions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progs["1/tok1"] != 0.005 || progs["2/tok2"] != 0.5 || progs["3/tok3"] != 0.96 {
+		t.Fatalf("unexpected progressions snapshot: %+v", progs)
+	}
+}
