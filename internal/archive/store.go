@@ -1763,19 +1763,29 @@ func (s *Store) recoverActivationLocked(rec *rootRecord) error {
 }
 
 func (s *Store) Remove(gid int, token string) bool {
+	return s.RemoveWithError(gid, token) == nil
+}
+
+// RemoveWithError removes a shelf and preserves the failing stage for callers
+// that need to diagnose storage problems. Missing ZIP payloads are tolerated.
+func (s *Store) RemoveWithError(gid int, token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conflicts[key(gid, token)] {
-		return false
+	id := key(gid, token)
+	if s.conflicts[id] {
+		return fmt.Errorf("archive identity for gid %d is marked conflicted", gid)
 	}
-	rec := s.rootLocked(gid, token)
-	if rec == nil || rec.key != key(gid, token) || !s.flatOwnedLocked(rec) {
-		return false
+	rec := s.roots[s.identityRoot[id]]
+	if rec == nil || rec.key != id {
+		return fmt.Errorf("archive state record for gid %d was not found", gid)
 	}
-	if s.writeDirtyMarker() != nil {
-		return false
+	if !s.flatOwnedLocked(rec) {
+		return fmt.Errorf("archive state ownership check failed for gid %d", gid)
 	}
-	versionDirs := map[string]bool{}
+	if err := s.writeDirtyMarker(); err != nil {
+		return fmt.Errorf("write archive state dirty marker: %w", archiveDeleteCause(err))
+	}
+	versionDirs := map[string]int{}
 	payloads := map[string]bool{}
 	for id, state := range versionRecords(rec.meta) {
 		versionGID, versionToken, ok := parseKey(id)
@@ -1786,7 +1796,10 @@ func (s *Store) Remove(gid int, token string) bool {
 		if payload != "" {
 			rel, err := filepath.Rel(s.DataRoot, payload)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return false
+				if err != nil {
+					return fmt.Errorf("resolve archive payload path for %d: %w", versionGID, err)
+				}
+				return fmt.Errorf("archive payload path for %d escapes data root", versionGID)
 			}
 			payloads[payload] = true
 		}
@@ -1795,25 +1808,25 @@ func (s *Store) Remove(gid int, token string) bool {
 		}
 		dir, ok := s.versionDirLocked(rec, versionGID, versionToken)
 		if !ok || !s.versionDirOwnedLocked(rec, versionGID, versionToken) {
-			return false
+			return fmt.Errorf("archive version directory ownership check failed for gid %d", versionGID)
 		}
-		versionDirs[dir] = true
+		versionDirs[dir] = versionGID
 	}
 	for payload := range payloads {
 		if s.zipPool != nil {
 			s.zipPool.invalidate(payload)
 		}
 		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
-			return false
+			return fmt.Errorf("remove archive payload for gid %d: %w", gid, archiveDeleteCause(err))
 		}
 	}
-	for dir := range versionDirs {
-		if os.RemoveAll(dir) != nil {
-			return false
+	for dir, versionGID := range versionDirs {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove archive version directory for gid %d: %w", versionGID, archiveDeleteCause(err))
 		}
 	}
-	if os.RemoveAll(rec.dir) != nil {
-		return false
+	if err := os.RemoveAll(rec.dir); err != nil {
+		return fmt.Errorf("remove archive state directory for gid %d: %w", gid, archiveDeleteCause(err))
 	}
 	delete(s.roots, rec.key)
 	for id, root := range s.identityRoot {
@@ -1822,27 +1835,51 @@ func (s *Store) Remove(gid int, token string) bool {
 		}
 	}
 	s.scheduleIndexSnapshotLocked()
-	return true
+	return nil
+}
+
+// archiveDeleteCause retains the filesystem operation and errno while omitting
+// the path, which may contain a gallery token in legacy directory layouts.
+func archiveDeleteCause(err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Errorf("%s: %w", pathErr.Op, pathErr.Err)
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return fmt.Errorf("%s: %w", linkErr.Op, linkErr.Err)
+	}
+	return err
 }
 
 // ResetToUnarchived removes all downloaded ZIP payloads and extra version
 // directories for a shelf while retaining its root catalog record as
 // "unarchived" in ARCHIVE_STATE_DIR.
 func (s *Store) ResetToUnarchived(gid int, token string) bool {
+	return s.ResetToUnarchivedWithError(gid, token) == nil
+}
+
+// ResetToUnarchivedWithError demotes a shelf while retaining its catalog
+// record and reports the failing stage. Missing ZIP payloads are tolerated.
+func (s *Store) ResetToUnarchivedWithError(gid int, token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conflicts[key(gid, token)] {
-		return false
+	id := key(gid, token)
+	if s.conflicts[id] {
+		return fmt.Errorf("archive identity for gid %d is marked conflicted", gid)
 	}
-	rec := s.rootLocked(gid, token)
-	if rec == nil || !s.flatOwnedLocked(rec) {
-		return false
+	rec := s.roots[s.identityRoot[id]]
+	if rec == nil {
+		return fmt.Errorf("archive state record for gid %d was not found", gid)
+	}
+	if !s.flatOwnedLocked(rec) {
+		return fmt.Errorf("archive state ownership check failed for gid %d", gid)
 	}
 	rootGID, rootToken := s.rootIdentity(rec)
-	if s.writeDirtyMarker() != nil {
-		return false
+	if err := s.writeDirtyMarker(); err != nil {
+		return fmt.Errorf("write archive state dirty marker: %w", archiveDeleteCause(err))
 	}
-	versionDirs := map[string]bool{}
+	versionDirs := map[string]int{}
 	payloads := map[string]bool{}
 	for id, state := range versionRecords(rec.meta) {
 		versionGID, versionToken, ok := parseKey(id)
@@ -1853,7 +1890,10 @@ func (s *Store) ResetToUnarchived(gid int, token string) bool {
 		if payload != "" {
 			rel, err := filepath.Rel(s.DataRoot, payload)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return false
+				if err != nil {
+					return fmt.Errorf("resolve archive payload path for %d: %w", versionGID, err)
+				}
+				return fmt.Errorf("archive payload path for %d escapes data root", versionGID)
 			}
 			payloads[payload] = true
 		}
@@ -1862,21 +1902,21 @@ func (s *Store) ResetToUnarchived(gid int, token string) bool {
 		}
 		dir, ok := s.versionDirLocked(rec, versionGID, versionToken)
 		if !ok || !s.versionDirOwnedLocked(rec, versionGID, versionToken) {
-			return false
+			return fmt.Errorf("archive version directory ownership check failed for gid %d", versionGID)
 		}
-		versionDirs[dir] = true
+		versionDirs[dir] = versionGID
 	}
 	for payload := range payloads {
 		if s.zipPool != nil {
 			s.zipPool.invalidate(payload)
 		}
 		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
-			return false
+			return fmt.Errorf("remove archive payload for gid %d: %w", gid, archiveDeleteCause(err))
 		}
 	}
-	for dir := range versionDirs {
-		if os.RemoveAll(dir) != nil {
-			return false
+	for dir, versionGID := range versionDirs {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove archive version directory for gid %d: %w", versionGID, archiveDeleteCause(err))
 		}
 	}
 	_ = os.Remove(filepath.Join(rec.dir, partName))
@@ -1949,7 +1989,7 @@ func (s *Store) ResetToUnarchived(gid int, token string) bool {
 	rec.meta = nextMeta
 	if err := s.persistLocked(rec); err != nil {
 		rec.meta = oldMeta
-		return false
+		return fmt.Errorf("persist unarchived state for gid %d: %w", rootGID, archiveDeleteCause(err))
 	}
 	for id, root := range s.identityRoot {
 		if root == rec.key && id != rec.key {
@@ -1957,7 +1997,7 @@ func (s *Store) ResetToUnarchived(gid int, token string) bool {
 		}
 	}
 	s.registerIdentityLocked(rec, rootGID, rootToken)
-	return true
+	return nil
 }
 
 func (s *Store) Stats() map[string]any {

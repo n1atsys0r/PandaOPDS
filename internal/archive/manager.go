@@ -1146,25 +1146,37 @@ func (m *Manager) RecoverInterruptedUpgrades() int {
 	return rolled
 }
 func (m *Manager) Remove(gid int, token string) bool {
+	return m.RemoveWithError(gid, token) == nil
+}
+
+// RemoveWithError removes a shelf and preserves the storage failure reason for
+// administrative diagnostics.
+func (m *Manager) RemoveWithError(gid int, token string) error {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	m.stopAndCleanStagingLocked(gid, token)
-	removed := m.Store.Remove(gid, token)
-	if removed {
-		m.notifyAvailabilityChanged()
+	if err := m.Store.RemoveWithError(gid, token); err != nil {
+		return fmt.Errorf("remove archive record: %w", err)
 	}
-	return removed
+	m.notifyAvailabilityChanged()
+	return nil
 }
 
 func (m *Manager) DemoteToUnarchived(gid int, token string) bool {
+	return m.DemoteToUnarchivedWithError(gid, token) == nil
+}
+
+// DemoteToUnarchivedWithError retains the shelf record and exposes the
+// underlying storage failure to the API logger.
+func (m *Manager) DemoteToUnarchivedWithError(gid int, token string) error {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	m.stopAndCleanStagingLocked(gid, token)
-	removed := m.Store.ResetToUnarchived(gid, token)
-	if removed {
-		m.notifyAvailabilityChanged()
+	if err := m.Store.ResetToUnarchivedWithError(gid, token); err != nil {
+		return fmt.Errorf("demote archive to unarchived: %w", err)
 	}
-	return removed
+	m.notifyAvailabilityChanged()
+	return nil
 }
 
 func (m *Manager) stopAndCleanStagingLocked(gid int, token string) {

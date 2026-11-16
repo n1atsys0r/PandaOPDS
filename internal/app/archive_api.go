@@ -217,7 +217,9 @@ func (s *Server) archiveDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	if s.Store.Get(gid, token) == nil {
+	entry := s.Store.Get(gid, token)
+	if entry == nil {
+		s.logArchiveDeleteFailure(gid, "lookup", "state_record", errors.New("archive state record not found"))
 		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
 		return
 	}
@@ -236,21 +238,32 @@ func (s *Server) archiveDelete(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	_ = s.Favorites.State.ClearArchiveTracking(shelfKeys)
+	if err := s.Favorites.State.ClearArchiveTracking(shelfKeys); err != nil {
+		s.logArchiveDeleteFailure(gid, "tracking", "clear_archive_tracking (continuing)", err)
+	}
 	if isFavorited {
-		if !s.Archives.DemoteToUnarchived(gid, token) {
+		if err := s.Archives.DemoteToUnarchivedWithError(gid, token); err != nil {
+			s.logArchiveDeleteFailure(gid, "favorite_demote", "reset_to_unarchived", err)
 			writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"removed": true, "retained_catalog": true})
 		return
 	}
-	if !s.Archives.Remove(gid, token) {
+	if err := s.Archives.RemoveWithError(gid, token); err != nil {
+		s.logArchiveDeleteFailure(gid, "remove", "remove_archive", err)
 		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"removed": true, "retained_catalog": false})
 }
+
+func (s *Server) logArchiveDeleteFailure(gid int, branch, stage string, err error) {
+	if s.Logger != nil {
+		s.Logger.Printf("archive delete failed: gid=%d branch=%s stage=%s: %v", gid, branch, stage, err)
+	}
+}
+
 func hasAllowedCoverThumb(snapshot map[string]any, allowedHosts []string) bool {
 	if snapshot == nil {
 		return false
