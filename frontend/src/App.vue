@@ -313,16 +313,27 @@ const EH_CATEGORIES = [
 const createArchiveDialogOpen = ref(false);
 const readerArchive = ref(null);
 const lastReaderArchive = ref(null);
+let isClosingReader = false;
 
 function closeReader(fromHistory = false) {
-  if (!readerArchive.value) return;
+  if (!readerArchive.value && !isClosingReader) return;
+  const hadArchive = Boolean(readerArchive.value);
   readerArchive.value = null;
   if (
     !fromHistory &&
+    !isClosingReader &&
+    hadArchive &&
     typeof window !== "undefined" &&
     window.history.state?.reader
   ) {
-    window.history.back();
+    isClosingReader = true;
+    try {
+      window.history.back();
+    } finally {
+      setTimeout(() => {
+        isClosingReader = false;
+      }, 80);
+    }
   }
 }
 
@@ -335,12 +346,14 @@ const readerOpen = computed({
 
 function onReaderPopState(e) {
   if (readerArchive.value && !e.state?.reader) {
+    isClosingReader = false;
     closeReader(true);
   } else if (
     !readerArchive.value &&
     e.state?.reader &&
     lastReaderArchive.value
   ) {
+    isClosingReader = false;
     readerArchive.value = lastReaderArchive.value;
   }
 }
@@ -363,7 +376,9 @@ function archivePageCount(a) {
 }
 
 function canReadOnline(a) {
-  if (!a || archivePageCount(a) <= 0) return false;
+  if (!a) return false;
+  if (a.loading) return true;
+  if (archivePageCount(a) <= 0) return false;
   if (!a.status) return true;
   return ["ready", "unarchived", "failed"].includes(a.status);
 }
@@ -374,7 +389,13 @@ function openReader(a) {
   readerArchive.value = a;
   if (typeof window !== "undefined") {
     window.history.pushState(
-      { ...window.history.state, reader: true },
+      {
+        page: s.page.value,
+        subRoute: s.exploreSubRoute.value
+          ? { ...s.exploreSubRoute.value }
+          : null,
+        reader: true,
+      },
       "",
       window.location.href,
     );
@@ -726,7 +747,7 @@ function cardActionLabel(a) {
           </span>
         </div>
       </SidebarHeader>
-      <AppSidebarNav :page="s.page.value" @navigate="s.route" />
+      <AppSidebarNav :page="s.page.value" @navigate="(p) => s.route(p, 'replace')" />
       <SidebarFooter
         v-if="s.authToken.value || s.status.value?.app?.auth_enabled"
         class="sidebar-footer border-t border-sidebar-border/60 p-3 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:items-center"
@@ -771,7 +792,7 @@ function cardActionLabel(a) {
                 <BreadcrumbLink
                   as="button"
                   type="button"
-                  @click="s.route('explore')"
+                  @click="s.exitExploreSubRoute(true)"
                 >
                   {{ t("nav.explore") }}
                 </BreadcrumbLink>
@@ -1247,7 +1268,7 @@ function cardActionLabel(a) {
                     variant="ghost"
                     size="xs"
                     class="h-7 text-xs gap-1"
-                    @click="s.route('home')"
+                    @click="s.route('home', 'replace')"
                   >
                     {{ t("dashboard.enter_editor") }} <ArrowUpRight :size="12" />
                   </Button>

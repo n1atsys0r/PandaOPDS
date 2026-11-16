@@ -712,7 +712,7 @@ function closeReader() {
 
 function onKeydown(e) {
   if (!props.open) return;
-  if (e.key === "Escape" || e.key === "BrowserBack") {
+  if (e.key === "Escape") {
     e.preventDefault();
     e.stopPropagation();
     closeReader();
@@ -724,15 +724,6 @@ function onKeydown(e) {
       return;
     e.preventDefault();
     toggleOverlay();
-  }
-}
-
-function onAuxClick(e) {
-  if (!props.open) return;
-  if (e.button === 3) {
-    e.preventDefault();
-    e.stopPropagation();
-    closeReader();
   }
 }
 
@@ -862,13 +853,11 @@ watch(
 onMounted(() => {
   window.addEventListener("beforeunload", flushRemoteSync);
   window.addEventListener("keydown", onKeydown, { capture: false });
-  window.addEventListener("auxclick", onAuxClick);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", flushRemoteSync);
   window.removeEventListener("keydown", onKeydown, { capture: false });
-  window.removeEventListener("auxclick", onAuxClick);
   lockBodyScroll(false);
   cleanupSessionResources();
 });

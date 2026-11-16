@@ -1157,10 +1157,12 @@ function enterExploreSubRoute(navItem, pushHistory = true) {
   state.exploreSubRoute = {
     title: navItem.title || t("notice.gallery_list"),
     href: navItem.href,
+    baseHref: navItem.baseHref || null,
+    fromHome: navItem.fromHome || false,
   };
   if (pushHistory && typeof window !== "undefined") {
     window.history.pushState(
-      { page: "explore", subRoute: state.exploreSubRoute },
+      { page: "explore", subRoute: { ...state.exploreSubRoute } },
       "",
       `#explore/${encodeURIComponent(navItem.title || "list")}`,
     );
@@ -1173,10 +1175,12 @@ function replaceExploreSubRoute(navItem) {
   state.exploreSubRoute = {
     title: navItem.title || t("notice.gallery_list"),
     href: navItem.href,
+    baseHref: navItem.baseHref || null,
+    fromHome: navItem.fromHome || false,
   };
   if (typeof window !== "undefined") {
     window.history.replaceState(
-      { page: "explore", subRoute: state.exploreSubRoute },
+      { page: "explore", subRoute: { ...state.exploreSubRoute } },
       "",
       `#explore/${encodeURIComponent(navItem.title || "list")}`,
     );
@@ -1193,7 +1197,7 @@ function exitExploreSubRoute(popHistory = true) {
   } else {
     state.exploreSubRoute = null;
     if (typeof window !== "undefined") {
-      window.history.pushState({ page: "explore", subRoute: null }, "", "#explore");
+      window.history.replaceState({ page: "explore", subRoute: null }, "", "#explore");
     }
   }
 }
@@ -1205,11 +1209,14 @@ function onPopState(e) {
       typeof window !== "undefined"
         ? window.location.hash.replace(/^#\/?/, "")
         : "";
-    const rootPage = rawHash.split("/")[0] || "dashboard";
+    const parts = rawHash.split("/");
+    const rootPage = parts[0] || "dashboard";
     if (["dashboard", "explore", "archive", "config", "home"].includes(rootPage)) {
       state.page = rootPage;
     }
-    state.exploreSubRoute = null;
+    if (rootPage !== "explore" || !parts[1]) {
+      state.exploreSubRoute = null;
+    }
     return;
   }
   if (s.page && s.page !== state.page) {
@@ -1218,11 +1225,11 @@ function onPopState(e) {
   state.exploreSubRoute = s.subRoute || null;
 }
 
-function route(v, pushHistory = true) {
+function route(v, historyMode = true) {
   state.page = v;
   state.mobile = false;
   state.error = "";
-  if (v !== "explore" || pushHistory) {
+  if (v !== "explore" || historyMode !== false) {
     state.exploreSubRoute = null;
   }
   if (v === "dashboard") loadStatus();
@@ -1241,8 +1248,12 @@ function route(v, pushHistory = true) {
     loadCategories();
     loadStatus();
   }
-  if (pushHistory && typeof window !== "undefined") {
-    window.history.pushState({ page: v, subRoute: null }, "", `#${v}`);
+  if (typeof window !== "undefined") {
+    if (historyMode === true) {
+      window.history.pushState({ page: v, subRoute: null }, "", `#${v}`);
+    } else if (historyMode === "replace") {
+      window.history.replaceState({ page: v, subRoute: null }, "", `#${v}`);
+    }
   }
 }
 async function login(username, password) {
