@@ -180,6 +180,7 @@ func (s *Server) register() {
 	m.HandleFunc("POST /api/favorites/sync/run", s.favoriteSyncRun)
 	m.HandleFunc("POST /api/rating", s.rateGallery)
 	m.HandleFunc("GET /api/status", s.apiStatus)
+	m.HandleFunc("GET /api/tags/suggestions", s.tagSuggestions)
 	m.HandleFunc("GET /api/config", s.apiConfig)
 	m.HandleFunc("GET /api/config/edit", s.configEdit)
 	m.HandleFunc("PATCH /api/config/edit", s.configEdit)

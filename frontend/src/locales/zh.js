@@ -315,6 +315,7 @@ export default {
   explore: {
     title: "探索",
     search_placeholder: "搜索画廊、标签或关键词...",
+    tag_suggestions: "标签建议",
     clear_search: "清空搜索",
     edit_home: "编排",
     nav_label: "探索导航",

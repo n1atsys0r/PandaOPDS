@@ -4253,6 +4253,85 @@
         }
       }
     },
+    "/api/tags/suggestions": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Tag Search Suggestions",
+        "description": "Returns up to 10 prefix matches from the tag translation database. Suggestions are available only when tag translation is enabled. The query is not stored.",
+        "operationId": "tag_suggestions_api_tags_suggestions_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": "Current tag fragment; native and translated tag names are matched by prefix. A leading '-' is preserved for excluded tags."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching tag suggestions, or an empty array when tag translation is disabled or no tags match.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "suggestions"
+                  ],
+                  "properties": {
+                    "suggestions": {
+                      "type": "array",
+                      "maxItems": 10,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "query",
+                          "display"
+                        ],
+                        "properties": {
+                          "query": {
+                            "type": "string",
+                            "description": "Native EH tag query syntax to insert into the search field."
+                          },
+                          "display": {
+                            "type": "string",
+                            "description": "Translated tag label with the native namespace and key."
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "suggestions": [
+                    {
+                      "query": "female:catgirl",
+                      "display": "女性:猫娘 (female:catgirl)"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config": {
       "get": {
         "tags": [

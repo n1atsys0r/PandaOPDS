@@ -17,23 +17,38 @@ import (
 )
 
 type TagTranslator struct {
-	settings config.Settings
-	client   *http.Client
-	mu       sync.RWMutex
-	refresh  sync.Mutex
-	names    map[string]string
-	abbrs    map[string]string
-	tags     map[string]string
-	forward  map[string]string
-	reverse  map[string][]tagTranslation
-	bare     map[string][]tagTranslation
-	nsLookup map[string]string
-	savedAt  time.Time
-	cancel   context.CancelFunc
-	done     chan struct{}
+	settings   config.Settings
+	client     *http.Client
+	mu         sync.RWMutex
+	refresh    sync.Mutex
+	names      map[string]string
+	abbrs      map[string]string
+	tags       map[string]string
+	forward    map[string]string
+	reverse    map[string][]tagTranslation
+	bare       map[string][]tagTranslation
+	nsLookup   map[string]string
+	suggest    map[string][]tagSuggestionIndexEntry
+	suggestAll []tagSuggestionIndexEntry
+	savedAt    time.Time
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
 type tagTranslation struct{ namespace, key string }
+
+// TagSuggestion is a translated display label paired with the native EH query
+// syntax that can be inserted into a search expression.
+type TagSuggestion struct {
+	Query   string `json:"query"`
+	Display string `json:"display"`
+}
+
+type tagSuggestionIndexEntry struct {
+	term  string
+	query string
+	label string
+}
 
 var (
 	translationTokenRE = regexp.MustCompile(`[^[:space:]]+:"[^"]*"|"[^"]*"|[^[:space:]]+`)
@@ -45,7 +60,7 @@ func NewTagTranslator(settings config.Settings, transport http.RoundTripper) *Ta
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	t := &TagTranslator{settings: settings, client: &http.Client{Transport: transport, Timeout: time.Duration(settings.TimeoutSeconds * 10 * float64(time.Second))}, names: map[string]string{}, abbrs: map[string]string{}, tags: map[string]string{}, forward: map[string]string{}, reverse: map[string][]tagTranslation{}, bare: map[string][]tagTranslation{}, nsLookup: map[string]string{}}
+	t := &TagTranslator{settings: settings, client: &http.Client{Transport: transport, Timeout: time.Duration(settings.TimeoutSeconds * 10 * float64(time.Second))}, names: map[string]string{}, abbrs: map[string]string{}, tags: map[string]string{}, forward: map[string]string{}, reverse: map[string][]tagTranslation{}, bare: map[string][]tagTranslation{}, nsLookup: map[string]string{}, suggest: map[string][]tagSuggestionIndexEntry{}}
 	t.load()
 	return t
 }
@@ -68,6 +83,8 @@ func (t *TagTranslator) rebuildLocked() {
 	t.reverse = map[string][]tagTranslation{}
 	t.bare = map[string][]tagTranslation{}
 	t.nsLookup = map[string]string{}
+	t.suggest = map[string][]tagSuggestionIndexEntry{}
+	t.suggestAll = nil
 	for ns, cn := range t.names {
 		t.nsLookup[strings.ToLower(ns)] = ns
 		if cn != "" {
@@ -98,7 +115,87 @@ func (t *TagTranslator) rebuildLocked() {
 		t.forward[translationKey(ns, key)] = name
 		t.reverse[translationKey(ns, name)] = append(t.reverse[translationKey(ns, name)], tagTranslation{namespace: ns, key: key})
 		t.bare[strings.ToLower(name)] = append(t.bare[strings.ToLower(name)], tagTranslation{namespace: ns, key: key})
+		if strings.EqualFold(ns, "reclass") {
+			continue
+		}
+		canonical := formatSearchTag(ns, key)
+		label := canonical
+		if displayNS := t.names[ns]; displayNS != "" {
+			label = displayNS + ":" + name + " (" + canonical + ")"
+		}
+		entry := tagSuggestionIndexEntry{query: canonical, label: label}
+		indexed := []tagSuggestionIndexEntry{{term: strings.ToLower(key), query: entry.query, label: entry.label}, {term: strings.ToLower(name), query: entry.query, label: entry.label}}
+		t.suggest[strings.ToLower(ns)] = append(t.suggest[strings.ToLower(ns)], indexed...)
+		t.suggestAll = append(t.suggestAll, indexed...)
 	}
+	sortSuggestions := func(entries []tagSuggestionIndexEntry) {
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].term == entries[j].term {
+				return entries[i].query < entries[j].query
+			}
+			return entries[i].term < entries[j].term
+		})
+	}
+	for _, entries := range t.suggest {
+		sortSuggestions(entries)
+	}
+	sortSuggestions(t.suggestAll)
+}
+
+// Suggestions returns a bounded prefix match against native tag names and
+// translated names. A leading '-' is retained as the EH exclusion operator.
+func (t *TagTranslator) Suggestions(query string, limit int) []TagSuggestion {
+	if !t.settings.TagTranslationEnabled {
+		return []TagSuggestion{}
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []TagSuggestion{}
+	}
+	negative := strings.HasPrefix(query, "-")
+	if negative {
+		query = strings.TrimPrefix(query, "-")
+	}
+	if limit <= 0 || limit > 10 {
+		limit = 10
+	}
+	nsPrefix, term, scoped := strings.Cut(query, ":")
+	var ns string
+	if scoped {
+		if term == "" {
+			return []TagSuggestion{}
+		}
+		t.mu.RLock()
+		ns = t.resolveNamespaceLocked(nsPrefix)
+		entries := t.suggest[strings.ToLower(ns)]
+		matches := prefixSuggestions(entries, strings.ToLower(strings.Trim(term, `"`)), limit, negative)
+		t.mu.RUnlock()
+		return matches
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return prefixSuggestions(t.suggestAll, strings.ToLower(strings.Trim(query, `"`)), limit, negative)
+}
+
+func prefixSuggestions(entries []tagSuggestionIndexEntry, prefix string, limit int, negative bool) []TagSuggestion {
+	if prefix == "" {
+		return []TagSuggestion{}
+	}
+	start := sort.Search(len(entries), func(i int) bool { return entries[i].term >= prefix })
+	out := make([]TagSuggestion, 0, limit)
+	seen := map[string]bool{}
+	for i := start; i < len(entries) && strings.HasPrefix(entries[i].term, prefix) && len(out) < limit; i++ {
+		if seen[entries[i].query] {
+			continue
+		}
+		seen[entries[i].query] = true
+		query := entries[i].query
+		if negative {
+			query = "-" + query
+		}
+		out = append(out, TagSuggestion{Query: query, Display: entries[i].label})
+	}
+	return out
 }
 
 func (t *TagTranslator) load() {

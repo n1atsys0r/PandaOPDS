@@ -31,6 +31,12 @@ import {
 } from "@/components/ui/dialog";
 import CoverImage from "@/components/CoverImage.vue";
 import {
+  activeSearchFragment,
+  moveSuggestionIndex,
+  replaceSearchFragment,
+  selectedSuggestion,
+} from "@/tag-suggestions.js";
+import {
   CompassIcon as Compass,
   HomeIcon as Home,
   ChevronLeftIcon as ChevronLeft,
@@ -101,6 +107,147 @@ const shelfHoverState = reactive({});
 
 // Search state & OpenSearch logic
 const searchInput = ref("");
+const searchBoxRef = ref(null);
+const searchSuggestions = ref([]);
+const searchSuggestionIndex = ref(-1);
+const searchFocused = ref(false);
+let searchSuggestionTimer = null;
+let searchSuggestionController = null;
+let skipSearchSuggestionValue = null;
+
+function stopSearchSuggestionRequest() {
+  if (searchSuggestionTimer) clearTimeout(searchSuggestionTimer);
+  searchSuggestionTimer = null;
+  searchSuggestionController?.abort();
+  searchSuggestionController = null;
+}
+
+function hideSearchSuggestions() {
+  stopSearchSuggestionRequest();
+  searchSuggestions.value = [];
+  searchSuggestionIndex.value = -1;
+}
+
+function currentSearchFragment(value = searchInput.value) {
+  const input = searchBoxRef.value?.querySelector("input");
+  if (!input) return activeSearchFragment(value, value.length, value.length);
+  return activeSearchFragment(value, input.selectionStart, input.selectionEnd);
+}
+
+function scheduleSearchSuggestions(value = searchInput.value) {
+  stopSearchSuggestionRequest();
+  searchSuggestions.value = [];
+  searchSuggestionIndex.value = -1;
+  if (!searchFocused.value) return;
+  searchSuggestionTimer = setTimeout(async () => {
+    searchSuggestionTimer = null;
+    if (value !== searchInput.value) return;
+    const fragment = currentSearchFragment(value);
+    if (fragment.partialSelection) return;
+    const query = fragment.text.trim();
+    const tagTerm = query.includes(":")
+      ? query.slice(query.indexOf(":") + 1)
+      : query;
+    if (!tagTerm.replace(/^"/, "").trim()) return;
+
+    const controller = new AbortController();
+    searchSuggestionController = controller;
+    try {
+      const { data } = await s.api(
+        `/api/tags/suggestions?q=${encodeURIComponent(query)}`,
+        { signal: controller.signal },
+      );
+      if (
+        controller.signal.aborted ||
+        searchSuggestionController !== controller ||
+        value !== searchInput.value
+      )
+        return;
+      searchSuggestions.value = data.suggestions || [];
+      searchSuggestionIndex.value = searchSuggestions.value.length ? 0 : -1;
+    } catch {
+      if (!controller.signal.aborted) {
+        searchSuggestions.value = [];
+        searchSuggestionIndex.value = -1;
+      }
+    }
+  }, 180);
+}
+
+watch(searchInput, (value) => {
+  if (skipSearchSuggestionValue === value) {
+    skipSearchSuggestionValue = null;
+    return;
+  }
+  scheduleSearchSuggestions(value);
+});
+
+function focusSearchSuggestions() {
+  searchFocused.value = true;
+  scheduleSearchSuggestions();
+}
+
+function blurSearchSuggestions() {
+  searchFocused.value = false;
+  hideSearchSuggestions();
+}
+
+function handleSearchKeydown(event) {
+  if (event.key === "ArrowDown" && searchSuggestions.value.length) {
+    event.preventDefault();
+    searchSuggestionIndex.value = moveSuggestionIndex(
+      searchSuggestionIndex.value,
+      searchSuggestions.value.length,
+      1,
+    );
+  } else if (event.key === "ArrowUp" && searchSuggestions.value.length) {
+    event.preventDefault();
+    searchSuggestionIndex.value = moveSuggestionIndex(
+      searchSuggestionIndex.value,
+      searchSuggestions.value.length,
+      -1,
+    );
+  } else if (event.key === "Escape" && searchSuggestions.value.length) {
+    event.preventDefault();
+    hideSearchSuggestions();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    const suggestion = selectedSuggestion(
+      searchSuggestions.value,
+      searchSuggestionIndex.value,
+    );
+    if (suggestion) selectSearchSuggestion(suggestion);
+    else handleSearchSubmit();
+  }
+}
+
+function selectSearchSuggestion(suggestion) {
+  const fragment = currentSearchFragment();
+  const input = searchBoxRef.value?.querySelector("input");
+  const nextValue = replaceSearchFragment(
+    searchInput.value,
+    fragment,
+    suggestion.query,
+  );
+  skipSearchSuggestionValue =
+    nextValue === searchInput.value ? null : nextValue;
+  searchInput.value = nextValue;
+  const caret = fragment.start + suggestion.query.length;
+  hideSearchSuggestions();
+  nextTick(() => {
+    input?.focus();
+    input?.setSelectionRange(caret, caret);
+  });
+}
+
+function handleSearchKeyup(event) {
+  if (
+    event.shiftKey ||
+    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+  ) {
+    scheduleSearchSuggestions();
+  }
+}
 
 function getOpenSearchUrl(query) {
   const q = (query || "").trim();
@@ -173,11 +320,13 @@ function executeSearch(query, displayTitle) {
 
 function handleSearchSubmit() {
   if (!searchInput.value.trim()) return;
+  hideSearchSuggestions();
   executeSearch(searchInput.value.trim());
 }
 
 function clearSearch() {
   searchInput.value = "";
+  hideSearchSuggestions();
 }
 
 function handleTagClick(tagName) {
@@ -2409,6 +2558,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopSearchSuggestionRequest();
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("scroll", handleWindowScroll);
   sentinelObserver?.disconnect();
@@ -2446,7 +2596,10 @@ onUnmounted(() => {
       <!-- Search Bar & Actions -->
       <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
         <!-- Search Input with OpenSearch trigger -->
-        <div class="relative flex items-center w-full sm:w-60 md:w-72">
+        <div
+          ref="searchBoxRef"
+          class="relative flex items-center w-full sm:w-60 md:w-72"
+        >
           <Search
             class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none"
           />
@@ -2454,7 +2607,21 @@ onUnmounted(() => {
             v-model="searchInput"
             :placeholder="t('explore.search_placeholder')"
             class="h-8 pl-8 pr-7 text-xs bg-card/60 border-border/80 focus-visible:bg-background"
-            @keydown.enter="handleSearchSubmit"
+            role="combobox"
+            aria-autocomplete="list"
+            :aria-expanded="searchFocused && searchSuggestions.length > 0"
+            aria-controls="tag-search-suggestions"
+            :aria-activedescendant="
+              searchSuggestionIndex >= 0
+                ? `tag-search-suggestion-${searchSuggestionIndex}`
+                : undefined
+            "
+            @focus="focusSearchSuggestions"
+            @blur="blurSearchSuggestions"
+            @click="scheduleSearchSuggestions()"
+            @mouseup="scheduleSearchSuggestions()"
+            @keydown="handleSearchKeydown"
+            @keyup="handleSearchKeyup"
           />
           <button
             v-if="searchInput"
@@ -2465,6 +2632,37 @@ onUnmounted(() => {
           >
             <X class="size-3" />
           </button>
+          <ul
+            v-if="searchFocused && searchSuggestions.length"
+            id="tag-search-suggestions"
+            role="listbox"
+            :aria-label="t('explore.tag_suggestions')"
+            class="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+          >
+            <li
+              v-for="(suggestion, index) in searchSuggestions"
+              :key="suggestion.query"
+              role="presentation"
+            >
+              <button
+                type="button"
+                :id="`tag-search-suggestion-${index}`"
+                role="option"
+                :aria-selected="index === searchSuggestionIndex"
+                :class="[
+                  'flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs outline-none',
+                  index === searchSuggestionIndex
+                    ? 'bg-accent text-accent-foreground'
+                    : 'hover:bg-accent/70',
+                ]"
+                @mousedown.prevent
+                @mouseenter="searchSuggestionIndex = index"
+                @click="selectSearchSuggestion(suggestion)"
+              >
+                {{ suggestion.display }}
+              </button>
+            </li>
+          </ul>
         </div>
         <Button
           variant="default"

@@ -324,6 +324,7 @@ export default {
   explore: {
     title: "Explore",
     search_placeholder: "Search galleries, tags, or keywords...",
+    tag_suggestions: "Tag suggestions",
     clear_search: "Clear Search",
     edit_home: "Orchestration",
     nav_label: "Explore Navigation",
