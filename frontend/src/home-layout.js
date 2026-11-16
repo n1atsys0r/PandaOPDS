@@ -151,6 +151,28 @@ export function isValidSlug(slug) {
   return /^[a-zA-Z0-9_-]+$/.test(slug);
 }
 
+export function replacePageSlugReferences(navigation, pages, oldSlug, newSlug) {
+  if (!oldSlug || !newSlug || oldSlug === newSlug) return;
+
+  const updateTargets = (items = []) => {
+    for (const item of items) {
+      if (item.type === "page" && item.query === oldSlug) {
+        item.query = newSlug;
+      }
+    }
+  };
+
+  updateTargets(navigation);
+  for (const page of pages || []) {
+    const layout = page.layout;
+    if (!layout) continue;
+    updateTargets(layout.navigation);
+    for (const group of layout.groups || []) {
+      if (group.kind === "navigation") updateTargets(group.items);
+    }
+  }
+}
+
 export function createDefaultGlobalNavigation() {
   return [
     {
@@ -405,22 +427,14 @@ export function serializeHomeLayout(layout, mode) {
     query:
       x.query ||
       (x.type === "preset" ? "latest" : x.type === "search" ? "" : "latest"),
-    title:
-      x.type === "page" ||
-      (!x.type && (x.query === "toplists" || x.query === "home"))
-        ? ""
-        : x.title || "",
+    title: x.title || "",
   }));
   let content = [];
   if (normalizedMode === "groups") {
     content = (layout.groups || []).map((x) => {
       if (x.kind === "navigation") {
         const items = (x.items || []).map((it) => ({
-          title:
-            it.type === "page" ||
-            (!it.type && (it.query === "toplists" || it.query === "home"))
-              ? ""
-              : it.title || "",
+          title: it.title || "",
           type:
             it.type ||
             (it.query && isKnownPreset(it.query)

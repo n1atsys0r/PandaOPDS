@@ -7,6 +7,7 @@ import {
   createDefaultHomePages,
   createDefaultSearchFacets,
   isKnownPreset,
+  replacePageSlugReferences,
   serializeHomeLayout,
   splitHomeSections,
   replacesAlternateMode,
@@ -240,7 +241,7 @@ test("page navigation items serialize and validate cleanly", () => {
   const pageNavLayout = {
     navigation: [
       { title: "同人专区", type: "page", query: "doujin" },
-      { title: "返回主页", type: "page", query: "home" },
+      { title: "返回首页", type: "page", query: "home" },
     ],
     publication: null,
     facets: [],
@@ -251,9 +252,9 @@ test("page navigation items serialize and validate cleanly", () => {
   assert.equal(serialized[0].kind, "navigation");
   assert.equal(serialized[0].type, "page");
   assert.equal(serialized[0].query, "doujin");
-  assert.equal(serialized[0].title, "");
+  assert.equal(serialized[0].title, "同人专区");
   assert.equal(serialized[1].query, "home");
-  assert.equal(serialized[1].title, "");
+  assert.equal(serialized[1].title, "返回首页");
 });
 
 test("navigation items support preset, search, and page types cleanly", () => {
@@ -285,7 +286,7 @@ test("navigation items support preset, search, and page types cleanly", () => {
   // Top navigation items
   assert.equal(serialized[0].type, "page");
   assert.equal(serialized[0].query, "doujin");
-  assert.equal(serialized[0].title, "");
+  assert.equal(serialized[0].title, "同人专区");
   assert.equal(serialized[1].type, "preset");
   assert.equal(serialized[1].query, "popular");
   assert.equal(serialized[2].type, "search");
@@ -296,7 +297,7 @@ test("navigation items support preset, search, and page types cleanly", () => {
   assert.equal(serialized[3].group, true);
   assert.equal(serialized[3].items.length, 3);
   assert.equal(serialized[3].items[0].type, "page");
-  assert.equal(serialized[3].items[0].title, "");
+  assert.equal(serialized[3].items[0].title, "同人");
   assert.equal(serialized[3].items[1].type, "preset");
   assert.equal(serialized[3].items[1].query, "toplist:yesterday");
   assert.equal(serialized[3].items[2].type, "search");
@@ -309,6 +310,47 @@ test("navigation items support preset, search, and page types cleanly", () => {
   assert.equal(split.navigation[2].type, "search");
   assert.equal(split.groups[0].items[1].type, "preset");
   assert.equal(split.groups[0].items[2].type, "search");
+});
+
+test("page slug updates all page navigation references", () => {
+  const navigation = [
+    { type: "page", query: "doujin", title: "专区入口" },
+    { type: "preset", query: "doujin", title: "Unrelated preset" },
+  ];
+  const pages = [
+    {
+      id: "home",
+      layout: {
+        navigation: [{ type: "page", query: "doujin", title: "主页入口" }],
+        groups: [
+          {
+            kind: "navigation",
+            items: [{ type: "page", query: "doujin", title: "分组入口" }],
+          },
+          {
+            kind: "publication",
+            items: [{ type: "page", query: "doujin", title: "Unrelated" }],
+          },
+        ],
+      },
+    },
+    {
+      id: "other",
+      layout: {
+        navigation: [{ type: "page", query: "other", title: "Other" }],
+        groups: [],
+      },
+    },
+  ];
+
+  replacePageSlugReferences(navigation, pages, "doujin", "gallery");
+
+  assert.equal(navigation[0].query, "gallery");
+  assert.equal(navigation[1].query, "doujin");
+  assert.equal(pages[0].layout.navigation[0].query, "gallery");
+  assert.equal(pages[0].layout.groups[0].items[0].query, "gallery");
+  assert.equal(pages[0].layout.groups[1].items[0].query, "doujin");
+  assert.equal(pages[1].layout.navigation[0].query, "other");
 });
 
 test("createDefaultGlobalNavigation and createDefaultHomePages decouple top navigation from pages", () => {

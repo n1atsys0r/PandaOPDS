@@ -439,7 +439,6 @@ const homeReplaceWarning = computed(() => {
 
 function handleNavTypeChange(item) {
   if (item.type === "page") {
-    item.title = "";
     if (!item.query || !s.pages.value.some((p) => p.id === item.query)) {
       item.query = s.pages.value[0]?.id || "home";
     }
@@ -1064,14 +1063,7 @@ function handleGroupKindChange(item) {
                           </select>
                         </div>
 
-                        <div
-                          :class="
-                            nav.type === 'page'
-                              ? 'sm:col-span-9'
-                              : 'sm:col-span-4'
-                          "
-                          class="flex flex-col gap-1.5"
-                        >
+                        <div class="sm:col-span-4 flex flex-col gap-1.5">
                           <label class="text-xs font-medium text-foreground">
                             {{
                               nav.type === "page"
@@ -1144,10 +1136,7 @@ function handleGroupKindChange(item) {
                           />
                         </div>
 
-                        <div
-                          v-if="nav.type !== 'page'"
-                          class="sm:col-span-5 flex flex-col gap-1.5"
-                        >
+                        <div class="sm:col-span-5 flex flex-col gap-1.5">
                           <label class="text-xs font-medium text-foreground">
                             {{ t("home_editor.nav_title_label") }}
                           </label>
@@ -2141,10 +2130,7 @@ function handleGroupKindChange(item) {
                                 </div>
 
                                 <!-- Navigation Title -->
-                                <div
-                                  v-if="subItem.type !== 'page'"
-                                  class="flex-1 min-w-[120px]"
-                                >
+                                <div class="flex-1 min-w-[120px]">
                                   <Input
                                     v-model="subItem.title"
                                     :placeholder="

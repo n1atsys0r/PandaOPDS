@@ -6,6 +6,7 @@ import {
   createDefaultHomePages,
   createDefaultSearchFacets,
   normalizeMode,
+  replacePageSlugReferences,
   serializeHomeLayout,
   splitHomeSections,
 } from "./home-layout.js";
@@ -567,6 +568,7 @@ function updatePageMeta(pageId, { title, id: newId }) {
     if (BUILTIN_PAGE_IDS.has(newId)) return false;
     if (state.pages.some((x) => x.id === newId)) return false;
     p.id = newId;
+    replacePageSlugReferences(state.navigation, state.pages, pageId, newId);
     if (state.activePageId === pageId) {
       state.activePageId = newId;
     }
