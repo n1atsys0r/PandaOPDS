@@ -165,7 +165,7 @@ publication 保留 `/image/{activeGid}/{activeToken}/thumb` 的 `images[]` 封�
 | `/opds/v2.0/toplist?period=month` | `urn:ehentai:toplist:month` | `rel="next"` → `?period=month&page={n}`（**`page` 分页**，与 lastGid 不同轨） |
 
 - 采集文档恒带 `self` / `start` / `search` 链接；`search` 为 JSON 模板（§5）。
-- `query` 取值：空=Latest、`watched`、`favorites`、`popular`；其他任意值 = 搜索词（`f_search`）。
+- `query` 取值：空=Latest、`watched`、`favorites`、`popular`；其他任意值 = 全站搜索词。Watched 范围搜索使用 `query=watched&f_search={terms}`；Favorites 使用 `query=favorites&f_search={terms}`，并以 `favcat=all|N` 保留全部收藏或当前分类。v2.0 仍接受旧式 `query=watched {terms}`。
 
 ### 4.2 详情文档（`/opds/v2.0/gallery/{gid}/{token}`）
 
@@ -181,8 +181,11 @@ publication 保留 `/image/{activeGid}/{activeToken}/thumb` 的 `images[]` 封�
 
 ### 4.4 搜索
 
-- **v2.0**：顶层 `rel="search"` link 的 `href` 直接含模板 `/opds/v2.0/gallery?query={searchTerms}`（标 `templated: true`）——客户端替换 `{searchTerms}` 即得搜索结果文档，无需先请求 OpenSearch。
-- **v1.2**：`rel="search"` 指向 `/opds/v1.2/search.xml`（OpenSearchDescription），模板 `?query={searchTerms}`。
+- **v2.0**：顶层 `rel="search"` link 的 `href` 直接含搜索模板（标 `templated: true`）。普通目录使用 `query={searchTerms}`；Watched 使用 `query=watched&f_search={searchTerms}`；Favorites 使用 `query=favorites&favcat=all|N&f_search={searchTerms}`。客户端替换 `{searchTerms}` 即得搜索结果文档。
+- **v1.2**：`rel="search"` 指向 OpenSearchDescription。Watched 与 Favorites feed 分别指向带 `query=watched`、`query=favorites&favcat=all|N` 的 `/opds/v1.2/search.xml`，生成的模板保留范围；Watched 模板用 `f_search` 提交词语，普通目录仍使用 `?query={searchTerms}`。
+- Watched 搜索映射到 E-Hentai `/watched?f_search=…`；Favorites 搜索映射到 `/favorites.php?favcat=all|N&f_search=…`。Favorites 的分页与分类 facets 保留当前搜索词。
+- Watched 与 Favorites 两种 feed 都可附带 `f_cats`、`f_sr`/`f_srdd`、`f_sh`、`f_sfl`/`f_sfu`/`f_sft` 和页数筛选参数；服务端会把它们传给上游，并在分页、`self` 及 Favorites 分类 facet 链接中继续携带。
+- 自定义 facet 链接代表完整的 facet 筛选状态。切换 facet 时客户端应跟随目标链接；服务端会保留基础搜索词并替换原 facet 条件。当前选择通过 `rel="self"` 标识；WebUI 点击已选项会回到未应用 facet 的目录。
 
 ---
 

@@ -121,8 +121,21 @@ type AtomFeed struct {
 }
 
 func (b Builder) atomFeed(title, updated string, entries []AtomEntry, more []AtomLink) string {
+	return b.atomFeedWithSearch(title, updated, entries, more, "", "")
+}
+func (b Builder) atomFeedWithSearch(title, updated string, entries []AtomEntry, more []AtomLink, searchHref, selfHref string) string {
+	if searchHref == "" {
+		searchHref = "/opds/v1.2/search.xml"
+	}
+	if selfHref == "" {
+		selfHref = "/opds/v1.2"
+	}
+	selfType, selfTitle := MIMEAtomAcq, title
+	if selfHref == "/opds/v1.2" {
+		selfType, selfTitle = MIMEAtomNav, "PandaOPDS"
+	}
 	f := AtomFeed{DefaultNS: "http://www.w3.org/2005/Atom", PSE: "http://vaemendis.net/opds-pse/ns", OPDS: "http://opds-spec.org/2010/catalog", SearchNS: "http://a9.com/-/spec/opensearch/1.1/", Title: title, ID: "urn:ehentai:" + title, Updated: updated, Author: AtomAuthor{Name: "PandaOPDS"}, Entries: entries}
-	f.Links = []AtomLink{{Rel: "self", Href: b.Href("/opds/v1.2"), Type: MIMEAtomNav, Title: "PandaOPDS"}, {Rel: "start", Href: b.Href("/opds/v1.2"), Type: MIMEAtomNav, Title: "PandaOPDS"}, {Rel: "search", Href: b.Href("/opds/v1.2/search.xml"), Type: MIMEOpenSearch, Title: "Search"}}
+	f.Links = []AtomLink{{Rel: "self", Href: b.Href(selfHref), Type: selfType, Title: selfTitle}, {Rel: "start", Href: b.Href("/opds/v1.2"), Type: MIMEAtomNav, Title: "PandaOPDS"}, {Rel: "search", Href: b.Href(searchHref), Type: MIMEOpenSearch, Title: "Search"}}
 	f.Links = append(f.Links, more...)
 	data, _ := xml.MarshalIndent(f, "", "  ")
 	return xml.Header + string(data) + "\n"
@@ -136,12 +149,18 @@ func (b Builder) RootAtom(nav [][3]string) string {
 	return b.atomFeed("PandaOPDS", now, entries, nil)
 }
 func (b Builder) OpenSearch(path string) string {
-	template := b.Href(path + "?query={searchTerms}")
+	return b.OpenSearchTemplate(path + "?query={searchTerms}")
+}
+func (b Builder) OpenSearchTemplate(template string) string {
+	template = b.Href(template)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"><ShortName>E-Hentai</ShortName><Description>Search E-Hentai galleries via PandaOPDS</Description><InputEncoding>UTF-8</InputEncoding><Url type="%s" template="%s"/></OpenSearchDescription>`, html.EscapeString(MIMEAtomAcq), html.EscapeString(template))
 }
 
 func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query string, next string, facets []AtomFacet) string {
+	return b.AtomListWithLinks(items, title, feedID, query, next, facets, "", "")
+}
+func (b Builder) AtomListWithLinks(items []eh.GalleryListItem, title, feedID, query string, next string, facets []AtomFacet, searchHref, selfHref string) string {
 	entries := make([]AtomEntry, 0, len(items))
 	for _, item := range items {
 		activeGID, activeToken := item.GID, item.Token
@@ -176,7 +195,7 @@ func (b Builder) AtomList(items []eh.GalleryListItem, title, feedID, query strin
 	}
 	_ = feedID
 	_ = query
-	return b.atomFeed(title, iso(""), entries, more)
+	return b.atomFeedWithSearch(title, iso(""), entries, more, searchHref, selfHref)
 }
 func (b Builder) AtomChapter(gid int, token, title, updated, author, category string, count int) string {
 	links := []AtomLink{{Rel: RelThumb, Href: b.Href(fmt.Sprintf("/image/%d/%s/thumb", gid, token)), Type: "image/jpeg"}, {Rel: RelStream, Href: b.Href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", gid, token)), Type: MIMEImage, Count: &count}, {Rel: RelAlternate, Href: b.Upstream(gid, token), Type: "text/html", Title: b.Settings.SiteHost()}, {Rel: RelProgression, Href: b.Href(fmt.Sprintf("/opds/progression/%d/%s", gid, token)), Type: MIMEProgression}}
@@ -315,7 +334,13 @@ func (b Builder) NavigationDocument(nav []map[string]any, groups []map[string]an
 	return doc
 }
 func (b Builder) Acquisition(title, identifier, self string, publications []map[string]any, next string, facets []map[string]any) map[string]any {
-	links := []map[string]any{b.Link("self", b.Href(self), MIMEOPDSAcq, title, nil), b.Link("start", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("search", b.Href("/opds/v2.0/gallery?query={searchTerms}"), MIMEOPDSAcq, "Search", nil)}
+	return b.AcquisitionWithSearch(title, identifier, self, publications, next, facets, "")
+}
+func (b Builder) AcquisitionWithSearch(title, identifier, self string, publications []map[string]any, next string, facets []map[string]any, searchHref string) map[string]any {
+	if searchHref == "" {
+		searchHref = "/opds/v2.0/gallery?query={searchTerms}"
+	}
+	links := []map[string]any{b.Link("self", b.Href(self), MIMEOPDSAcq, title, nil), b.Link("start", b.Href("/opds/v2.0"), MIMEOPDSNav, "PandaOPDS", nil), b.Link("search", b.Href(searchHref), MIMEOPDSAcq, "Search", nil)}
 	if next != "" {
 		links = append(links, b.Link("next", next, MIMEOPDSAcq, "Next page", nil))
 	}

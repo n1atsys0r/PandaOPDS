@@ -51,11 +51,112 @@ type homePreviewDone struct {
 
 func quote(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") }
 
-func favoriteFacetPath(route, favcat string) string {
+func isWatchedQuery(query string) bool {
+	return query == "watched" || strings.HasPrefix(query, "watched ")
+}
+
+func isFavoritesQuery(query string) bool {
+	return query == "favorites" || strings.HasPrefix(query, "favorites:")
+}
+
+var galleryFilterParamKeys = []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"}
+
+func copyGalleryFilterParams(dst, src url.Values) {
+	for _, key := range galleryFilterParamKeys {
+		if values := src[key]; len(values) > 0 {
+			dst[key] = append([]string(nil), values...)
+		}
+	}
+}
+
+func galleryFilterParams(src url.Values) url.Values {
+	dst := url.Values{}
+	copyGalleryFilterParams(dst, src)
+	return dst
+}
+
+func validFavcat(favcat string) bool {
+	if favcat == "all" {
+		return true
+	}
+	id, err := strconv.Atoi(favcat)
+	return err == nil && id >= 0 && id <= 9
+}
+
+func allFavoritesCategory(favcat string) string {
+	if favcat == "" {
+		return "all"
+	}
+	return favcat
+}
+
+func searchDescriptionHref12(query, favcat string) string {
+	params := url.Values{}
+	switch {
+	case query == "watched":
+		params.Set("query", "watched")
+	case query == "favorites":
+		params.Set("query", "favorites")
+		params.Set("favcat", allFavoritesCategory(favcat))
+	default:
+		return "/opds/v1.2/search.xml"
+	}
+	return "/opds/v1.2/search.xml?" + params.Encode()
+}
+
+func gallerySelfHref12(builder feed.Builder, query, next, favcat, searchTerm string, filters url.Values) string {
+	params := url.Values{}
+	if query != "" {
+		params.Set("query", query)
+	}
+	if next != "" {
+		params.Set("next", next)
+	}
+	if favcat != "" {
+		params.Set("favcat", favcat)
+	}
+	if searchTerm != "" {
+		params.Set("f_search", searchTerm)
+	}
+	copyGalleryFilterParams(params, filters)
+	path := "/opds/v1.2/gallery"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return builder.Href(path)
+}
+
+func searchTemplateHref20(query, favcat string) string {
+	switch {
+	case isWatchedQuery(query):
+		return "/opds/v2.0/gallery?query=watched&f_search={searchTerms}"
+	case isFavoritesQuery(query):
+		if favcat == "" && strings.HasPrefix(query, "favorites:") {
+			favcat = strings.TrimPrefix(query, "favorites:")
+		}
+		return "/opds/v2.0/gallery?query=favorites&favcat=" + quote(allFavoritesCategory(favcat)) + "&f_search={searchTerms}"
+	default:
+		return "/opds/v2.0/gallery?query={searchTerms}"
+	}
+}
+
+func favoriteFacetPath(route, favcat string, searchTerm ...string) string {
+	term := ""
+	if len(searchTerm) > 0 {
+		term = searchTerm[0]
+	}
+	return favoriteFacetPathWithFilters(route, favcat, term, nil)
+}
+
+func favoriteFacetPathWithFilters(route, favcat, searchTerm string, filters url.Values) string {
 	values := url.Values{"query": {"favorites"}}
 	if favcat != "" {
 		values.Set("favcat", favcat)
 	}
+	if searchTerm != "" {
+		values.Set("f_search", searchTerm)
+	}
+	copyGalleryFilterParams(values, filters)
 	return route + "?" + values.Encode()
 }
 
@@ -95,25 +196,33 @@ func (s *Server) favoriteFacetNames(ctx context.Context, current map[int]string)
 	return names
 }
 
-func favoriteAtomFacets(builder feed.Builder, route, selected string, names map[int]string) []feed.AtomFacet {
+func favoriteAtomFacets(builder feed.Builder, route, selected string, names map[int]string, searchTerm string, filters url.Values) []feed.AtomFacet {
 	facets := []feed.AtomFacet{}
 	for id := 0; id < 10; id++ {
 		value := strconv.Itoa(id)
-		facets = append(facets, feed.AtomFacet{Title: favoriteFacetTitle(names, id), Href: builder.Href(favoriteFacetPath(route, value)), Group: "Favorite category", Active: selected == value})
+		facets = append(facets, feed.AtomFacet{Title: favoriteFacetTitle(names, id), Href: builder.Href(favoriteFacetPathWithFilters(route, value, searchTerm, filters)), Group: "Favorite category", Active: selected == value})
 	}
 	return facets
 }
 
-func favoriteJSONFacets(builder feed.Builder, route, selected string, names map[int]string) []map[string]any {
-	return []map[string]any{{"metadata": map[string]string{"title": "Favorite category"}, "links": favoriteCategoryLinks(builder, route, selected, names)}}
+func favoriteJSONFacets(builder feed.Builder, route, selected string, names map[int]string, searchTerm string, filters url.Values) []map[string]any {
+	return []map[string]any{{"metadata": map[string]string{"title": "Favorite category"}, "links": favoriteCategoryLinksWithFilters(builder, route, selected, names, searchTerm, filters)}}
 }
 
-func favoriteCategoryLinks(builder feed.Builder, route, selected string, names map[int]string) []map[string]any {
+func favoriteCategoryLinks(builder feed.Builder, route, selected string, names map[int]string, searchTerm ...string) []map[string]any {
+	term := ""
+	if len(searchTerm) > 0 {
+		term = searchTerm[0]
+	}
+	return favoriteCategoryLinksWithFilters(builder, route, selected, names, term, nil)
+}
+
+func favoriteCategoryLinksWithFilters(builder feed.Builder, route, selected string, names map[int]string, searchTerm string, filters url.Values) []map[string]any {
 	links := []map[string]any{}
 	for id := 0; id < 10; id++ {
 		favcat := strconv.Itoa(id)
 		title := favoriteFacetTitle(names, id)
-		link := map[string]any{"href": builder.Href(favoriteFacetPath(route, favcat)), "title": title}
+		link := map[string]any{"href": builder.Href(favoriteFacetPathWithFilters(route, favcat, searchTerm, filters)), "title": title}
 		if selected == favcat {
 			link["rel"] = "self"
 		}
@@ -153,19 +262,33 @@ func (s *Server) rootV12(w http.ResponseWriter, r *http.Request) {
 	writeBytes(w, 200, feed.MIMEAtomNav, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(b.RootAtom(nav)))
 }
 func (s *Server) searchXML12(w http.ResponseWriter, r *http.Request) {
-	writeBytes(w, 200, feed.MIMEOpenSearch, map[string]string{"Cache-Control": "public, max-age=3600"}, []byte(s.builder().OpenSearch("/opds/v1.2/gallery")))
+	q := r.URL.Query()
+	template := "/opds/v1.2/gallery?query={searchTerms}"
+	switch q.Get("query") {
+	case "watched":
+		template = "/opds/v1.2/gallery?query=watched&f_search={searchTerms}"
+	case "favorites":
+		favcat := allFavoritesCategory(q.Get("favcat"))
+		if !validFavcat(favcat) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "unknown favorites folder (expected all or favcat 0-9)"})
+			return
+		}
+		template = "/opds/v1.2/gallery?query=favorites&favcat=" + quote(favcat) + "&f_search={searchTerms}"
+	}
+	writeBytes(w, 200, feed.MIMEOpenSearch, map[string]string{"Cache-Control": "public, max-age=3600"}, []byte(s.builder().OpenSearchTemplate(template)))
 }
 func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := q.Get("query")
 	next := q.Get("next")
 	favcat := q.Get("favcat")
-	if query == "favorites" && favcat != "" {
-		id, err := strconv.Atoi(favcat)
-		if err != nil || id < 0 || id > 9 {
-			writeJSON(w, 400, map[string]any{"detail": "unknown favorites folder (expected favcat 0-9)"})
-			return
-		}
+	fSearch := q.Get("f_search")
+	if query == "favorites" && favcat == "" && fSearch != "" {
+		favcat = "all"
+	}
+	if query == "favorites" && favcat != "" && !validFavcat(favcat) {
+		writeJSON(w, 400, map[string]any{"detail": "unknown favorites folder (expected all or favcat 0-9)"})
+		return
 	}
 	if next != "" && !cursorRE.MatchString(next) {
 		writeJSON(w, 400, map[string]any{"detail": "invalid next cursor (expected digits or gid-favtime)"})
@@ -174,13 +297,17 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	var info eh.GalleryPageInfo
 	var e error
 	ctx := r.Context()
+	extra := galleryFilterParams(q)
 	switch query {
 	case "popular":
 		info, e = s.Service.Popular(ctx, next)
 	case "watched":
-		info, e = s.Service.Watched(ctx, next, nil)
+		if fSearch != "" {
+			extra.Set("f_search", fSearch)
+		}
+		info, e = s.Service.WatchedQuery(ctx, query, next, extra)
 	case "favorites":
-		info, e = s.Service.Favorites(ctx, next, favcat)
+		info, e = s.Service.FavoritesSearch(ctx, next, favcat, fSearch, extra)
 	default:
 		info, e = s.Service.Search(ctx, query, next, nil)
 	}
@@ -200,23 +327,43 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 	default:
 		title = "Search"
 	}
+	if query == "watched" && fSearch != "" {
+		title += " — " + fSearch
+	} else if query == "favorites" && fSearch != "" {
+		title += " — " + fSearch
+	}
 	title = "E-Hentai: " + title
 	nextHref := ""
 	if info.NextGID != "" {
-		nextHref = s.builder().Href("/opds/v1.2/gallery?next=" + info.NextGID)
+		params := url.Values{"next": {info.NextGID}}
 		if query != "" {
-			nextHref += "&query=" + quote(query)
+			params.Set("query", query)
 		}
-		if query == "favorites" && favcat != "" {
-			nextHref += "&favcat=" + quote(favcat)
+		if query == "favorites" {
+			if favcat != "" {
+				params.Set("favcat", favcat)
+			}
+			if fSearch != "" {
+				params.Set("f_search", fSearch)
+			}
 		}
+		if query == "watched" && fSearch != "" {
+			params.Set("f_search", fSearch)
+		}
+		copyGalleryFilterParams(params, q)
+		nextHref = s.builder().Href("/opds/v1.2/gallery?" + params.Encode())
 	}
 	var facets []feed.AtomFacet
 	if query == "favorites" {
 		names := s.favoriteFacetNames(ctx, info.FavcatMap)
-		facets = favoriteAtomFacets(s.builder(), "/opds/v1.2/gallery", favcat, names)
+		facets = favoriteAtomFacets(s.builder(), "/opds/v1.2/gallery", favcat, names, fSearch, extra)
 	}
-	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(info.Galleries, title, query, query, nextHref, facets)))
+	searchHref := searchDescriptionHref12(query, favcat)
+	selfHref := ""
+	if query == "watched" || query == "favorites" {
+		selfHref = gallerySelfHref12(s.builder(), query, next, favcat, fSearch, extra)
+	}
+	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomListWithLinks(info.Galleries, title, query, query, nextHref, facets, searchHref, selfHref)))
 }
 func (s *Server) toplist12(w http.ResponseWriter, r *http.Request) {
 	period := r.URL.Query().Get("period")
@@ -323,6 +470,10 @@ func (s *Server) searchXML20(w http.ResponseWriter, r *http.Request) {
 func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query, next, category, favcat := q.Get("query"), q.Get("next"), q.Get("category"), q.Get("favcat")
+	fSearch := q.Get("f_search")
+	if query == "favorites" && favcat == "" && fSearch != "" {
+		favcat = "all"
+	}
 	if next != "" && !cursorRE.MatchString(next) {
 		writeJSON(w, 400, map[string]any{"detail": "invalid next cursor (expected digits or gid-favtime)"})
 		return
@@ -336,7 +487,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, k := range []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"} {
+	for _, k := range galleryFilterParamKeys {
 		if v := q.Get(k); v != "" {
 			extra.Set(k, v)
 		}
@@ -348,6 +499,9 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	case query == "popular":
 		info, e = s.Service.Popular(ctx, next)
 	case query == "watched" || strings.HasPrefix(query, "watched "):
+		if query == "watched" && fSearch != "" {
+			extra.Set("f_search", fSearch)
+		}
 		info, e = s.Service.WatchedQuery(ctx, query, next, extra)
 	case query == "favorites" || strings.HasPrefix(query, "favorites:"):
 		cat := favcat
@@ -361,14 +515,14 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 				cat = legacy
 			}
 		}
-		if cat != "" {
-			id, err := strconv.Atoi(cat)
-			if err != nil || id < 0 || id > 9 {
-				writeJSON(w, 400, map[string]any{"detail": "unknown favorites folder (expected favcat 0-9)"})
-				return
-			}
+		if cat != "" && !validFavcat(cat) {
+			writeJSON(w, 400, map[string]any{"detail": "unknown favorites folder (expected all or favcat 0-9)"})
+			return
 		}
-		info, e = s.Service.Favorites(ctx, next, cat)
+		if cat == "" && fSearch != "" {
+			cat = "all"
+		}
+		info, e = s.Service.FavoritesSearch(ctx, next, cat, fSearch, extra)
 	default:
 		info, e = s.Service.Search(ctx, query, next, extra)
 	}
@@ -389,10 +543,15 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		name = "Latest"
 	case query == "popular", query == "favorites":
 		name = strings.ToUpper(query[:1]) + query[1:]
+		if query == "favorites" && fSearch != "" {
+			name += " — " + fSearch
+		}
 	case query == "watched" || strings.HasPrefix(query, "watched "):
 		name = "Watched"
 		if term := strings.TrimSpace(strings.TrimPrefix(query, "watched")); term != "" {
 			name += " — " + term
+		} else if fSearch != "" {
+			name += " — " + fSearch
 		}
 	}
 	if category != "" {
@@ -412,8 +571,14 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 			if selected != "" {
 				params = append(params, "favcat="+quote(selected))
 			}
+			if fSearch != "" {
+				params = append(params, "f_search="+quote(fSearch))
+			}
 		} else if query != "" {
 			params = append(params, "query="+quote(query))
+			if query == "watched" && fSearch != "" {
+				params = append(params, "f_search="+quote(fSearch))
+			}
 		}
 		if favcat != "" && query != "favorites" && !strings.HasPrefix(query, "favorites:") {
 			params = append(params, "favcat="+quote(favcat))
@@ -421,7 +586,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		if category != "" {
 			params = append(params, "category="+quote(category))
 		}
-		for _, k := range []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"} {
+		for _, k := range galleryFilterParamKeys {
 			if v := q.Get(k); v != "" {
 				params = append(params, k+"="+quote(v))
 			}
@@ -437,7 +602,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 			selected = strings.TrimPrefix(query, "favorites:")
 		}
 		names := s.favoriteFacetNames(ctx, info.FavcatMap)
-		facets = favoriteJSONFacets(s.builder(), "/opds/v2.0/gallery", selected, names)
+		facets = favoriteJSONFacets(s.builder(), "/opds/v2.0/gallery", selected, names, fSearch, extra)
 	} else if query != "popular" {
 		cfg, _ := home.Load(s.Settings.HomeConfigPath)
 		searchFacets := cfg.GetSearchFacets()
@@ -460,8 +625,14 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		if selected != "" {
 			self += "&favcat=" + quote(selected)
 		}
+		if fSearch != "" {
+			self += "&f_search=" + quote(fSearch)
+		}
 	} else if query != "" {
 		self += "?query=" + quote(query)
+		if query == "watched" && fSearch != "" {
+			self += "&f_search=" + quote(fSearch)
+		}
 		if favcat != "" {
 			self += "&favcat=" + quote(favcat)
 		}
@@ -471,7 +642,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 	} else if category != "" {
 		self += "?category=" + quote(category)
 	}
-	for _, k := range []string{"f_cats", "advsearch", "f_sr", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft", "f_sp", "f_spf", "f_spt"} {
+	for _, k := range galleryFilterParamKeys {
 		if v := q.Get(k); v != "" {
 			if strings.Contains(self, "?") {
 				self += "&" + k + "=" + quote(v)
@@ -480,7 +651,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	doc := s.builder().Acquisition(title, "urn:ehentai:gallery-list:"+firstNonEmpty(query, "latest"), self, pubs, nextHref, facets)
+	doc := s.builder().AcquisitionWithSearch(title, "urn:ehentai:gallery-list:"+firstNonEmpty(query, "latest"), self, pubs, nextHref, facets, searchTemplateHref20(query, favcat))
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
 func (s *Server) toplist20(w http.ResponseWriter, r *http.Request) {
@@ -847,19 +1018,57 @@ func (s *Server) customFacetLinks(items []home.NavigationItem, baseType, baseQue
 		baseQuery = ""
 	}
 
-	var activeIndex int = -1
-	for idx, it := range items {
-		combinedQuery := baseQuery
-		if it.Query != "" {
-			if combinedQuery != "" {
-				combinedQuery += " " + it.Query
-			} else {
-				combinedQuery = it.Query
+	watchedScope := isWatchedQuery(baseQuery)
+	legacyWatchedTerms := ""
+	if watchedScope {
+		legacyWatchedTerms = strings.TrimSpace(strings.TrimPrefix(baseQuery, "watched"))
+		searchTerms := legacyWatchedTerms
+		if reqURL != nil && reqURL.Query().Get("f_search") != "" {
+			searchTerms = reqURL.Query().Get("f_search")
+		}
+		baseQuery = stripCustomFacetSuffix(searchTerms, items)
+	} else {
+		baseQuery = stripCustomFacetSuffix(baseQuery, items)
+	}
+	requestParams := url.Values{}
+	if reqURL != nil {
+		for key, values := range reqURL.Query() {
+			requestParams[key] = append([]string(nil), values...)
+		}
+	}
+	if watchedScope {
+		requestParams.Set("query", "watched")
+		if requestParams.Get("f_search") == "" {
+			if legacyWatchedTerms != "" {
+				requestParams.Set("f_search", legacyWatchedTerms)
 			}
 		}
+	}
+
+	var activeIndex int = -1
+	for idx, it := range items {
 		params := url.Values{}
-		if combinedQuery != "" {
-			params.Set("query", combinedQuery)
+		if watchedScope {
+			params.Set("query", "watched")
+			searchTerms := baseQuery
+			if it.Query != "" {
+				searchTerms = strings.TrimSpace(strings.Join([]string{searchTerms, it.Query}, " "))
+			}
+			if searchTerms != "" {
+				params.Set("f_search", searchTerms)
+			}
+		} else {
+			combinedQuery := baseQuery
+			if it.Query != "" {
+				if combinedQuery != "" {
+					combinedQuery += " " + it.Query
+				} else {
+					combinedQuery = it.Query
+				}
+			}
+			if combinedQuery != "" {
+				params.Set("query", combinedQuery)
+			}
 		}
 		if len(it.Categories) > 0 {
 			mask := eh.CategoryMask(it.Categories, s.Settings)
@@ -900,7 +1109,7 @@ func (s *Server) customFacetLinks(items []home.NavigationItem, baseType, baseQue
 			"href":  linkHref,
 			"type":  feed.MIMEOPDSAcq,
 		}
-		if reqURL != nil && isParamsMatching(reqURL.Query(), params) {
+		if reqURL != nil && isParamsMatching(requestParams, params) {
 			activeIndex = idx
 		}
 		links = append(links, link)
@@ -913,8 +1122,28 @@ func (s *Server) customFacetLinks(items []home.NavigationItem, baseType, baseQue
 	return links
 }
 
+func stripCustomFacetSuffix(searchTerms string, items []home.NavigationItem) string {
+	searchTerms = strings.TrimSpace(searchTerms)
+	for {
+		matched := ""
+		for _, item := range items {
+			term := strings.TrimSpace(item.Query)
+			if term == "" || len(term) <= len(matched) {
+				continue
+			}
+			if searchTerms == term || strings.HasSuffix(searchTerms, " "+term) {
+				matched = term
+			}
+		}
+		if matched == "" {
+			return searchTerms
+		}
+		searchTerms = strings.TrimSpace(strings.TrimSuffix(searchTerms, matched))
+	}
+}
+
 func isParamsMatching(reqQuery, targetParams url.Values) bool {
-	keys := []string{"query", "f_cats", "f_srdd", "f_sh", "f_sfl", "f_sfu", "f_sft"}
+	keys := append([]string{"query", "f_search"}, galleryFilterParamKeys...)
 	for _, k := range keys {
 		if reqQuery.Get(k) != targetParams.Get(k) {
 			return false

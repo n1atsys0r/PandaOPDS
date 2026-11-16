@@ -93,6 +93,42 @@
         ],
         "summary": "Open Search",
         "operationId": "open_search_opds_v1_2_search_xml_get",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "watched",
+                "favorites"
+              ]
+            },
+            "description": "Optional search scope. Use watched or favorites to get a scope-specific OpenSearch template."
+          },
+          {
+            "name": "favcat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "all"
+                  ]
+                }
+              ]
+            },
+            "description": "Favorites category for a scoped template: all or folder id 0-9."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response",
@@ -181,7 +217,8 @@
               "type": "string",
               "default": "",
               "title": "Query"
-            }
+            },
+            "description": "Search term or preset scope. Use query=watched or query=favorites with f_search to search within those scopes; other query terms search all galleries."
           },
           {
             "name": "next",
@@ -206,13 +243,44 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9,
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "all"
+                  ]
+                }
+              ],
               "title": "Favorite category"
             },
-            "description": "Favorite folder id (0-9). Applies when query=favorites; omit to show all favorites."
-          }
+            "description": "Favorite folder id (0-9) or all. Applies when query=favorites; omit to show all favorites."
+          },
+          {
+            "name": "f_search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Scoped search terms"
+            },
+            "description": "Search terms within Watched or the selected Favorites folder."
+          },
+          {"$ref": "#/components/parameters/f_cats"},
+          {"$ref": "#/components/parameters/advsearch"},
+          {"$ref": "#/components/parameters/f_sr"},
+          {"$ref": "#/components/parameters/f_srdd"},
+          {"$ref": "#/components/parameters/f_sh"},
+          {"$ref": "#/components/parameters/f_sfl"},
+          {"$ref": "#/components/parameters/f_sfu"},
+          {"$ref": "#/components/parameters/f_sft"},
+          {"$ref": "#/components/parameters/f_sp"},
+          {"$ref": "#/components/parameters/f_spf"},
+          {"$ref": "#/components/parameters/f_spt"}
         ],
         "responses": {
           "200": {
@@ -976,7 +1044,8 @@
               "type": "string",
               "default": "",
               "title": "Query"
-            }
+            },
+            "description": "Search term or preset scope. Use query=watched or query=favorites with f_search to search within those scopes; other query terms search all galleries. The legacy query form watched followed by a space and terms is also accepted."
           },
           {
             "name": "next",
@@ -1011,13 +1080,44 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9,
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "all"
+                  ]
+                }
+              ],
               "title": "Favorite category"
             },
-            "description": "Favorite folder id (0-9). Applies when query=favorites; omit to show all favorites. Legacy query=favorites:N is also accepted."
-          }
+            "description": "Favorite folder id (0-9) or all. Applies when query=favorites; omit to show all favorites. Legacy query=favorites:N is also accepted."
+          },
+          {
+            "name": "f_search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Scoped search terms"
+            },
+            "description": "Search terms within Watched or the selected Favorites folder."
+          },
+          {"$ref": "#/components/parameters/f_cats"},
+          {"$ref": "#/components/parameters/advsearch"},
+          {"$ref": "#/components/parameters/f_sr"},
+          {"$ref": "#/components/parameters/f_srdd"},
+          {"$ref": "#/components/parameters/f_sh"},
+          {"$ref": "#/components/parameters/f_sfl"},
+          {"$ref": "#/components/parameters/f_sfu"},
+          {"$ref": "#/components/parameters/f_sft"},
+          {"$ref": "#/components/parameters/f_sp"},
+          {"$ref": "#/components/parameters/f_spf"},
+          {"$ref": "#/components/parameters/f_spt"}
         ],
         "responses": {
           "200": {
@@ -4823,6 +4923,19 @@
     "/opds/authentication.json": {"get":{"summary":"OPDS Basic authentication document","responses":{"200":{"description":"OPDS Authentication Document","content":{"application/opds-authentication+json":{"schema":{"type":"object"}}}}}}}
   },
   "components": {
+    "parameters": {
+      "f_cats": {"name": "f_cats", "in": "query", "required": false, "schema": {"type": "string"}, "description": "E-Hentai gallery category mask."},
+      "advsearch": {"name": "advsearch", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Enable advanced search filters."},
+      "f_sr": {"name": "f_sr", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Enable minimum rating filtering."},
+      "f_srdd": {"name": "f_srdd", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Minimum gallery rating, used with f_sr=on."},
+      "f_sh": {"name": "f_sh", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Include expunged galleries."},
+      "f_sfl": {"name": "f_sfl", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Disable language filtering."},
+      "f_sfu": {"name": "f_sfu", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Disable uploader filtering."},
+      "f_sft": {"name": "f_sft", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Disable tag filtering."},
+      "f_sp": {"name": "f_sp", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Enable page-count filtering."},
+      "f_spf": {"name": "f_spf", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Minimum page count, used with f_sp=on."},
+      "f_spt": {"name": "f_spt", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Maximum page count, used with f_sp=on."}
+    },
     "schemas": {
       "HTTPValidationError": {
         "properties": {

@@ -211,10 +211,19 @@ func (s *Service) WatchedQuery(ctx context.Context, query, next string, extra ur
 	return s.GetList(ctx, query, next, extra, false)
 }
 func (s *Service) Favorites(ctx context.Context, next string, favcat string) (GalleryPageInfo, error) {
+	return s.FavoritesSearch(ctx, next, favcat, "", nil)
+}
+func (s *Service) FavoritesSearch(ctx context.Context, next string, favcat, searchTerm string, filters url.Values) (GalleryPageInfo, error) {
 	query := "favorites"
 	extra := url.Values{}
+	for key, values := range filters {
+		extra[key] = append([]string(nil), values...)
+	}
 	if favcat != "" {
 		extra.Set("favcat", favcat)
+	}
+	if searchTerm != "" {
+		extra.Set("f_search", searchTerm)
 	}
 	return s.GetList(ctx, query, next, extra, false)
 }

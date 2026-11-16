@@ -192,3 +192,23 @@ func TestListURLWatchedWithSearchTerm(t *testing.T) {
 		t.Fatalf("unexpected u2: %s", u2)
 	}
 }
+
+func TestListURLFavoritesWithScopedSearch(t *testing.T) {
+	cfg := config.Settings{EHSite: "e-hentai"}
+	client := NewClient(cfg, nil, NewThrottle(cfg))
+	for _, tc := range []struct {
+		favcat string
+		want   string
+	}{
+		{favcat: "all", want: "favcat=all"},
+		{favcat: "3", want: "favcat=3"},
+	} {
+		u, err := url.Parse(client.ListURL("favorites", "", url.Values{"favcat": {tc.favcat}, "f_search": {"space cat"}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.Path != "/favorites.php" || u.Query().Get("favcat") != strings.TrimPrefix(tc.want, "favcat=") || u.Query().Get("f_search") != "space cat" {
+			t.Fatalf("favorites URL=%s, want /favorites.php with %s and f_search=space cat", u, tc.want)
+		}
+	}
+}

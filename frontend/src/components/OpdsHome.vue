@@ -88,11 +88,16 @@ function getOpenSearchUrl(query) {
   const q = (query || "").trim();
   if (!q) return "";
 
-  // 1. Discover search template from catalog or current routeFeed links
-  const allLinks = [
-    ...(catalog.value?.links || []),
-    ...(routeFeed.value?.links || []),
-  ];
+  // Prefer the active feed's scoped template; the root catalog is the global fallback.
+  const allLinks = activeRoute.value
+    ? [
+        ...(routeFeed.value?.links || []),
+        ...(catalog.value?.links || []),
+      ]
+    : [
+        ...(catalog.value?.links || []),
+        ...(routeFeed.value?.links || []),
+      ];
   const searchLink = allLinks.find((l) => l.rel === "search");
 
   if (searchLink?.href) {
