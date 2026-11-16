@@ -69,11 +69,6 @@ function getPageDisplayTitle(page) {
       return t("home_editor.home_page_title");
     }
   }
-  if (page.id === "toplists") {
-    if (!page.title || page.title === "Toplists" || page.title === "排行榜") {
-      return t("home_editor.toplists_page_title");
-    }
-  }
   return page.title || page.id;
 }
 
@@ -82,7 +77,6 @@ function getPageTitle(pageId) {
   const p = s.pages.value.find((x) => x.id === pageId);
   if (p) return getPageDisplayTitle(p);
   if (pageId === "home") return t("home_editor.home_page_title");
-  if (pageId === "toplists") return t("home_editor.toplists_page_title");
   return pageId;
 }
 
