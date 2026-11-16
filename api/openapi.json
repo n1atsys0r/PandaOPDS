@@ -3906,7 +3906,7 @@
           "favorites"
         ],
         "summary": "Favorites Sync Run",
-        "description": "Trigger a favorites scan that catalogs discovered favorites into ARCHIVE_STATE_DIR and optionally starts auto-archiving newly discovered entries when FAVORITES_SYNC_ARCHIVE is enabled. Pass full=1 to run a full catalog backfill scan without triggering paid auto-archiving on known items.",
+        "description": "Trigger a favorites scan that catalogs discovered favorites into ARCHIVE_STATE_DIR and optionally starts auto-archiving newly discovered entries when FAVORITES_SYNC_ARCHIVE is enabled. After the initial baseline, this may spend GP. Pass full=1 to run a full catalog backfill scan without triggering paid auto-archiving on known items.",
         "operationId": "favorites_sync_run_api_favorites_sync_run_post",
         "parameters": [
           {
@@ -4000,8 +4000,7 @@
               }
             }
           }
-        },
-        "description": "Run a single favorites scan. If automatic archiving is configured, a scan after the initial baseline may submit archives and spend GP."
+        }
       }
     },
     "/api/rating": {
