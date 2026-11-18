@@ -424,6 +424,12 @@ export default {
     title: "Orchestration",
     desc: "Configure navigation and sections across home and custom pages for a clean OPDS catalog structure.",
     save: "Save Orchestration",
+    import: "Import",
+    export: "Export",
+    import_confirm_title: "Import Orchestration Layout",
+    import_confirm_desc:
+      "Importing a new home.toml will overwrite unsaved changes and reload the layout. Proceed to select a file?",
+    import_select_file: "Select File",
     reset_defaults: "Reset to Presets",
     reset_defaults_title: "Reset to Default Presets",
     reset_defaults_desc:
@@ -745,6 +751,7 @@ export default {
   notice: {
     settings_saved: "Settings saved successfully",
     home_saved: "Home layout saved successfully",
+    home_imported: "Orchestration layout (home.toml) imported successfully.",
     update_submitted: "Version update task submitted",
     archive_submitted: "Archive task submitted",
     archive_skipped: "Gallery is already archived, duplicate task skipped.",

@@ -412,6 +412,12 @@ export default {
     title: "编排",
     desc: "统一编排首页与各专题页面的导航与主体内容，输出直观清晰的 OPDS 目录结构。",
     save: "保存编排",
+    import: "导入",
+    export: "导出",
+    import_confirm_title: "导入编排配置",
+    import_confirm_desc:
+      "导入新的 home.toml 将覆盖当前未保存的修改并重新载入编排。是否继续选择文件？",
+    import_select_file: "选择文件",
     reset_defaults: "重置为默认预设",
     reset_defaults_title: "重置编排为系统预设",
     reset_defaults_desc:
@@ -720,6 +726,7 @@ export default {
   notice: {
     settings_saved: "设置已保存",
     home_saved: "首页布局已保存",
+    home_imported: "编排配置 (home.toml) 导入成功",
     update_submitted: "版本更新任务已提交",
     archive_submitted: "归档任务已提交",
     archive_skipped: "该画廊已归档，未重复提交任务。",

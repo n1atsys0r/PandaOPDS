@@ -600,6 +600,57 @@ function resetHomeToDefault() {
   state.homeDirty = true;
 }
 
+async function exportHomeFile() {
+  await run(async () => {
+    const token = state.authToken || localStorage.getItem("pandaopds_auth");
+    const headers = {
+      ...(token ? { Authorization: `Basic ${token}` } : {}),
+    };
+    const r = await fetch("/api/home/file", { headers });
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(text || "Export failed");
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "home.toml";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+}
+
+async function importHomeFile(file) {
+  if (!file) return;
+  await run(async () => {
+    const token = state.authToken || localStorage.getItem("pandaopds_auth");
+    const headers = {
+      "Content-Type": "application/toml",
+      ...(token ? { Authorization: `Basic ${token}` } : {}),
+    };
+    const r = await fetch("/api/home/file", {
+      method: "PUT",
+      headers,
+      body: file,
+    });
+    if (!r.ok) {
+      let msg = "Import failed";
+      try {
+        const data = await r.json();
+        msg = data.detail || msg;
+      } catch {
+        msg = (await r.text()) || msg;
+      }
+      throw new Error(msg);
+    }
+    state.notice = t("notice.home_imported");
+    await loadHome();
+  });
+}
+
 function addGlobalNavigation(presetOrQuery = "watched") {
   if (!Array.isArray(state.navigation)) state.navigation = [];
   state.navigation.push({
@@ -1580,6 +1631,8 @@ export function useApp() {
     updatePageMeta,
     reorderPages,
     resetHomeToDefault,
+    exportHomeFile,
+    importHomeFile,
     addSearchFacet,
     removeSearchFacet,
     moveSearchFacet,

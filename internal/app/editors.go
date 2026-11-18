@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"pandaopds/internal/config"
 	"pandaopds/internal/home"
 )
@@ -231,12 +232,7 @@ func (s *Server) configEditShapeFromSnapshot(exists bool, snapshot []byte) map[s
 	return out
 }
 
-func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
-	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mediaErr != nil || !strings.EqualFold(mediaType, "application/json") {
-		writeJSON(w, 400, map[string]any{"detail": "Content-Type must be application/json"})
-		return false
-	}
+func sameOrigin(w http.ResponseWriter, r *http.Request) bool {
 	if origin := r.Header.Get("Origin"); origin != "" {
 		u, e := url.Parse(origin)
 		if e != nil || u.Host != r.Host || !strings.EqualFold(u.Scheme, requestScheme(r)) {
@@ -245,6 +241,15 @@ func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
 		}
 	}
 	return true
+}
+
+func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
+	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaErr != nil || !strings.EqualFold(mediaType, "application/json") {
+		writeJSON(w, 400, map[string]any{"detail": "Content-Type must be application/json"})
+		return false
+	}
+	return sameOrigin(w, r)
 }
 func requestScheme(r *http.Request) string {
 	if v := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); v != "" {
@@ -323,6 +328,69 @@ func (s *Server) homeEdit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("ETag", s.fileETag("home", exists, snapshot))
 	writeJSON(w, 200, shape)
+}
+
+func (s *Server) homeFile(w http.ResponseWriter, r *http.Request) {
+	s.editMu.Lock()
+	defer s.editMu.Unlock()
+	exists, snapshot, err := readSnapshot(s.Settings.HomeConfigPath)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"detail": "could not read home layout"})
+		return
+	}
+	if r.Method == http.MethodPut {
+		if !sameOrigin(w, r) {
+			return
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"detail": "could not read uploaded file"})
+			return
+		}
+		if len(strings.TrimSpace(string(body))) == 0 {
+			writeJSON(w, 400, map[string]any{"detail": "uploaded toml file is empty"})
+			return
+		}
+		c, err := home.DecodeEditor(body)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"detail": "invalid toml: " + err.Error()})
+			return
+		}
+		if err := home.Validate(c); err != nil {
+			writeJSON(w, 400, map[string]any{"detail": "validation error: " + err.Error()})
+			return
+		}
+		if err := home.SaveSnapshot(s.Settings.HomeConfigPath, c, exists, snapshot); err != nil {
+			writeJSON(w, 500, map[string]any{"detail": "could not save home layout"})
+			return
+		}
+		exists, snapshot, err = readSnapshot(s.Settings.HomeConfigPath)
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"detail": "could not read saved home layout"})
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache, no-store")
+		w.Header().Set("ETag", s.fileETag("home", exists, snapshot))
+		writeJSON(w, 200, map[string]any{"ok": true, "path": s.Settings.HomeConfigPath})
+		return
+	}
+
+	var content []byte
+	if exists {
+		content = snapshot
+	} else {
+		content, err = toml.Marshal(home.Default())
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"detail": "could not generate default home layout"})
+			return
+		}
+	}
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("Content-Type", "application/toml; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"home.toml\"")
+	w.Header().Set("ETag", s.fileETag("home", exists, snapshot))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
 }
 
 func formatEditorSections(secs []home.Section) []map[string]any {

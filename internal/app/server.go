@@ -196,6 +196,8 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/home", s.apiHome)
 	m.HandleFunc("GET /api/home/edit", s.homeEdit)
 	m.HandleFunc("PUT /api/home/edit", s.homeEdit)
+	m.HandleFunc("GET /api/home/file", s.homeFile)
+	m.HandleFunc("PUT /api/home/file", s.homeFile)
 	m.HandleFunc("POST /api/cache/clear", s.cacheClear)
 	m.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -206,7 +208,7 @@ func (s *Server) register() {
 func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.Settings
-		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit"
+		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit" || r.URL.Path == "/api/home/file"
 		isWebUI := r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/webui-assets/") || r.URL.Path == "/favicon.ico"
 		if !cfg.AuthEnabled() || (!editRoute && (r.URL.Path == "/health" || r.URL.Path == "/opds/authentication.json" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path))) {
 			next.ServeHTTP(w, r)

@@ -18,6 +18,8 @@ import {
   Pencil,
   FileText,
   SlidersHorizontal,
+  Upload,
+  Download,
 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -570,6 +572,35 @@ function handleGroupKindChange(item) {
   }
   s.homeDirty.value = true;
 }
+
+// TOML Export & Import State
+const importFileInputRef = ref(null);
+const importConfirmOpen = ref(false);
+
+function handleImportClick() {
+  if (s.homeDirty.value) {
+    importConfirmOpen.value = true;
+  } else {
+    importFileInputRef.value?.click();
+  }
+}
+
+function confirmImportProceed() {
+  importConfirmOpen.value = false;
+  importFileInputRef.value?.click();
+}
+
+async function handleImportFileChange(event) {
+  const file = event.target?.files?.[0];
+  if (!file) return;
+  try {
+    await s.importHomeFile(file);
+  } finally {
+    if (importFileInputRef.value) {
+      importFileInputRef.value.value = "";
+    }
+  }
+}
 </script>
 
 <template>
@@ -581,7 +612,30 @@ function handleGroupKindChange(item) {
         <h1>{{ t("home_editor.title") }}</h1>
         <p>{{ t("home_editor.desc") }}</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <input
+          ref="importFileInputRef"
+          type="file"
+          accept=".toml,text/plain"
+          class="hidden"
+          @change="handleImportFileChange"
+        />
+        <Button
+          variant="outline"
+          class="gap-1.5"
+          :disabled="s.busy.value"
+          @click="handleImportClick"
+        >
+          <Upload class="size-4" />{{ t("home_editor.import") }}
+        </Button>
+        <Button
+          variant="outline"
+          class="gap-1.5"
+          :disabled="s.busy.value"
+          @click="s.exportHomeFile"
+        >
+          <Download class="size-4" />{{ t("home_editor.export") }}
+        </Button>
         <Button
           variant="outline"
           class="gap-1.5"
@@ -2766,6 +2820,31 @@ function handleGroupKindChange(item) {
             "
           >
             {{ t("home_editor.reset_defaults_confirm") }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- ================= IMPORT CONFIRM DIALOG ================= -->
+    <Dialog v-model:open="importConfirmOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ t("home_editor.import_confirm_title") }}</DialogTitle>
+          <DialogDescription>
+            {{ t("home_editor.import_confirm_desc") }}
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogFooter class="gap-2 sm:gap-0">
+          <Button
+            variant="outline"
+            size="sm"
+            @click="importConfirmOpen = false"
+          >
+            {{ t("common.cancel") }}
+          </Button>
+          <Button size="sm" @click="confirmImportProceed">
+            {{ t("home_editor.import_select_file") }}
           </Button>
         </DialogFooter>
       </DialogContent>

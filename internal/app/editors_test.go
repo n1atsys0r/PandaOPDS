@@ -643,3 +643,101 @@ func TestMultiPageEditorAndOPDSPageEndpoint(t *testing.T) {
 		t.Fatalf("expected 404 for nonexistent page, got %d", badRec.Code)
 	}
 }
+
+func TestHomeFileExportAndImport(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "home.toml")
+	s := &Server{
+		Settings: config.Settings{HomeConfigPath: p},
+		editKey:  []byte("test-only-etag-key"),
+	}
+
+	// 1. Initial GET /api/home/file when file does not exist -> returns default TOML
+	getRec := httptest.NewRecorder()
+	s.homeFile(getRec, httptest.NewRequest(http.MethodGet, "/api/home/file", nil))
+	if getRec.Code != 200 {
+		t.Fatalf("GET /api/home/file status=%d %s", getRec.Code, getRec.Body.String())
+	}
+	if ct := getRec.Header().Get("Content-Type"); !strings.Contains(ct, "application/toml") {
+		t.Fatalf("unexpected Content-Type: %q", ct)
+	}
+	if cd := getRec.Header().Get("Content-Disposition"); !strings.Contains(cd, "filename=\"home.toml\"") {
+		t.Fatalf("unexpected Content-Disposition: %q", cd)
+	}
+	if !strings.Contains(getRec.Body.String(), "id = \"home\"") {
+		t.Fatalf("expected default toml to contain home page: %s", getRec.Body.String())
+	}
+
+	// 2. PUT /api/home/file with invalid TOML -> 400
+	badTomlReq := httptest.NewRequest(http.MethodPut, "/api/home/file", strings.NewReader("broken toml = ["))
+	badTomlRec := httptest.NewRecorder()
+	s.homeFile(badTomlRec, badTomlReq)
+	if badTomlRec.Code != 400 {
+		t.Fatalf("expected 400 for bad toml, got %d", badTomlRec.Code)
+	}
+
+	// 3. PUT /api/home/file with invalid layout (no home page) -> 400
+	noHomeReq := httptest.NewRequest(http.MethodPut, "/api/home/file", strings.NewReader("[[page]]\nid = \"other\"\ntitle = \"Other\"\n"))
+	noHomeRec := httptest.NewRecorder()
+	s.homeFile(noHomeRec, noHomeReq)
+	if noHomeRec.Code != 400 {
+		t.Fatalf("expected 400 for layout without home, got %d", noHomeRec.Code)
+	}
+
+	// 4. PUT /api/home/file cross-origin -> 403
+	validToml := `
+[[page]]
+id = "home"
+title = "Home"
+mode = "groups"
+
+[[page.section]]
+group = true
+kind = "publication"
+title = "Popular"
+type = "preset"
+query = "popular"
+count = 15
+`
+	corsReq := httptest.NewRequest(http.MethodPut, "/api/home/file", strings.NewReader(validToml))
+	corsReq.Header.Set("Origin", "http://evil.com")
+	corsRec := httptest.NewRecorder()
+	s.homeFile(corsRec, corsReq)
+	if corsRec.Code != 403 {
+		t.Fatalf("expected 403 for cross-origin, got %d", corsRec.Code)
+	}
+
+	// 5. PUT /api/home/file with valid TOML -> 200
+	putReq := httptest.NewRequest(http.MethodPut, "/api/home/file", strings.NewReader(validToml))
+	putRec := httptest.NewRecorder()
+	s.homeFile(putRec, putReq)
+	if putRec.Code != 200 {
+		t.Fatalf("PUT /api/home/file status=%d %s", putRec.Code, putRec.Body.String())
+	}
+
+	// 6. GET /api/home/file now returns the updated content
+	getRec2 := httptest.NewRecorder()
+	s.homeFile(getRec2, httptest.NewRequest(http.MethodGet, "/api/home/file", nil))
+	if getRec2.Code != 200 {
+		t.Fatalf("GET /api/home/file after put status=%d", getRec2.Code)
+	}
+	if !strings.Contains(getRec2.Body.String(), "count = 15") {
+		t.Fatalf("expected updated content with count = 15, got %s", getRec2.Body.String())
+	}
+
+	// 7. Verify .bak file was created on subsequent write
+	secondToml := strings.Replace(validToml, "count = 15", "count = 25", 1)
+	putReq2 := httptest.NewRequest(http.MethodPut, "/api/home/file", strings.NewReader(secondToml))
+	putRec2 := httptest.NewRecorder()
+	s.homeFile(putRec2, putReq2)
+	if putRec2.Code != 200 {
+		t.Fatalf("second PUT status=%d", putRec2.Code)
+	}
+	bakContent, err := os.ReadFile(p + ".bak")
+	if err != nil {
+		t.Fatalf("expected .bak file to exist: %v", err)
+	}
+	if !strings.Contains(string(bakContent), "count = 15") {
+		t.Fatalf("expected .bak to contain count = 15, got %s", string(bakContent))
+	}
+}
