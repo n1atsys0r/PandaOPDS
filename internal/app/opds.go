@@ -312,7 +312,7 @@ func (s *Server) gallery12(w http.ResponseWriter, r *http.Request) {
 		info, e = s.Service.Search(ctx, query, next, nil)
 	}
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	title := "Latest"
@@ -380,7 +380,7 @@ func (s *Server) toplist12(w http.ResponseWriter, r *http.Request) {
 	}
 	info, e := s.Service.Toplist(r.Context(), period, page)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	title := "E-Hentai: Toplist " + periods[period]
@@ -414,7 +414,7 @@ func (s *Server) history12(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := s.HistoryGalleries(r.Context(), page, 20)
 	if err != nil {
-		writeError(w, err)
+		s.writeError(w, r, err)
 		return
 	}
 	next := ""
@@ -431,7 +431,7 @@ func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 	}
 	d, e := s.Service.GetDetail(r.Context(), gid, token)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	title, authors := feed.ParseDetailTitle(d.Title, d.TitleJPN)
@@ -527,7 +527,7 @@ func (s *Server) gallery20(w http.ResponseWriter, r *http.Request) {
 		info, e = s.Service.Search(ctx, query, next, extra)
 	}
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	pubs := []map[string]any{}
@@ -669,7 +669,7 @@ func (s *Server) toplist20(w http.ResponseWriter, r *http.Request) {
 	}
 	info, e := s.Service.Toplist(r.Context(), period, page)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	pubs := []map[string]any{}
@@ -693,7 +693,7 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 
 	info, err := s.ArchivedGalleriesFiltered(page, 100, category, "")
 	if err != nil {
-		writeError(w, err)
+		s.writeError(w, r, err)
 		return
 	}
 	pubs := []map[string]any{}
@@ -721,7 +721,7 @@ func (s *Server) history20(w http.ResponseWriter, r *http.Request) {
 
 	info, err := s.HistoryGalleriesFiltered(r.Context(), page, 20, category, "")
 	if err != nil {
-		writeError(w, err)
+		s.writeError(w, r, err)
 		return
 	}
 	pubs := []map[string]any{}
@@ -1298,7 +1298,7 @@ func (s *Server) detail20(w http.ResponseWriter, r *http.Request) {
 	}
 	pub, _, e := s.detailPublication(r, gid, token)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	md, _ := pub["metadata"].(map[string]any)
@@ -1314,7 +1314,7 @@ func (s *Server) publication20(w http.ResponseWriter, r *http.Request) {
 	}
 	pub, _, e := s.detailPublication(r, gid, token)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	writeBytes(w, 200, feed.MIMEPublication, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
@@ -1328,7 +1328,7 @@ func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 	}
 	pub, detail, e := s.detailPublication(r, gid, token)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	reading, _ := pub["readingOrder"].([]map[string]any)

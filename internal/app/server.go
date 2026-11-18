@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"pandaopds/api"
@@ -67,6 +70,10 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 		s.configOK = true
 	}
 	service := eh.NewService(settings, nil)
+	service.Logger = logger
+	if service.Client != nil {
+		service.Client.Logger = logger
+	}
 	s.Service = service
 	service.StartTagTranslation()
 	store, err := archive.NewStoreWithState(settings.ArchiveDir, settings.ArchiveStateDir)
@@ -95,7 +102,9 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 	s.register()
 	return s, nil
 }
-func (s *Server) Handler() http.Handler { return recoverMiddleware(s.basicAuth(s.mux)) }
+func (s *Server) Handler() http.Handler {
+	return s.loggingMiddleware(s.recoverMiddleware(s.basicAuth(s.mux)))
+}
 func (s *Server) Close() error {
 	if s.stopArchiveUpdates != nil {
 		s.stopArchiveUpdates()
@@ -208,6 +217,9 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if s.Logger != nil {
+			s.Logger.Printf("basic auth rejected: %s %s from %s", r.Method, r.URL.Path, clientIP(r))
+		}
 		if strings.HasPrefix(r.URL.Path, "/opds/progression/") || (r.Header.Get("X-Requested-With") != "XMLHttpRequest" && !strings.HasPrefix(r.URL.Path, "/api/")) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="PandaOPDS"`)
 		}
@@ -255,16 +267,94 @@ func prefixMatch(a []string, v string) bool {
 	}
 	return false
 }
-func recoverMiddleware(next http.Handler) http.Handler {
+func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
+				if s.Logger != nil {
+					s.Logger.Printf("HTTP panic %s %s: %v\n%s", r.Method, r.URL.RequestURI(), v, debug.Stack())
+				}
 				writeJSON(w, 500, map[string]any{"detail": "Internal Server Error"})
 			}
 		}()
 		next.ServeHTTP(w, r)
 	})
 }
+
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.Logger == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		duration := time.Since(start)
+		ip := clientIP(r)
+		uri := r.URL.RequestURI()
+		if uri == "" {
+			uri = r.URL.Path
+		}
+		proto := r.Proto
+		if proto == "" {
+			proto = "HTTP/1.1"
+		}
+		s.Logger.Printf("%s - %q %d %s", ip, r.Method+" "+uri+" "+proto, sw.status, duration.Round(time.Millisecond))
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+	bytes       int64
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	if !w.wroteHeader {
+		w.status = status
+		w.wroteHeader = true
+		w.ResponseWriter.WriteHeader(status)
+	}
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += int64(n)
+	return n, err
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(parts[0]); ip != "" {
+			return ip
+		}
+	}
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+		return xri
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -277,6 +367,69 @@ func writeBytes(w http.ResponseWriter, status int, contentType string, headers m
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
+}
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || (r != nil && errors.Is(r.Context().Err(), context.Canceled)) {
+		return
+	}
+	var ae *archive.ArchiverUnavailableError
+	if errors.As(err, &ae) {
+		if s.Logger != nil {
+			s.Logger.Printf("upstream error %s %s: status=403 archiver unavailable: %s", r.Method, r.URL.RequestURI(), ae.Detail)
+		}
+		writeJSON(w, 403, map[string]any{"error": "ArchiverUnavailableError", "detail": ae.Detail})
+		return
+	}
+	var ce *eh.CircuitOpenError
+	if errors.As(err, &ce) {
+		headers := map[string]string{}
+		if ce.RetryAfter > 0 {
+			headers["Retry-After"] = fmt.Sprint(int(ce.RetryAfter))
+		}
+		if s.Logger != nil {
+			s.Logger.Printf("upstream error %s %s: status=503 circuit open: %s", r.Method, r.URL.RequestURI(), ce.Reason)
+		}
+		writeJSONHeaders(w, 503, map[string]any{"error": "upstream_throttled", "detail": ce.Reason}, headers)
+		return
+	}
+	var ue *eh.UpstreamError
+	if errors.As(err, &ue) {
+		status := ue.Status
+		if status == 403 && !strings.Contains(strings.ToLower(ue.Detail), "requires ipb cookies") && !strings.Contains(strings.ToLower(ue.Detail), "star membership") && !strings.Contains(strings.ToLower(ue.Detail), "insufficient gp") && !strings.Contains(strings.ToLower(ue.Detail), "cannot be archived") {
+			status = 503
+		}
+		if status == 429 && ue.RetryAfter == "" {
+			ue.RetryAfter = fmt.Sprint(int(300))
+		}
+		body := map[string]any{"error": "EHException", "detail": ue.Detail}
+		if status == 400 {
+			body = map[string]any{"detail": ue.Detail}
+		}
+		h := map[string]string{}
+		if ue.RetryAfter != "" {
+			h["Retry-After"] = ue.RetryAfter
+		}
+		if s.Logger != nil {
+			s.Logger.Printf("upstream error %s %s: status=%d %s", r.Method, r.URL.RequestURI(), status, ue.Detail)
+		}
+		writeJSONHeaders(w, status, body, h)
+		return
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "star membership") || strings.Contains(lower, "insufficient gp") || strings.Contains(lower, "cannot be archived") {
+		if s.Logger != nil {
+			s.Logger.Printf("upstream error %s %s: status=403 %s", r.Method, r.URL.RequestURI(), err.Error())
+		}
+		writeJSON(w, 403, map[string]any{"error": "ArchiverUnavailableError", "detail": err.Error()})
+		return
+	}
+	if s.Logger != nil {
+		s.Logger.Printf("upstream error %s %s: status=502 %s", r.Method, r.URL.RequestURI(), err.Error())
+	}
+	writeJSON(w, 502, map[string]any{"error": "EHException", "detail": err.Error()})
 }
 func writeError(w http.ResponseWriter, err error) {
 	if err == nil {

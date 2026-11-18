@@ -53,7 +53,7 @@ func (s *Server) rateGallery(w http.ResponseWriter, r *http.Request) {
 	}
 	result, e := s.Service.RateGallery(r.Context(), gid, token, score)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	out := map[string]any{"gid": gid, "token": token, "rating": score}

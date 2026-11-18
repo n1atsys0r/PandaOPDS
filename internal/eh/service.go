@@ -12,6 +12,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -30,6 +31,7 @@ import (
 
 type Service struct {
 	Settings     config.Settings
+	Logger       *log.Logger
 	Client       *Client
 	Throttle     *Throttle
 	mu           sync.Mutex
@@ -721,11 +723,17 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 				q := parsed.Query()
 				q.Set("nl", info.ReloadKey)
 				parsed.RawQuery = q.Encode()
+				if s.Logger != nil {
+					s.Logger.Printf("image source retry via nl gid=%d page=%d reloadKey=%s", gid, pageNo, info.ReloadKey)
+				}
 				data, _, fetchErr = s.Client.Get(ctx, parsed.String(), KindImage)
 			}
 		}
 		if fetchErr != nil {
 			lastErr = fetchErr
+			if s.Logger != nil {
+				s.Logger.Printf("image fetch failed gid=%d page=%d attempt=%d/%d: %v", gid, pageNo, attempt+1, retries+1, fetchErr)
+			}
 			if !retryableImageError(fetchErr) || attempt >= retries {
 				return nil, "", fetchErr
 			}
@@ -786,6 +794,9 @@ func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, 
 func (s *Service) FetchCoverBytes(ctx context.Context, rawURL string) ([]byte, string, error) {
 	data, _, e := s.Client.Get(ctx, rawURL, KindThumb)
 	if e != nil {
+		if s.Logger != nil {
+			s.Logger.Printf("cover proxy fetch failed url=%s: %v", rawURL, e)
+		}
 		return nil, "", e
 	}
 	mime := detectImageType(data)

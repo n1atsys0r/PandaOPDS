@@ -91,7 +91,7 @@ func (s *Server) archiveQuote(w http.ResponseWriter, r *http.Request) {
 	}
 	v, e := s.Archives.Quote(r.Context(), gid, token)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	writeJSON(w, 200, v)
@@ -111,7 +111,7 @@ func (s *Server) archiveStart(w http.ResponseWriter, r *http.Request) {
 	}
 	v, e := s.Archives.Start(r.Context(), gid, token, p.Quality, p.Force)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	writeJSON(w, 200, v)
@@ -151,7 +151,7 @@ func (s *Server) archiveMetadataRefresh(w http.ResponseWriter, r *http.Request) 
 	}
 	v, e := s.Archives.Snapshot(r.Context(), gid, token, true)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	writeJSON(w, 200, v)
@@ -164,7 +164,7 @@ func (s *Server) archiveRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	v, e := s.Archives.Refresh(r.Context(), gid, token)
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	writeJSON(w, 200, v)
@@ -206,7 +206,7 @@ func (s *Server) archiveUpdate(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]any{"detail": conflict.Detail})
 			return
 		}
-		writeError(w, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, 200, v)
@@ -313,7 +313,7 @@ func (s *Server) archiveCover(w http.ResponseWriter, r *http.Request) {
 			return coverResult{data: bytes, mime: mimeType}, nil
 		})
 		if fetchErr != nil {
-			writeError(w, fetchErr)
+			s.writeError(w, r, fetchErr)
 			return
 		}
 		res := val.(coverResult)

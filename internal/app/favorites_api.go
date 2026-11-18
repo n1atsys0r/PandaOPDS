@@ -153,7 +153,7 @@ func (s *Server) favoriteCategories(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	ids := make([]int, 0, len(cats))
@@ -180,7 +180,7 @@ func (s *Server) favoriteFavcats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	out := map[string]string{}
@@ -208,7 +208,7 @@ func (s *Server) favoriteSyncRun(w http.ResponseWriter, r *http.Request) {
 	}
 	v, e := s.Favorites.RunWithOptions(r.Context(), favorites.RunOptions{FullCatalog: full})
 	if e != nil {
-		writeError(w, e)
+		s.writeError(w, r, e)
 		return
 	}
 	writeJSON(w, 200, v)

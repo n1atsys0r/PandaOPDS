@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -30,6 +31,7 @@ func (e *UpstreamError) Error() string {
 
 type Client struct {
 	cfg          config.Settings
+	Logger       *log.Logger
 	HTTP         *http.Client
 	Throttle     *Throttle
 	sessionReady bool
@@ -180,11 +182,20 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
 			last = err
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
 			if attempt < retries {
+				if c.Logger != nil {
+					c.Logger.Printf("upstream request failed: %s %s: %v (retry %d/%d)", method, target, err, attempt+1, retries)
+				}
 				if err := sleepContext(ctx, time.Duration(100*(attempt+1))*time.Millisecond); err != nil {
 					return nil, nil, err
 				}
 				continue
+			}
+			if c.Logger != nil {
+				c.Logger.Printf("upstream request failed after %d retries: %s %s: %v", retries, method, target, err)
 			}
 			break
 		}
@@ -192,11 +203,20 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		resp.Body.Close()
 		if readErr != nil {
 			last = readErr
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
 			if attempt < retries {
+				if c.Logger != nil {
+					c.Logger.Printf("upstream read body failed: %s %s: %v (retry %d/%d)", method, target, readErr, attempt+1, retries)
+				}
 				if err := ctx.Err(); err != nil {
 					return nil, nil, err
 				}
 				continue
+			}
+			if c.Logger != nil {
+				c.Logger.Printf("upstream read body failed after %d retries: %s %s: %v", retries, method, target, readErr)
 			}
 			break
 		}
@@ -217,6 +237,9 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		}
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
 			if attempt < retries {
+				if c.Logger != nil {
+					c.Logger.Printf("upstream HTTP %d: %s %s (retry %d/%d)", resp.StatusCode, method, target, attempt+1, retries)
+				}
 				if err := sleepContext(ctx, time.Duration(200*(attempt+1))*time.Millisecond); err != nil {
 					return nil, nil, err
 				}
@@ -224,6 +247,9 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 			}
 		}
 		if strings.Contains(text, "Page load has been aborted due to a fatal error") && attempt < retries {
+			if c.Logger != nil {
+				c.Logger.Printf("upstream fatal error page: %s %s (retry %d/%d)", method, target, attempt+1, retries)
+			}
 			if err := sleepContext(ctx, time.Duration(300*(attempt+1))*time.Millisecond); err != nil {
 				return nil, nil, err
 			}
