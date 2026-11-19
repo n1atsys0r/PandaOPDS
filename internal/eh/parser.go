@@ -434,7 +434,7 @@ func ParseDetailPage(src, siteHost string, pageIndex int) (DetailPageInfo, error
 		pno := pageIndex*20 + i + 1
 		if m := streamHrefRE.FindStringSubmatch(href); len(m) > 3 {
 			pno, _ = strconv.Atoi(m[3])
-		} else if m := regexp.MustCompile(`/mpv/(\d+)/`).FindStringSubmatch(href); len(m) > 0 {
+		} else if m := regexp.MustCompile(`/mpv/(\d+)/`).FindStringSubmatch(href); len(m) > 1 {
 			hash := attr(div, "data-orghash")
 			if len(hash) >= 10 {
 				href = fmt.Sprintf("/s/%s/%s-%d", hash[:10], m[1], pno)
@@ -660,12 +660,26 @@ func parseDetailComments(doc *xhtml.Node) []GalleryComment {
 		anchors := all(c3, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "a" })
 		if len(anchors) > 0 {
 			comment.Username = nodeText(anchors[0])
-		}
-		for _, a := range anchors[1:] {
-			if m := showUserRE.FindStringSubmatch(attr(a, "href")); len(m) > 1 {
-				if id, err := strconv.Atoi(m[1]); err == nil {
-					comment.UserID = &id
-					break
+			for _, a := range anchors[1:] {
+				if m := showUserRE.FindStringSubmatch(attr(a, "href")); len(m) > 1 {
+					if id, err := strconv.Atoi(m[1]); err == nil {
+						comment.UserID = &id
+						break
+					}
+				}
+			}
+			if comment.UserID == nil {
+				if m := showUserRE.FindStringSubmatch(attr(anchors[0], "href")); len(m) > 1 {
+					if id, err := strconv.Atoi(m[1]); err == nil {
+						comment.UserID = &id
+					}
+				}
+			}
+		} else if c3 != nil {
+			c3Text := nodeText(c3)
+			if idx := strings.Index(c3Text, "by:"); idx != -1 {
+				if name := strings.TrimSpace(c3Text[idx+3:]); name != "" {
+					comment.Username = name
 				}
 			}
 		}

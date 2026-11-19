@@ -106,6 +106,48 @@ func TestParseDetailPageCommentsAndMyTags(t *testing.T) {
 	}
 }
 
+func TestParseDetailPageCommentsEdgeCases(t *testing.T) {
+	page := `<!doctype html><html><body>
+	<div id="gdt"><div class="gdtm"><a href="/s/abc/123-1"><div style="background:transparent url(https://ehgt.org/t/thumb.jpg) no-repeat;width:100px;height:100px"></div></a></div></div>
+	<div id="cdiv">
+		<div class="c1"><div class="c2"><div class="c3">Posted on 14 January 2024, 09:35 by: &nbsp; (Deleted)</div></div>
+		<div class="c6" id="comment_1"><b>First</b></div></div>
+		<div class="c1"><div class="c2"><div class="c3">Posted on 14 January 2024, 10:00 by: <a href="/u/2">Bob</a></div></div>
+		<div class="c6" id="comment_2"><b>Second</b></div></div>
+		<div class="c1"><div class="c2"><div class="c3">Posted on 14 January 2024, 10:30 by: <a href="/forums.php?showuser=99">Charlie</a></div></div>
+		<div class="c6" id="comment_3"><b>Third</b></div></div>
+		<div class="c1"><div class="c6" id="comment_4"><b>Fourth</b></div></div>
+	</div></body></html>`
+
+	detail, err := ParseDetailPage(page, "e-hentai.org", 0)
+	if err != nil {
+		t.Fatalf("ParseDetailPage returned unexpected error: %v", err)
+	}
+	if len(detail.Comments) != 4 {
+		t.Fatalf("len(comments) = %d, want 4", len(detail.Comments))
+	}
+
+	c1 := detail.Comments[0]
+	if c1.ID != 1 || c1.Username != "(Deleted)" || c1.UserID != nil || c1.Time != "2024-01-14 09:35" {
+		t.Fatalf("unexpected comment 1: %#v", c1)
+	}
+
+	c2 := detail.Comments[1]
+	if c2.ID != 2 || c2.Username != "Bob" || c2.UserID != nil || c2.Time != "2024-01-14 10:00" {
+		t.Fatalf("unexpected comment 2: %#v", c2)
+	}
+
+	c3 := detail.Comments[2]
+	if c3.ID != 3 || c3.Username != "Charlie" || c3.UserID == nil || *c3.UserID != 99 || c3.Time != "2024-01-14 10:30" {
+		t.Fatalf("unexpected comment 3: %#v", c3)
+	}
+
+	c4 := detail.Comments[3]
+	if c4.ID != 4 || c4.Username != "" || c4.UserID != nil || c4.Time != "" {
+		t.Fatalf("unexpected comment 4: %#v", c4)
+	}
+}
+
 func TestParseDetailPageFavoriteStateRequiresValidSlot(t *testing.T) {
 	tests := []struct {
 		name     string
