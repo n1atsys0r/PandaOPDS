@@ -58,6 +58,7 @@ import CoverImage from "@/components/CoverImage.vue";
 import HomeEditor from "@/components/HomeEditor.vue";
 import LoginForm from "@/components/LoginForm.vue";
 import OpdsHome from "@/components/OpdsHome.vue";
+import IncidentTracker from "@/components/IncidentTracker.vue";
 import ThemeAutoIcon from "@/components/ThemeAutoIcon.vue";
 import {
   DropdownMenu,
@@ -91,6 +92,7 @@ import {
   ChevronDownIcon as ChevronDown,
   LanguagesIcon as Languages,
   CheckIcon as Check,
+  ZapIcon as Zap,
 } from "@lucide/vue";
 import { useApp } from "./state.js";
 import { t, currentLocale, setLocale } from "./i18n.js";
@@ -983,37 +985,6 @@ function cardActionLabel(a) {
         <template v-if="s.page.value === 'dashboard'">
           <div class="heading">
             <div>
-              <div class="flex items-center gap-2 mb-2">
-                <span
-                  class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border border-border/80 bg-background text-foreground shadow-xs"
-                >
-                  <span
-                    class="size-1.5 rounded-full"
-                    :class="
-                      s.status.value?.app?.config_ok
-                        ? 'bg-emerald-500 animate-pulse'
-                        : 'bg-amber-500'
-                    "
-                  ></span>
-                  {{
-                    s.status.value?.app?.config_ok
-                      ? t("dashboard.status_ok")
-                      : t("dashboard.status_check")
-                  }}
-                </span>
-                <span
-                  v-if="s.status.value?.circuit?.state === 'open'"
-                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20"
-                >
-                  {{ t("dashboard.circuit_open") }}
-                </span>
-                <span
-                  v-else
-                  class="text-xs text-muted-foreground hidden sm:inline"
-                >
-                  {{ t("dashboard.circuit_normal") }}
-                </span>
-              </div>
               <h1 class="text-2xl font-bold tracking-tight text-foreground">
                 {{ t("dashboard.title") }}
               </h1>
@@ -1051,48 +1022,6 @@ function cardActionLabel(a) {
                   <span class="truncate font-mono">{{
                     s.status.value?.site?.host || "e-hentai.org"
                   }}</span>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card class="shadow-xs hover:shadow-sm transition-shadow">
-              <CardHeader
-                class="flex flex-row items-center justify-between pb-2 space-y-0"
-              >
-                <CardTitle
-                  class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >{{ t("dashboard.outbound_requests") }}</CardTitle
-                >
-                <CardAction
-                  ><Activity class="size-4 text-muted-foreground"
-                /></CardAction>
-              </CardHeader>
-              <CardContent>
-                <div
-                  class="text-2xl font-bold tracking-tight font-mono text-foreground"
-                >
-                  {{
-                    Number(s.status.value?.throttle?.html_requests || 0) +
-                    Number(s.status.value?.throttle?.api_requests || 0) +
-                    Number(s.status.value?.throttle?.image_requests || 0)
-                  }}
-                </div>
-                <div
-                  class="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground font-mono"
-                >
-                  <span
-                    >HTML
-                    {{ s.status.value?.throttle?.html_requests || 0 }}</span
-                  >
-                  <span>·</span>
-                  <span
-                    >API {{ s.status.value?.throttle?.api_requests || 0 }}</span
-                  >
-                  <span>·</span>
-                  <span
-                    >{{ t("dashboard.image_req") }}
-                    {{ s.status.value?.throttle?.image_requests || 0 }}</span
-                  >
                 </div>
               </CardContent>
             </Card>
@@ -1213,7 +1142,66 @@ function cardActionLabel(a) {
                 </div>
               </CardContent>
             </Card>
+
+            <Card class="shadow-xs hover:shadow-sm transition-shadow">
+              <CardHeader
+                class="flex flex-row items-center justify-between pb-2 space-y-0"
+              >
+                <CardTitle
+                  class="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >{{ t("dashboard.cache_hit_rate") }}</CardTitle
+                >
+                <CardAction
+                  ><Zap class="size-4 text-muted-foreground"
+                /></CardAction>
+              </CardHeader>
+              <CardContent>
+                <div class="flex items-baseline justify-between">
+                  <div
+                    class="text-2xl font-bold tracking-tight font-mono text-foreground"
+                  >
+                    {{
+                      (Number(s.status.value?.cache_stats?.hits || 0) + Number(s.status.value?.cache_stats?.misses || 0)) > 0
+                        ? `${s.status.value?.cache_stats?.hit_rate ?? 0}%`
+                        : "—"
+                    }}
+                  </div>
+                  <span
+                    v-if="(Number(s.status.value?.cache_stats?.hits || 0) + Number(s.status.value?.cache_stats?.misses || 0)) > 0"
+                    class="text-xs font-medium text-emerald-600 dark:text-emerald-400 font-mono"
+                  >
+                    {{ s.status.value?.cache_stats?.hit_rate ?? 0 }}%
+                  </span>
+                </div>
+                <div
+                  class="w-full bg-muted rounded-full h-1.5 mt-2.5 overflow-hidden"
+                >
+                  <div
+                    class="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                    :style="{
+                      width: `${Math.min(100, Math.max(0, Number(s.status.value?.cache_stats?.hit_rate || 0)))}%`,
+                    }"
+                  ></div>
+                </div>
+                <div
+                  class="flex items-center justify-between mt-2 text-xs text-muted-foreground font-mono"
+                >
+                  <span>{{
+                    t("dashboard.hits", {
+                      count: s.status.value?.cache_stats?.hits ?? 0,
+                    })
+                  }}</span>
+                  <span>{{
+                    t("dashboard.misses", {
+                      count: s.status.value?.cache_stats?.misses ?? 0,
+                    })
+                  }}</span>
+                </div>
+              </CardContent>
+            </Card>
           </div>
+
+          <IncidentTracker class="mb-5" />
 
           <div class="columns">
             <Card class="shadow-xs">

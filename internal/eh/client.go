@@ -225,7 +225,7 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 		if resp.Request != nil && resp.Request.URL != nil {
 			responseHost = resp.Request.URL.Hostname()
 		}
-		c.Throttle.TripFromBody(text, kind, responseHost)
+		c.Throttle.TripFromBodyWithDetail(text, kind, responseHost, method, target)
 		if strings.HasPrefix(text, "Your IP address") || strings.HasPrefix(text, "This IP address") || ((strings.Contains(text, "Your IP address") || strings.Contains(text, "This IP address")) && (strings.Contains(text, "banned") || strings.Contains(text, "temporarily banned"))) {
 			return data, resp.Header, &UpstreamError{Status: 503, Detail: "E-Hentai IP address is banned"}
 		}

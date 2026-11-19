@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "golang.org/x/image/webp"
@@ -54,6 +55,8 @@ type Service struct {
 	myTagsAt     time.Time
 	myTagsSeen   bool
 	translator   *TagTranslator
+	memHits      atomic.Int64
+	memMisses    atomic.Int64
 }
 
 // ArchiveReader is implemented by the persistent archive store. Keeping this
@@ -141,6 +144,7 @@ func (s *Service) GetList(ctx context.Context, query, next string, extra url.Val
 	if !bypass {
 		if v, ok := lookup(s.lists, cacheKey); ok {
 			s.mu.Unlock()
+			s.memHits.Add(1)
 			return v, nil
 		}
 	}
@@ -154,10 +158,12 @@ func (s *Service) GetList(ctx context.Context, query, next string, extra url.Val
 	if !bypass {
 		if v, ok := lookup(s.lists, cacheKey); ok {
 			s.mu.Unlock()
+			s.memHits.Add(1)
 			return v, nil
 		}
 	}
 	s.mu.Unlock()
+	s.memMisses.Add(1)
 	if err := ctx.Err(); err != nil {
 		return GalleryPageInfo{}, err
 	}
@@ -306,6 +312,7 @@ func (s *Service) GetDetail(ctx context.Context, gid int, token string) (DetailP
 	s.mu.Lock()
 	if v, ok := lookup(s.details, key); ok {
 		s.mu.Unlock()
+		s.memHits.Add(1)
 		v.ActiveGID, v.ActiveToken = activeGID, activeToken
 		return v, nil
 	}
@@ -316,10 +323,12 @@ func (s *Service) GetDetail(ctx context.Context, gid int, token string) (DetailP
 	s.mu.Lock()
 	if v, ok := lookup(s.details, key); ok {
 		s.mu.Unlock()
+		s.memHits.Add(1)
 		v.ActiveGID, v.ActiveToken = activeGID, activeToken
 		return v, nil
 	}
 	s.mu.Unlock()
+	s.memMisses.Add(1)
 	d, err := s.getDetailPage(ctx, activeGID, activeToken, 0)
 	if err != nil && s.archive != nil && s.archiveReady(activeGID, activeToken) {
 		if snap, ok := s.archive.GetMetadataSnapshot(activeGID, activeToken); ok {
@@ -706,6 +715,7 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 	index := pageNo - 1
 	if s.archive != nil {
 		if b, ok, err := s.archive.GetPage(gid, token, index); err == nil && ok {
+			s.memHits.Add(1)
 			return b, detectImageType(b), nil
 		} else if err != nil && s.archivePayloadReady(gid, token) {
 			return nil, "", &UpstreamError{Status: 503, Detail: "local archive temporarily unavailable: " + err.Error()}
@@ -801,6 +811,7 @@ func (s *Service) RememberCover(gid int, token string, coverURL string) {
 func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, string, error) {
 	if s.archive != nil {
 		if b, ok := s.archive.GetCover(gid, token); ok {
+			s.memHits.Add(1)
 			return b, detectImageType(b), nil
 		}
 	}
@@ -1249,13 +1260,19 @@ func (s *Service) ArchivedGalleryItem(a ArchiveInfo) GalleryListItem {
 	}
 	return GalleryListItem{GID: a.GID, Token: a.Token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: category, PageCount: &count, Rating: rating, PublishTime: publishTime, Language: languageFromTags(tags), Tags: tags}
 }
+func (s *Service) MemHits() int64 {
+	return s.memHits.Load()
+}
+func (s *Service) MemMisses() int64 {
+	return s.memMisses.Load()
+}
 func (s *Service) Status() map[string]any {
 	s.mu.Lock()
 	lists := len(s.lists)
 	covers := len(s.cover)
 	pages := len(s.pages)
 	s.mu.Unlock()
-	return map[string]any{"uptime_seconds": int64(time.Since(s.started).Seconds()), "requests": s.Throttle.Counts(), "circuit_breaker": s.Throttle.Circuit.Snapshot(), "cache": map[string]any{"list_entries": lists, "cover_entries": covers, "page_entries": pages, "image": s.disk.Stats()}}
+	return map[string]any{"uptime_seconds": int64(time.Since(s.started).Seconds()), "requests": s.Throttle.Counts(), "circuit_breaker": s.Throttle.Circuit.Snapshot(), "cache": map[string]any{"list_entries": lists, "cover_entries": covers, "page_entries": pages, "image": s.disk.Stats(), "hits": s.memHits.Load(), "misses": s.memMisses.Load()}}
 }
 func (s *Service) ClearCache() error {
 	s.mu.Lock()

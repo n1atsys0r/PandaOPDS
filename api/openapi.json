@@ -4140,6 +4140,9 @@
                     "disk_cache": {
                       "type": "object"
                     },
+                    "cache_stats": {
+                      "type": "object"
+                    },
                     "archive": {
                       "type": "object"
                     },
@@ -4196,6 +4199,12 @@
                     "bytes": 0,
                     "enabled": true
                   },
+                  "cache_stats": {
+                    "hits": 0,
+                    "misses": 0,
+                    "hit_rate": 0.0,
+                    "total": 0
+                  },
                   "archive": {
                     "entries": 1,
                     "ready": 1,
@@ -4245,6 +4254,104 @@
               "WWW-Authenticate": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/incidents": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Get Incidents and Pulse",
+        "operationId": "get_incidents_api_incidents_get",
+        "responses": {
+          "200": {
+            "description": "Successful response with active incident, pulse timeline, and recent history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active_incident": {
+                      "type": "object"
+                    },
+                    "circuit": {
+                      "type": "object"
+                    },
+                    "pulse": {
+                      "type": "array"
+                    },
+                    "history": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/incidents/{id}": {
+      "get": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Get Incident Detail",
+        "operationId": "get_incident_detail_api_incidents__id__get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full incident post-mortem context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Incident not found"
+          }
+        }
+      }
+    },
+    "/api/circuit/reset": {
+      "post": {
+        "tags": [
+          "webui"
+        ],
+        "summary": "Reset Circuit Breaker",
+        "operationId": "reset_circuit_api_circuit_reset_post",
+        "responses": {
+          "200": {
+            "description": "Circuit breaker reset response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "circuit": {
+                      "type": "object"
+                    }
+                  }
                 }
               }
             }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,6 +38,8 @@ type DiskCache struct {
 	mu       sync.Mutex
 	loaded   bool
 	index    diskCacheIndex
+	hits     atomic.Int64
+	misses   atomic.Int64
 }
 
 type diskCacheEntry struct {
@@ -157,6 +160,7 @@ func (d *DiskCache) path(key string) string {
 }
 func (d *DiskCache) Get(key string) ([]byte, bool) {
 	if !d.enabled {
+		d.misses.Add(1)
 		return nil, false
 	}
 	d.mu.Lock()
@@ -166,9 +170,11 @@ func (d *DiskCache) Get(key string) ([]byte, bool) {
 	st, err := os.Stat(p)
 	if os.IsNotExist(err) {
 		d.index.remove(p)
+		d.misses.Add(1)
 		return nil, false
 	}
 	if err != nil {
+		d.misses.Add(1)
 		return nil, false
 	}
 	entry := diskCacheEntry{path: p, size: st.Size(), modTime: st.ModTime(), accessed: st.ModTime()}
@@ -182,6 +188,7 @@ func (d *DiskCache) Get(key string) ([]byte, bool) {
 		} else {
 			d.index.set(entry)
 		}
+		d.misses.Add(1)
 		return nil, false
 	}
 	b, err := os.ReadFile(p)
@@ -189,12 +196,14 @@ func (d *DiskCache) Get(key string) ([]byte, bool) {
 		if os.IsNotExist(err) {
 			d.index.remove(p)
 		}
+		d.misses.Add(1)
 		return nil, false
 	}
 	now := time.Now()
 	_ = os.Chtimes(p, now, st.ModTime())
 	entry.accessed = now
 	d.index.set(entry)
+	d.hits.Add(1)
 	return b, true
 }
 func (d *DiskCache) Put(key string, b []byte) {
@@ -267,6 +276,12 @@ func (d *DiskCache) Clear() error {
 	d.loaded = true
 	return nil
 }
+func (d *DiskCache) Hits() int64 {
+	return d.hits.Load()
+}
+func (d *DiskCache) Misses() int64 {
+	return d.misses.Load()
+}
 func (d *DiskCache) Stats() map[string]any {
 	if !d.enabled {
 		var bytes int64
@@ -283,12 +298,12 @@ func (d *DiskCache) Stats() map[string]any {
 			}
 			return nil
 		})
-		return map[string]any{"entries": count, "bytes": bytes, "enabled": false, "max_bytes": d.maxBytes}
+		return map[string]any{"entries": count, "bytes": bytes, "enabled": false, "max_bytes": d.maxBytes, "hits": d.hits.Load(), "misses": d.misses.Load()}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.loadIndexLocked()
-	return map[string]any{"entries": len(d.index.entries), "bytes": d.index.total, "enabled": true, "max_bytes": d.maxBytes}
+	return map[string]any{"entries": len(d.index.entries), "bytes": d.index.total, "enabled": true, "max_bytes": d.maxBytes, "hits": d.hits.Load(), "misses": d.misses.Load()}
 }
 
 func (d *DiskCache) loadIndexLocked() {

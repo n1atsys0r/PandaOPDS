@@ -65,6 +65,11 @@ const state = reactive({
   layout: { navigation: [], publication: null, facets: [], groups: [] },
   pages: [],
   activePageId: "home",
+  incidents: null,
+  incidentRange: "24h",
+  selectedIncident: null,
+  incidentSheetOpen: false,
+  resettingCircuit: false,
 });
 const MAX_COVER_CACHE = 300;
 const coverCache = new Map();
@@ -319,11 +324,53 @@ function applyTheme() {
 }
 async function loadStatus() {
   try {
-    state.status = (await api("/api/status")).data;
+    const range = state.incidentRange || "24h";
+    const [statusRes, incRes] = await Promise.all([
+      api("/api/status"),
+      api(`/api/incidents?range=${encodeURIComponent(range)}`).catch(() => ({ data: null })),
+    ]);
+    state.status = statusRes.data;
+    if (incRes.data) state.incidents = incRes.data;
   } catch (e) {
     if (e.status !== 401) state.error = e.message;
   } finally {
     state.authChecked = true;
+  }
+}
+async function loadIncidents(range = state.incidentRange || "24h") {
+  state.incidentRange = range;
+  try {
+    const r = await api(`/api/incidents?range=${encodeURIComponent(range)}`);
+    state.incidents = r.data;
+  } catch (e) {
+    if (e.status !== 401) console.warn("Failed to load incidents", e);
+  }
+}
+async function inspectIncident(id) {
+  try {
+    const r = await api(`/api/incidents/${id}`);
+    state.selectedIncident = r.data;
+    state.incidentSheetOpen = true;
+  } catch (e) {
+    state.error = e.message;
+  }
+}
+async function resetCircuit() {
+  if (state.resettingCircuit) return;
+  state.resettingCircuit = true;
+  try {
+    const r = await api("/api/circuit/reset", { method: "POST" });
+    if (r.data?.ok) {
+      state.notice = t("dashboard.circuit_reset_success");
+      await Promise.all([loadStatus(), loadIncidents()]);
+      if (state.selectedIncident && state.selectedIncident.state === "ongoing") {
+        state.selectedIncident.state = "reset";
+      }
+    }
+  } catch (e) {
+    state.error = e.message;
+  } finally {
+    state.resettingCircuit = false;
   }
 }
 async function loadConfig() {
@@ -1715,5 +1762,8 @@ export function useApp() {
     updateLocalProgress,
     getGalleryProgress,
     progressionCache,
+    loadIncidents,
+    inspectIncident,
+    resetCircuit,
   };
 }

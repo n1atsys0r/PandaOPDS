@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"pandaopds/internal/eh"
 	"pandaopds/internal/favorites"
 	"pandaopds/internal/progression"
+	"pandaopds/internal/recorder"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -37,6 +39,7 @@ type Server struct {
 	Archives     *archive.Manager
 	Favorites    *favorites.Syncer
 	Progression  *progression.Store
+	Tracker      *recorder.Tracker
 	Logger       *log.Logger
 	mux          *http.ServeMux
 	configOK     bool
@@ -76,6 +79,33 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 	}
 	s.Service = service
 	service.StartTagTranslation()
+	incidentsPath := filepath.Join(settings.CacheDir, "incidents.json")
+	s.Tracker = recorder.NewTracker(incidentsPath, 1000)
+	service.Throttle.Circuit.SetCallbacks(eh.CircuitCallbacks{
+		OnTrip: func(reason string, cooldown time.Duration, detail, method, target string) {
+			if detail == "" {
+				detail = reason
+			}
+			if s.Tracker != nil {
+				s.Tracker.OnCircuitTrip(reason, cooldown, recorder.RequestTrace{
+					Method: method,
+					Path:   target,
+					Status: 503,
+					Error:  detail,
+				}, detail)
+			}
+		},
+		OnReset: func() {
+			if s.Tracker != nil {
+				s.Tracker.OnCircuitReset()
+			}
+		},
+		OnRecovered: func() {
+			if s.Tracker != nil {
+				s.Tracker.OnCircuitRecovered()
+			}
+		},
+	})
 	store, err := archive.NewStoreWithState(settings.ArchiveDir, settings.ArchiveStateDir)
 	if err != nil {
 		return nil, fmt.Errorf("open archive store: %w", err)
@@ -199,6 +229,9 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/home/file", s.homeFile)
 	m.HandleFunc("PUT /api/home/file", s.homeFile)
 	m.HandleFunc("POST /api/cache/clear", s.cacheClear)
+	m.HandleFunc("GET /api/incidents", s.apiIncidents)
+	m.HandleFunc("GET /api/incidents/{id}", s.apiIncidentDetail)
+	m.HandleFunc("POST /api/circuit/reset", s.apiCircuitReset)
 	m.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -208,7 +241,7 @@ func (s *Server) register() {
 func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.Settings
-		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit" || r.URL.Path == "/api/home/file"
+		editRoute := r.URL.Path == "/api/config/edit" || r.URL.Path == "/api/home/edit" || r.URL.Path == "/api/home/file" || r.URL.Path == "/api/circuit/reset"
 		isWebUI := r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/webui-assets/") || r.URL.Path == "/favicon.ico"
 		if !cfg.AuthEnabled() || (!editRoute && (r.URL.Path == "/health" || r.URL.Path == "/opds/authentication.json" || isWebUI || contains(cfg.AuthExemptPaths, r.URL.Path) || prefixMatch(cfg.AuthExemptPrefixes, r.URL.Path))) {
 			next.ServeHTTP(w, r)
@@ -285,7 +318,7 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Logger == nil {
+		if s.Logger == nil && s.Tracker == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -302,8 +335,94 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		if proto == "" {
 			proto = "HTTP/1.1"
 		}
-		s.Logger.Printf("%s - %q %d %s", ip, r.Method+" "+uri+" "+proto, sw.status, duration.Round(time.Millisecond))
+		if s.Logger != nil {
+			s.Logger.Printf("%s - %q %d %s", ip, r.Method+" "+uri+" "+proto, sw.status, duration.Round(time.Millisecond))
+		}
+		if s.Tracker != nil && isUpstreamRelated(uri) {
+			s.Tracker.RecordTrace(recorder.RequestTrace{
+				Timestamp:  start,
+				Method:     r.Method,
+				Path:       uri,
+				Kind:       detectRequestKind(uri),
+				Status:     sw.status,
+				DurationMs: duration.Milliseconds(),
+				ClientIP:   ip,
+				UserAgent:  r.UserAgent(),
+				Error:      sw.errDetail,
+			})
+		}
 	})
+}
+
+func isUpstreamRelated(uri string) bool {
+	path := uri
+	if idx := strings.IndexByte(uri, '?'); idx != -1 {
+		path = uri[:idx]
+	}
+
+	if strings.HasPrefix(path, "/opds/") {
+		if path == "/opds/authentication.json" || strings.HasPrefix(path, "/opds/progression/") {
+			return false
+		}
+		return true
+	}
+
+	if strings.HasPrefix(path, "/image/") || strings.HasPrefix(path, "/stream/") {
+		return true
+	}
+
+	if strings.HasPrefix(path, "/api/archive/") {
+		if strings.HasPrefix(path, "/api/archive/import/scan") {
+			return false
+		}
+		return true
+	}
+
+	if strings.HasPrefix(path, "/api/favorites") {
+		if path == "/api/favorites/sync" {
+			return false
+		}
+		return true
+	}
+
+	if path == "/api/rating" {
+		return true
+	}
+
+	return false
+}
+
+func detectRequestKind(uri string) string {
+	path := uri
+	if idx := strings.IndexByte(uri, '?'); idx != -1 {
+		path = uri[:idx]
+	}
+	if strings.HasPrefix(path, "/image/") {
+		if strings.Contains(path, "/thumb") {
+			return "thumb"
+		}
+		return "image"
+	}
+	if strings.HasPrefix(path, "/stream/") {
+		return "stream"
+	}
+	if strings.HasPrefix(path, "/opds/") {
+		return "opds"
+	}
+	if strings.HasPrefix(path, "/api/archive/") {
+		return "archive"
+	}
+	if strings.HasPrefix(path, "/api/favorites") {
+		return "favorite"
+	}
+	if path == "/api/rating" {
+		return "rating"
+	}
+	return "upstream"
+}
+
+type errorDetailSetter interface {
+	SetErrorDetail(detail string)
 }
 
 type statusWriter struct {
@@ -311,6 +430,11 @@ type statusWriter struct {
 	status      int
 	wroteHeader bool
 	bytes       int64
+	errDetail   string
+}
+
+func (w *statusWriter) SetErrorDetail(detail string) {
+	w.errDetail = detail
 }
 
 func (w *statusWriter) WriteHeader(status int) {
@@ -385,29 +509,70 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) || (r != nil && errors.Is(r.Context().Err(), context.Canceled)) {
 		return
 	}
+
+	var detail string
+	var status int
+
 	var ae *archive.ArchiverUnavailableError
 	if errors.As(err, &ae) {
-		if s.Logger != nil {
+		status = 403
+		detail = ae.Detail
+		if s.Logger != nil && r != nil {
 			s.Logger.Printf("upstream error %s %s: status=403 archiver unavailable: %s", r.Method, r.URL.RequestURI(), ae.Detail)
 		}
+		if setter, ok := w.(errorDetailSetter); ok {
+			setter.SetErrorDetail(detail)
+		}
+		if s.Tracker != nil && r != nil {
+			s.Tracker.OnUpstreamError(status, detail, recorder.RequestTrace{
+				Timestamp: time.Now(),
+				Method:    r.Method,
+				Path:      r.URL.RequestURI(),
+				Kind:      detectRequestKind(r.URL.RequestURI()),
+				Status:    status,
+				ClientIP:  clientIP(r),
+				UserAgent: r.UserAgent(),
+				Error:     detail,
+			})
+		}
 		writeJSON(w, 403, map[string]any{"error": "ArchiverUnavailableError", "detail": ae.Detail})
 		return
 	}
+
 	var ce *eh.CircuitOpenError
 	if errors.As(err, &ce) {
+		detail = ce.Reason
 		headers := map[string]string{}
 		if ce.RetryAfter > 0 {
 			headers["Retry-After"] = fmt.Sprint(int(ce.RetryAfter))
 		}
-		if s.Logger != nil {
+		if s.Logger != nil && r != nil {
 			s.Logger.Printf("upstream error %s %s: status=503 circuit open: %s", r.Method, r.URL.RequestURI(), ce.Reason)
 		}
+		if setter, ok := w.(errorDetailSetter); ok {
+			setter.SetErrorDetail(detail)
+		}
+		if s.Tracker != nil && r != nil {
+			s.Tracker.OnRequestBlocked(recorder.RequestTrace{
+				Timestamp: time.Now(),
+				Method:    r.Method,
+				Path:      r.URL.RequestURI(),
+				Kind:      detectRequestKind(r.URL.RequestURI()),
+				Status:    503,
+				ClientIP:  clientIP(r),
+				UserAgent: r.UserAgent(),
+				IsBlocked: true,
+				Error:     ce.Reason,
+			})
+		}
 		writeJSONHeaders(w, 503, map[string]any{"error": "upstream_throttled", "detail": ce.Reason}, headers)
 		return
 	}
+
 	var ue *eh.UpstreamError
 	if errors.As(err, &ue) {
-		status := ue.Status
+		status = ue.Status
+		detail = ue.Detail
 		if status == 403 && !strings.Contains(strings.ToLower(ue.Detail), "requires ipb cookies") && !strings.Contains(strings.ToLower(ue.Detail), "star membership") && !strings.Contains(strings.ToLower(ue.Detail), "insufficient gp") && !strings.Contains(strings.ToLower(ue.Detail), "cannot be archived") {
 			status = 503
 		}
@@ -422,67 +587,73 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		if ue.RetryAfter != "" {
 			h["Retry-After"] = ue.RetryAfter
 		}
-		if s.Logger != nil {
+		if s.Logger != nil && r != nil {
 			s.Logger.Printf("upstream error %s %s: status=%d %s", r.Method, r.URL.RequestURI(), status, ue.Detail)
 		}
+		if setter, ok := w.(errorDetailSetter); ok {
+			setter.SetErrorDetail(detail)
+		}
+		if s.Tracker != nil && r != nil && (status >= 400) {
+			s.Tracker.OnUpstreamError(status, ue.Detail, recorder.RequestTrace{
+				Timestamp: time.Now(),
+				Method:    r.Method,
+				Path:      r.URL.RequestURI(),
+				Kind:      detectRequestKind(r.URL.RequestURI()),
+				Status:    status,
+				ClientIP:  clientIP(r),
+				UserAgent: r.UserAgent(),
+				Error:     ue.Detail,
+			})
+		}
 		writeJSONHeaders(w, status, body, h)
 		return
 	}
+
 	lower := strings.ToLower(err.Error())
 	if strings.Contains(lower, "star membership") || strings.Contains(lower, "insufficient gp") || strings.Contains(lower, "cannot be archived") {
-		if s.Logger != nil {
+		status = 403
+		detail = err.Error()
+		if s.Logger != nil && r != nil {
 			s.Logger.Printf("upstream error %s %s: status=403 %s", r.Method, r.URL.RequestURI(), err.Error())
 		}
+		if setter, ok := w.(errorDetailSetter); ok {
+			setter.SetErrorDetail(detail)
+		}
+		if s.Tracker != nil && r != nil {
+			s.Tracker.OnUpstreamError(status, detail, recorder.RequestTrace{
+				Timestamp: time.Now(),
+				Method:    r.Method,
+				Path:      r.URL.RequestURI(),
+				Kind:      detectRequestKind(r.URL.RequestURI()),
+				Status:    status,
+				ClientIP:  clientIP(r),
+				UserAgent: r.UserAgent(),
+				Error:     detail,
+			})
+		}
 		writeJSON(w, 403, map[string]any{"error": "ArchiverUnavailableError", "detail": err.Error()})
 		return
 	}
-	if s.Logger != nil {
+
+	status = 502
+	detail = err.Error()
+	if s.Logger != nil && r != nil {
 		s.Logger.Printf("upstream error %s %s: status=502 %s", r.Method, r.URL.RequestURI(), err.Error())
 	}
-	writeJSON(w, 502, map[string]any{"error": "EHException", "detail": err.Error()})
-}
-func writeError(w http.ResponseWriter, err error) {
-	if err == nil {
-		return
+	if setter, ok := w.(errorDetailSetter); ok {
+		setter.SetErrorDetail(detail)
 	}
-	var ae *archive.ArchiverUnavailableError
-	if errors.As(err, &ae) {
-		writeJSON(w, 403, map[string]any{"error": "ArchiverUnavailableError", "detail": ae.Detail})
-		return
-	}
-	var ce *eh.CircuitOpenError
-	if errors.As(err, &ce) {
-		headers := map[string]string{}
-		if ce.RetryAfter > 0 {
-			headers["Retry-After"] = fmt.Sprint(int(ce.RetryAfter))
-		}
-		writeJSONHeaders(w, 503, map[string]any{"error": "upstream_throttled", "detail": ce.Reason}, headers)
-		return
-	}
-	var ue *eh.UpstreamError
-	if errors.As(err, &ue) {
-		status := ue.Status
-		if status == 403 && !strings.Contains(strings.ToLower(ue.Detail), "requires ipb cookies") && !strings.Contains(strings.ToLower(ue.Detail), "star membership") && !strings.Contains(strings.ToLower(ue.Detail), "insufficient gp") && !strings.Contains(strings.ToLower(ue.Detail), "cannot be archived") {
-			status = 503
-		}
-		if status == 429 && ue.RetryAfter == "" {
-			ue.RetryAfter = fmt.Sprint(int(300))
-		}
-		body := map[string]any{"error": "EHException", "detail": ue.Detail}
-		if status == 400 {
-			body = map[string]any{"detail": ue.Detail}
-		}
-		h := map[string]string{}
-		if ue.RetryAfter != "" {
-			h["Retry-After"] = ue.RetryAfter
-		}
-		writeJSONHeaders(w, status, body, h)
-		return
-	}
-	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "star membership") || strings.Contains(lower, "insufficient gp") || strings.Contains(lower, "cannot be archived") {
-		writeJSON(w, 403, map[string]any{"error": "ArchiverUnavailableError", "detail": err.Error()})
-		return
+	if s.Tracker != nil && r != nil {
+		s.Tracker.OnUpstreamError(status, detail, recorder.RequestTrace{
+			Timestamp: time.Now(),
+			Method:    r.Method,
+			Path:      r.URL.RequestURI(),
+			Kind:      detectRequestKind(r.URL.RequestURI()),
+			Status:    status,
+			ClientIP:  clientIP(r),
+			UserAgent: r.UserAgent(),
+			Error:     detail,
+		})
 	}
 	writeJSON(w, 502, map[string]any{"error": "EHException", "detail": err.Error()})
 }

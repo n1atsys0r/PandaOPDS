@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"pandaopds/app/webui"
 	"pandaopds/internal/config"
 	"pandaopds/internal/home"
+	"pandaopds/internal/recorder"
 )
 
 const appVersion = "0.2.0"
@@ -31,8 +33,31 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	cache, _ := snap["cache"].(map[string]any)
 	img := cache["image"]
 	homeCfg, homeUsing, homeErr := s.currentHome()
-	mem := map[string]any{"size": cache["list_entries"], "max_entries": 2000, "hits": 0, "misses": 0}
+	memHits := s.Service.MemHits()
+	memMisses := s.Service.MemMisses()
+	var diskHits, diskMisses int64
+	if diskMap, ok := img.(map[string]any); ok {
+		if dh, ok := diskMap["hits"].(int64); ok {
+			diskHits = dh
+		}
+		if dm, ok := diskMap["misses"].(int64); ok {
+			diskMisses = dm
+		}
+	}
+	totalHits := memHits + diskHits
+	totalMisses := memMisses + diskMisses
+	var hitRate float64
+	if totalHits+totalMisses > 0 {
+		hitRate = math.Round(float64(totalHits)/float64(totalHits+totalMisses)*1000) / 10
+	}
+	mem := map[string]any{"size": cache["list_entries"], "max_entries": 2000, "hits": memHits, "misses": memMisses}
 	disk := img
+	cacheStats := map[string]any{
+		"hits":     totalHits,
+		"misses":   totalMisses,
+		"hit_rate": hitRate,
+		"total":    totalHits + totalMisses,
+	}
 	site := map[string]any{"site": s.Settings.EHSite, "host": s.Settings.SiteHost(), "http_origin": "https://" + s.Settings.SiteHost(), "api_url": apiURL(s.Settings.EHSite), "public_base_url": s.Settings.PublicBaseURL, "pse_page_base": s.Settings.PSEPageBase, "is_exhentai": s.Settings.EHSite == "exhentai", "has_ipb": s.Settings.HasIPB()}
 	if s.Settings.PublicBaseURL == "" {
 		site["public_base_url"] = "（相对路径）"
@@ -44,7 +69,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 			groupCount++
 		}
 	}
-	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": groupCount, "sections": len(homeCfg.Sections)}})
+	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "cache_stats": cacheStats, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": groupCount, "sections": len(homeCfg.Sections)}})
 }
 func apiURL(site string) string {
 	if site == "exhentai" {
@@ -297,4 +322,62 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func (s *Server) apiIncidents(w http.ResponseWriter, r *http.Request) {
+	timeRange := r.URL.Query().Get("range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+	if s.Tracker == nil {
+		writeJSON(w, 200, map[string]any{
+			"range":           timeRange,
+			"active_incident": nil,
+			"circuit":         s.Service.Throttle.Circuit.Snapshot(),
+			"summary":         recorder.SummaryStats{SuccessRate: 100},
+			"activity":        []any{},
+			"failure_causes":  []any{},
+			"request_sources": []any{},
+			"pulse":           []any{},
+			"history":         []any{},
+		})
+		return
+	}
+	stats := s.Tracker.DashboardOverview(timeRange)
+	writeJSON(w, 200, map[string]any{
+		"range":           stats.Range,
+		"active_incident": stats.ActiveIncident,
+		"circuit":         s.Service.Throttle.Circuit.Snapshot(),
+		"summary":         stats.Summary,
+		"activity":        stats.Activity,
+		"failure_causes":  stats.FailureCauses,
+		"request_sources": stats.RequestSources,
+		"pulse":           stats.Pulse,
+		"history":         stats.History,
+	})
+}
+
+func (s *Server) apiIncidentDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.Tracker == nil || id == "" {
+		writeJSON(w, 404, map[string]any{"detail": "Incident not found"})
+		return
+	}
+	inc, ok := s.Tracker.GetIncident(id)
+	if !ok {
+		writeJSON(w, 404, map[string]any{"detail": "Incident not found"})
+		return
+	}
+	writeJSON(w, 200, inc)
+}
+
+func (s *Server) apiCircuitReset(w http.ResponseWriter, r *http.Request) {
+	s.Service.Throttle.Circuit.Reset()
+	if s.Tracker != nil {
+		s.Tracker.OnCircuitReset()
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":      true,
+		"circuit": s.Service.Throttle.Circuit.Snapshot(),
+	})
 }
