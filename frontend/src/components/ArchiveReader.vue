@@ -350,6 +350,28 @@ function enqueueReaderFetch(key, idx, priority, run) {
   return promise;
 }
 
+function evictResolvedUrl(idx) {
+  if (resolvedUrls.has(idx)) {
+    const url = resolvedUrls.get(idx);
+    if (typeof url === "string" && url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+    resolvedUrls.delete(idx);
+  }
+  inflightUrls.delete(idx);
+}
+
+function evictResolvedThumbUrl(idx) {
+  if (resolvedThumbUrls.has(idx)) {
+    const url = resolvedThumbUrls.get(idx);
+    if (typeof url === "string" && url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+    resolvedThumbUrls.delete(idx);
+  }
+  inflightThumbUrls.delete(idx);
+}
+
 async function resolveCachedUrl(
   kind,
   idx,
@@ -357,15 +379,21 @@ async function resolveCachedUrl(
   urlFor,
   cacheMap,
   inflightMap,
+  opts = {},
 ) {
-  if (cacheMap.has(idx)) return cacheMap.get(idx);
+  if (opts.bypassCache) {
+    if (kind === "page") evictResolvedUrl(idx);
+    else if (kind === "thumb") evictResolvedThumbUrl(idx);
+  } else if (cacheMap.has(idx)) {
+    return cacheMap.get(idx);
+  }
   const queueKey = `${kind}:${idx}`;
   const queued = pendingFetchQueue.find((j) => j.key === queueKey);
   if (queued && priority > queued.priority) {
     queued.priority = priority;
     queued.seq = ++queueOrderSeq;
   }
-  if (inflightMap.has(idx)) return inflightMap.get(idx);
+  if (!opts.bypassCache && inflightMap.has(idx)) return inflightMap.get(idx);
 
   const seq = sessionSeq;
   const url = urlFor(idx);
@@ -376,7 +404,7 @@ async function resolveCachedUrl(
     if (seq !== sessionSeq) {
       throw new Error("reader session closed");
     }
-    const resolved = await s.fetchReaderBlobUrl(url, signal);
+    const resolved = await s.fetchReaderBlobUrl(url, signal, opts);
     if (seq !== sessionSeq) {
       if (resolved && resolved.startsWith("blob:")) {
         URL.revokeObjectURL(resolved);
@@ -396,7 +424,7 @@ async function resolveCachedUrl(
   return task;
 }
 
-function resolvePageUrl(idx, priority = PRIORITY_PRELOAD) {
+function resolvePageUrl(idx, priority = PRIORITY_PRELOAD, opts = {}) {
   return resolveCachedUrl(
     "page",
     idx,
@@ -404,10 +432,11 @@ function resolvePageUrl(idx, priority = PRIORITY_PRELOAD) {
     streamUrlFor,
     resolvedUrls,
     inflightUrls,
+    opts,
   );
 }
 
-function resolveThumbUrl(idx) {
+function resolveThumbUrl(idx, opts = {}) {
   return resolveCachedUrl(
     "thumb",
     idx,
@@ -415,11 +444,16 @@ function resolveThumbUrl(idx) {
     thumbUrlFor,
     resolvedThumbUrls,
     inflightThumbUrls,
+    opts,
   );
 }
 
-function getPagerPage(idx, current = true) {
-  return resolvePageUrl(idx, current ? PRIORITY_CURRENT : PRIORITY_PRELOAD);
+function getPagerPage(idx, current = true, opts = {}) {
+  return resolvePageUrl(
+    idx,
+    current ? PRIORITY_CURRENT : PRIORITY_PRELOAD,
+    opts,
+  );
 }
 function cancelPagerPrefetch(indices) {
   const cancelled = new Set(indices);
@@ -501,24 +535,25 @@ function disconnectWebtoonObservers() {
   trackObserver = null;
 }
 
-async function loadWebtoonPage(idx, priority = PRIORITY_PRELOAD) {
+async function loadWebtoonPage(idx, priority = PRIORITY_PRELOAD, opts = {}) {
   const curr = webtoonStates.value[idx];
-  if (curr?.status === "loaded") return Promise.resolve();
-  if (curr?.status === "loading") {
-    return resolvePageUrl(idx, priority).catch(() => {});
+  if (!opts.bypassCache && curr?.status === "loaded") return Promise.resolve();
+  if (!opts.bypassCache && curr?.status === "loading") {
+    return resolvePageUrl(idx, priority, opts).catch(() => {});
   }
   webtoonStates.value = {
     ...webtoonStates.value,
     [idx]: { status: "loading", src: "" },
   };
   try {
-    const url = await resolvePageUrl(idx, priority);
+    const url = await resolvePageUrl(idx, priority, opts);
     webtoonStates.value = {
       ...webtoonStates.value,
       [idx]: { status: "loaded", src: url },
     };
   } catch {
     if (!props.open) return;
+    evictResolvedUrl(idx);
     webtoonStates.value = {
       ...webtoonStates.value,
       [idx]: { status: "error", src: "" },
@@ -928,6 +963,7 @@ onBeforeUnmount(() => {
           :resolve-page="getPagerPage"
           :resolve-thumb="getPagerThumb"
           :cancel-page-prefetch="cancelPagerPrefetch"
+          :evict-page="evictResolvedUrl"
           @update:page-mode="pagerMode = $event"
           @update:reading-r-t-l="pagerRTL = $event"
           @update:zoom="pagerZoom = $event"
@@ -969,7 +1005,10 @@ onBeforeUnmount(() => {
                 :alt="`${t('explore.page_no')} ${idx + 1}`"
                 class="block w-full h-auto select-none"
                 draggable="false"
-                @error="webtoonStates[idx] = { status: 'error', src: '' }"
+                @error="
+                  evictResolvedUrl(idx);
+                  webtoonStates[idx] = { status: 'error', src: '' };
+                "
               />
               <div
                 v-else-if="webtoonStates[idx]?.status === 'error'"
@@ -981,7 +1020,11 @@ onBeforeUnmount(() => {
                 <Button
                   variant="outline"
                   size="sm"
-                  @click.stop="loadWebtoonPage(idx, PRIORITY_CURRENT)"
+                  @click.stop="
+                    loadWebtoonPage(idx, PRIORITY_CURRENT, {
+                      bypassCache: true,
+                    })
+                  "
                 >
                   <RotateCcw class="size-3.5" />
                   {{ t("common.retry") }}

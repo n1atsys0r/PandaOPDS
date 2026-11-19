@@ -233,3 +233,40 @@ func TestMyTagsLazyRefreshPersistsCompatibleSnapshot(t *testing.T) {
 		t.Fatalf("persisted style missing: %q", got)
 	}
 }
+
+func TestNonImageBytesRejectedAndNotCached(t *testing.T) {
+	cacheDir := t.TempDir()
+	cfg := config.Settings{
+		EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0,
+		ImageSourceRetries: 0, PageURLTTLSeconds: 60, CacheDir: cacheDir,
+		ImageCacheEnabled: true, PSEPageBase: 1,
+	}
+	service := NewService(cfg, replayRoundTripper(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case strings.HasPrefix(r.URL.Host, "e-hentai.org") && strings.HasPrefix(r.URL.Path, "/g/"):
+			return replayResponse(r, 200, `<div id="gdt"><div class="gdtm"><a href="/s/abc/1-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>`), nil
+		case strings.HasPrefix(r.URL.Host, "e-hentai.org") && strings.HasPrefix(r.URL.Path, "/s/"):
+			return replayResponse(r, 200, `<div id="img" src="https://hath.network/image.jpg" style="width:100px;height:100px"></div>`), nil
+		case r.URL.Host == "hath.network":
+			return replayResponse(r, 200, "504 Gateway Time-out"), nil
+		default:
+			return replayResponse(r, 404, "unexpected"), nil
+		}
+	}))
+	service.Client.sessionReady = true
+	defer service.Close()
+
+	_, _, err := service.GetImage(context.Background(), 1, "abc", 1)
+	if err == nil {
+		t.Fatal("expected error for non-image bytes, got nil")
+	}
+	var upstream *UpstreamError
+	if !errors.As(err, &upstream) || upstream.Status != 502 {
+		t.Fatalf("expected 502 UpstreamError, got: %v", err)
+	}
+
+	key := "1:abc:1"
+	if _, ok := service.disk.Get(key); ok {
+		t.Fatal("non-image error text was unexpectedly written to disk cache")
+	}
+}

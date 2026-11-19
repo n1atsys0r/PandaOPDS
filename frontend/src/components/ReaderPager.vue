@@ -30,6 +30,7 @@ const props = defineProps({
   resolvePage: Function,
   resolveThumb: Function,
   cancelPagePrefetch: Function,
+  evictPage: Function,
 });
 const emit = defineEmits([
   "update:modelValue",
@@ -214,8 +215,12 @@ async function loadCurrent() {
           pageErrors.value = errors;
         })
         .catch(() => {
-          if (id === requestId)
+          if (id === requestId) {
+            removePageUrl(index);
+            preloadedUrls.delete(index);
+            props.evictPage?.(index);
             pageErrors.value = { ...pageErrors.value, [index]: true };
+          }
         });
     });
   void companionLoads;
@@ -241,6 +246,9 @@ async function loadCurrent() {
     pageErrors.value = remainingErrors;
   } catch {
     if (id === requestId) {
+      removePageUrl(displayIndex.value);
+      preloadedUrls.delete(displayIndex.value);
+      props.evictPage?.(displayIndex.value);
       pageErrors.value = { ...pageErrors.value, [displayIndex.value]: true };
     }
   }
@@ -262,8 +270,12 @@ function warmSpread(spreadIndex, isCurrent = () => true) {
           setPageUrl(index, value);
       })
       .catch(() => {
-        if (isCurrent())
+        if (isCurrent()) {
+          removePageUrl(index);
+          preloadedUrls.delete(index);
+          props.evictPage?.(index);
           pageErrors.value = { ...pageErrors.value, [index]: true };
+        }
       });
   }
 }
@@ -303,7 +315,10 @@ function scheduleIdleDecode(generation) {
     ) {
       idleDecodeInProgress = true;
       waitForImage(item.url)
-        .catch(() => {})
+        .catch(() => {
+          preloadedUrls.delete(item.index);
+          props.evictPage?.(item.index);
+        })
         .finally(() => {
           idleDecodeInProgress = false;
           scheduleIdleDecode(prefetchGeneration);
@@ -410,12 +425,17 @@ async function retrySpreadPage(index) {
   const { [index]: _removed, ...errors } = pageErrors.value;
   pageErrors.value = errors;
   removePageUrl(index);
+  preloadedUrls.delete(index);
+  props.evictPage?.(index);
   try {
-    const url = await props.resolvePage(index, true);
+    const url = await props.resolvePage(index, true, { bypassCache: true });
     setPageUrl(index, url);
     await nextTick();
     await waitForImage(url);
   } catch {
+    removePageUrl(index);
+    preloadedUrls.delete(index);
+    props.evictPage?.(index);
     pageErrors.value = { ...pageErrors.value, [index]: true };
   }
 }
@@ -834,6 +854,12 @@ defineExpose({
               "
               draggable="false"
               @dblclick.stop="onImageDoubleClick"
+              @error="
+                removePageUrl(idx);
+                preloadedUrls.delete(idx);
+                props.evictPage?.(idx);
+                pageErrors = { ...pageErrors, [idx]: true };
+              "
             />
             <div
               v-else-if="idx !== null && pageErrors[idx]"

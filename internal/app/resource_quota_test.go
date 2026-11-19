@@ -74,8 +74,13 @@ func TestQuotaHandlersUseEndpointSpecificBodyAndHeaders(t *testing.T) {
 				if got := response.Header().Get("Retry-After"); got != "" {
 					t.Fatalf("cover proxy unexpectedly has Retry-After=%q", got)
 				}
-			} else if got := response.Header().Get("Retry-After"); got != "47" {
-				t.Fatalf("Retry-After=%q, want configured 47", got)
+			} else {
+				if got := response.Header().Get("Retry-After"); got != "47" {
+					t.Fatalf("Retry-After=%q, want configured 47", got)
+				}
+				if got := response.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") && !strings.Contains(got, "no-cache") {
+					t.Fatalf("expected Cache-Control to prevent error caching, got %q", got)
+				}
 			}
 		})
 	}

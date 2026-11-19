@@ -749,9 +749,15 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 			continue
 		}
 		mime := detectImageType(data)
-		if mime != "application/octet-stream" || !isHTML(data) {
-			s.disk.Put(key, data)
+		if mime == "application/octet-stream" || len(data) == 0 {
+			lastErr = &UpstreamError{Status: 502, Detail: "upstream returned non-image bytes"}
+			if attempt >= retries {
+				return nil, "", lastErr
+			}
+			s.invalidateImageSource(gid, token, pageNo)
+			continue
 		}
+		s.disk.Put(key, data)
 		return data, mime, nil
 	}
 	return nil, "", lastErr

@@ -359,6 +359,10 @@ func clientIP(r *http.Request) string {
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	if status >= 400 && w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
@@ -366,6 +370,10 @@ func writeBytes(w http.ResponseWriter, status int, contentType string, headers m
 	w.Header().Set("Content-Type", contentType)
 	for k, v := range headers {
 		w.Header().Set(k, v)
+	}
+	if status >= 400 && w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
@@ -482,6 +490,10 @@ func writeJSONHeaders(w http.ResponseWriter, status int, v any, headers map[stri
 	w.Header().Set("Content-Type", "application/json")
 	for k, x := range headers {
 		w.Header().Set(k, x)
+	}
+	if status >= 400 && w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)

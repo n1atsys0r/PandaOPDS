@@ -818,6 +818,11 @@ func mapLanguage(key string) string {
 	return ""
 }
 
+func is509URL(u string) bool {
+	u = strings.ToLower(strings.TrimSpace(u))
+	return strings.HasSuffix(u, "/509.gif") || img509[u]
+}
+
 func ParseImagePage(src string) (ImagePageInfo, error) {
 	doc, err := parseDoc(src)
 	if err != nil {
@@ -827,7 +832,7 @@ func ParseImagePage(src string) (ImagePageInfo, error) {
 	if img == nil {
 		return ImagePageInfo{}, fmt.Errorf("image page has no #img element")
 	}
-	out := ImagePageInfo{ImageURL: attr(img, "src"), Is509: img509[attr(img, "src")]}
+	out := ImagePageInfo{ImageURL: attr(img, "src"), Is509: is509URL(attr(img, "src"))}
 	if out.Is509 {
 		return out, nil
 	}

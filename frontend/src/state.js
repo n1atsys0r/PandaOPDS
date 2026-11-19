@@ -117,14 +117,32 @@ function peekCoverUrl(path) {
   return "";
 }
 
-async function fetchMediaBlobUrl(path, signal, directWhenUnauthed) {
+async function fetchMediaBlobUrl(
+  path,
+  signal,
+  directWhenUnauthed,
+  { bypassCache = false } = {},
+) {
   if (!path) return "";
   const token = state.authToken || localStorage.getItem("pandaopds_auth") || "";
   if (!token && directWhenUnauthed) return path;
   try {
     const headers = { "X-Requested-With": "XMLHttpRequest" };
     if (token) headers.Authorization = `Basic ${token}`;
-    const r = await fetch(path, { signal, headers });
+    if (bypassCache) {
+      headers["Cache-Control"] = "no-cache";
+      headers["Pragma"] = "no-cache";
+    }
+    let requestUrl = path;
+    if (bypassCache) {
+      const sep = requestUrl.includes("?") ? "&" : "?";
+      requestUrl = `${requestUrl}${sep}_t=${Date.now()}`;
+    }
+    const fetchOpts = { signal, headers };
+    if (bypassCache) {
+      fetchOpts.cache = "reload";
+    }
+    const r = await fetch(requestUrl, fetchOpts);
     if (r.status === 401) {
       clearAuthOn401();
       return "";
@@ -145,12 +163,12 @@ async function fetchMediaBlobUrl(path, signal, directWhenUnauthed) {
   }
 }
 
-function fetchAuthedBlobUrl(path, signal) {
-  return fetchMediaBlobUrl(path, signal, true);
+function fetchAuthedBlobUrl(path, signal, opts) {
+  return fetchMediaBlobUrl(path, signal, true, opts);
 }
 
-function fetchReaderBlobUrl(path, signal) {
-  return fetchMediaBlobUrl(path, signal, false);
+function fetchReaderBlobUrl(path, signal, opts) {
+  return fetchMediaBlobUrl(path, signal, false, opts);
 }
 
 async function resolveCoverUrl(path) {
