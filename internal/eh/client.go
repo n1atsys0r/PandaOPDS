@@ -226,11 +226,14 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 			responseHost = resp.Request.URL.Hostname()
 		}
 		c.Throttle.TripFromBody(text, kind, responseHost)
-		if strings.HasPrefix(text, "Your IP address") || strings.HasPrefix(text, "This IP address") {
+		if strings.HasPrefix(text, "Your IP address") || strings.HasPrefix(text, "This IP address") || ((strings.Contains(text, "Your IP address") || strings.Contains(text, "This IP address")) && (strings.Contains(text, "banned") || strings.Contains(text, "temporarily banned"))) {
 			return data, resp.Header, &UpstreamError{Status: 503, Detail: "E-Hentai IP address is banned"}
 		}
-		if strings.HasPrefix(text, "You have exceeded your image") {
+		if strings.HasPrefix(text, "You have exceeded your image") || strings.Contains(text, "exceeded your image") {
 			return data, resp.Header, &UpstreamError{Status: 429, Detail: "image limit exceeded"}
+		}
+		if err := c.Throttle.Circuit.Check(); err != nil {
+			return nil, nil, err
 		}
 		if strings.Contains(text, "Page load has been aborted due to a fatal error") && attempt >= retries {
 			return data, resp.Header, &UpstreamError{Status: 502, Detail: "E-Hentai fatal server error"}
@@ -240,7 +243,7 @@ func (c *Client) requestRetries(ctx context.Context, method, target string, body
 				if c.Logger != nil {
 					c.Logger.Printf("upstream HTTP %d: %s %s (retry %d/%d)", resp.StatusCode, method, target, attempt+1, retries)
 				}
-				if err := sleepContext(ctx, time.Duration(200*(attempt+1))*time.Millisecond); err != nil {
+				if err := sleepContext(ctx, time.Duration(1000*(attempt+1))*time.Millisecond); err != nil {
 					return nil, nil, err
 				}
 				continue

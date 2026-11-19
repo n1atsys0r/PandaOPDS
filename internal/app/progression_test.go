@@ -103,6 +103,7 @@ func TestHistoryEndpoints(t *testing.T) {
 	_ = s.Progression.SetSnapshot(101, "deadbeef01", progression.Snapshot{
 		Title:    "Gallery 101",
 		Category: "Manga",
+		CoverURL: "https://ehgt.org/t/cover101.webp",
 	})
 
 	putProg(202, "deadbeef02", "2026-01-01T12:00:00Z", 0.96)
@@ -178,6 +179,15 @@ func TestHistoryEndpoints(t *testing.T) {
 	}
 	if homeSec.Galleries[0].GID != 202 || homeSec.Galleries[1].GID != 101 {
 		t.Fatalf("expected [202, 101], got [%d, %d]", homeSec.Galleries[0].GID, homeSec.Galleries[1].GID)
+	}
+
+	// Verify HistoryGalleries populates service.cover
+	if s.Service != nil {
+		status := s.Service.Status()
+		cacheStats, _ := status["cache"].(map[string]any)
+		if coverEntries, _ := cacheStats["cover_entries"].(int); coverEntries == 0 {
+			t.Fatalf("expected cover_entries > 0 after history listing, got %v", coverEntries)
+		}
 	}
 }
 

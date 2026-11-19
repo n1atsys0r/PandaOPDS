@@ -1220,6 +1220,7 @@ func (s *Server) fetchHomePreviews(parent context.Context, sections []home.Secti
 	ctx, cancel := context.WithTimeout(parent, homepagePreviewDeadline)
 	defer cancel()
 	completed := make(chan homePreviewDone, len(keys))
+	sem := make(chan struct{}, 2)
 	for _, key := range keys {
 		key := key
 		go func() {
@@ -1233,6 +1234,13 @@ func (s *Server) fetchHomePreviews(parent context.Context, sections []home.Secti
 				}
 				completed <- homePreviewDone{key, result}
 			}()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				result.err = ctx.Err()
+				return
+			}
 			if ctx.Err() != nil {
 				result.err = ctx.Err()
 				return
@@ -1551,6 +1559,9 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 			if it.Snapshot.TitleJPN != "" {
 				title = it.Snapshot.TitleJPN
 			}
+			if it.Snapshot.CoverURL != "" && s.Service != nil {
+				s.Service.RememberCover(it.GID, it.Token, it.Snapshot.CoverURL)
+			}
 			galleries = append(galleries, eh.GalleryListItem{
 				GID:         it.GID,
 				Token:       it.Token,
@@ -1592,6 +1603,9 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 						PublishTime: publishTime,
 					}
 					_ = s.Progression.SetSnapshot(it.GID, it.Token, snapshot)
+					if cov != "" && s.Service != nil {
+						s.Service.RememberCover(it.GID, it.Token, cov)
+					}
 					galleries = append(galleries, eh.GalleryListItem{
 						GID:         it.GID,
 						Token:       it.Token,
@@ -1643,6 +1657,9 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 						Expunged:    g.Expunged,
 					}
 					_ = s.Progression.SetSnapshot(g.GID, g.Token, snap)
+					if g.Thumb != "" && s.Service != nil {
+						s.Service.RememberCover(g.GID, g.Token, g.Thumb)
+					}
 				}
 			}
 		}(missingList)

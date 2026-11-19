@@ -46,6 +46,7 @@ type Service struct {
 	listLocks    map[string]*contextMutex
 	detailFlight singleflight.Group
 	thumbFlight  singleflight.Group
+	coverFlight  singleflight.Group
 	disk         *DiskCache
 	started      time.Time
 	archive      ArchiveReader
@@ -255,6 +256,20 @@ func (s *Service) Toplist(ctx context.Context, period string, page int) (Gallery
 		return v, nil
 	}
 	s.mu.Unlock()
+	unlock, err := s.acquireList(ctx, "toplist:"+key)
+	if err != nil {
+		return GalleryPageInfo{}, err
+	}
+	defer unlock()
+	s.mu.Lock()
+	if v, ok := lookup(s.lists, key); ok {
+		s.mu.Unlock()
+		return v, nil
+	}
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return GalleryPageInfo{}, err
+	}
 	raw, _, err := s.Client.Get(ctx, s.Client.ToplistURL(period, page), KindHTML)
 	if err != nil {
 		return GalleryPageInfo{}, err
@@ -264,7 +279,13 @@ func (s *Service) Toplist(ctx context.Context, period string, page int) (Gallery
 		return v, err
 	}
 	s.mu.Lock()
-	put(s.lists, key, v, time.Duration(s.Settings.ListCacheTTLSeconds)*time.Second)
+	put(s.lists, key, v, time.Duration(positive(s.Settings.ListCacheTTLSeconds, 600))*time.Second)
+	coverTTL := time.Duration(positive(s.Settings.PageURLTTLSeconds, 3600)) * time.Second
+	for _, item := range v.Galleries {
+		if item.CoverURL != "" {
+			put(s.cover, fmt.Sprintf("%d:%s", item.GID, item.Token), item.CoverURL, coverTTL)
+		}
+	}
 	s.mu.Unlock()
 	return v, nil
 }
@@ -762,6 +783,21 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 	}
 	return nil, "", lastErr
 }
+type thumbResult struct {
+	data []byte
+	mime string
+}
+
+func (s *Service) RememberCover(gid int, token string, coverURL string) {
+	if coverURL == "" || gid <= 0 || token == "" {
+		return
+	}
+	ttl := time.Duration(positive(s.Settings.PageURLTTLSeconds, 3600)) * time.Second
+	s.mu.Lock()
+	put(s.cover, fmt.Sprintf("%d:%s", gid, token), coverURL, ttl)
+	s.mu.Unlock()
+}
+
 func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, string, error) {
 	if s.archive != nil {
 		if b, ok := s.archive.GetCover(gid, token); ok {
@@ -772,30 +808,76 @@ func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, 
 	if data, ok := s.disk.Get(diskKey); ok {
 		return data, detectImageType(data), nil
 	}
-	key := fmt.Sprintf("%d:%s", gid, token)
-	s.mu.Lock()
-	u, ok := lookup(s.cover, key)
-	s.mu.Unlock()
-	if !ok {
-		d, err := s.getDetailPage(ctx, gid, token, 0)
-		if err != nil {
-			return nil, "", err
-		}
-		if d.CoverURL != "" {
-			u = d.CoverURL
-		} else if len(d.Thumbnails) > 0 {
-			u = d.Thumbnails[0].ThumbURL
-		} else {
-			return nil, "", errors.New("gallery has no thumbnail")
-		}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
 	}
-	data, _, e := s.Client.Get(ctx, u, KindThumb)
-	if e != nil {
-		return nil, "", e
+	resultCh := s.coverFlight.DoChan(diskKey, func() (value any, err error) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				value = nil
+				err = fmt.Errorf("thumb worker panic: %v", recovered)
+			}
+		}()
+		workerCtx, cancel := s.sharedRequestContext(ctx)
+		defer cancel()
+		if data, ok := s.disk.Get(diskKey); ok {
+			return thumbResult{data: data, mime: detectImageType(data)}, nil
+		}
+		key := fmt.Sprintf("%d:%s", gid, token)
+		s.mu.Lock()
+		u, ok := lookup(s.cover, key)
+		s.mu.Unlock()
+		if !ok {
+			if s.archive != nil {
+				if snap, found := s.archive.GetMetadataSnapshot(gid, token); found {
+					if thumb := toString(snap["thumb"]); thumb != "" {
+						u = thumb
+					}
+				}
+			}
+			if u == "" && s.Client != nil {
+				if meta, gdataErr := s.Client.GData(workerCtx, gid, token); gdataErr == nil && meta.Thumb != "" {
+					u = meta.Thumb
+				}
+			}
+			if u == "" {
+				d, err := s.getDetailPage(workerCtx, gid, token, 0)
+				if err != nil {
+					return nil, err
+				}
+				if d.CoverURL != "" {
+					u = d.CoverURL
+				} else if len(d.Thumbnails) > 0 {
+					u = d.Thumbnails[0].ThumbURL
+				} else {
+					return nil, errors.New("gallery has no thumbnail")
+				}
+			}
+			s.mu.Lock()
+			put(s.cover, key, u, time.Duration(positive(s.Settings.PageURLTTLSeconds, 3600))*time.Second)
+			s.mu.Unlock()
+		}
+		data, _, e := s.Client.Get(workerCtx, u, KindThumb)
+		if e != nil {
+			return nil, e
+		}
+		mime := detectImageType(data)
+		s.disk.Put(diskKey, data)
+		return thumbResult{data: data, mime: mime}, nil
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, "", result.Err
+		}
+		res, ok := result.Val.(thumbResult)
+		if !ok {
+			return nil, "", errors.New("thumb worker returned an invalid result")
+		}
+		return res.data, res.mime, nil
+	case <-ctx.Done():
+		return nil, "", ctx.Err()
 	}
-	mime := detectImageType(data)
-	s.disk.Put(diskKey, data)
-	return data, mime, nil
 }
 func (s *Service) FetchCoverBytes(ctx context.Context, rawURL string) ([]byte, string, error) {
 	data, _, e := s.Client.Get(ctx, rawURL, KindThumb)
