@@ -36,6 +36,7 @@ import {
   replaceSearchFragment,
   selectedSuggestion,
 } from "@/tag-suggestions.js";
+import { resolveOpenSearchUrl } from "@/opensearch-helper.js";
 import {
   CompassIcon as Compass,
   HomeIcon as Home,
@@ -249,32 +250,14 @@ function handleSearchKeyup(event) {
   }
 }
 
-function getOpenSearchUrl(query) {
-  const q = (query || "").trim();
-  if (!q) return "";
-
-  // Prefer the active feed's scoped template; the root catalog is the global fallback.
-  const allLinks = activeRoute.value
-    ? [
-        ...(routeFeed.value?.links || []),
-        ...(catalog.value?.links || []),
-      ]
-    : [
-        ...(catalog.value?.links || []),
-        ...(routeFeed.value?.links || []),
-      ];
-  const searchLink = allLinks.find((l) => l.rel === "search");
-
-  if (searchLink?.href) {
-    if (searchLink.href.includes("{searchTerms}")) {
-      return searchLink.href.replace("{searchTerms}", encodeURIComponent(q));
-    }
-    const sep = searchLink.href.includes("?") ? "&" : "?";
-    return `${searchLink.href}${sep}query=${encodeURIComponent(q)}`;
-  }
-
-  // 2. Fallback to standard OPDS v2 gallery search endpoint
-  return `/opds/v2.0/gallery?query=${encodeURIComponent(q)}`;
+function getOpenSearchUrl(query, options = {}) {
+  return resolveOpenSearchUrl(
+    query,
+    activeRoute.value,
+    routeFeed.value?.links,
+    catalog.value?.links,
+    options,
+  );
 }
 
 function formatTagForSearch(tag) {
@@ -295,11 +278,11 @@ function formatTagForSearch(tag) {
   return t;
 }
 
-function executeSearch(query, displayTitle) {
+function executeSearch(query, displayTitle, options = {}) {
   const q = (query || "").trim();
   if (!q) return;
 
-  const targetUrl = getOpenSearchUrl(q);
+  const targetUrl = getOpenSearchUrl(q, options);
   routePageStack.value = [];
   detailOpen.value = false;
 
@@ -332,7 +315,9 @@ function clearSearch() {
 function handleTagClick(tagName) {
   if (!tagName) return;
   const query = formatTagForSearch(tagName);
-  executeSearch(query, `${t("explore.modal_tags")}: ${tagName}`);
+  executeSearch(query, `${t("explore.modal_tags")}: ${tagName}`, {
+    global: true,
+  });
 }
 
 // Drill-down route state
@@ -2365,6 +2350,7 @@ function handleCategoryClick(category) {
   executeSearch(
     category,
     t("explore.search_title_category", { cat: category }),
+    { global: true },
   );
 }
 
@@ -2372,7 +2358,9 @@ function handleAuthorClick(author) {
   if (!author) return;
   detailOpen.value = false;
   const q = author.includes(" ") ? `artist:"${author}$"` : `artist:${author}$`;
-  executeSearch(q, t("explore.search_title_author", { author }));
+  executeSearch(q, t("explore.search_title_author", { author }), {
+    global: true,
+  });
 }
 
 function handleUploaderClick(uploader) {
@@ -2381,6 +2369,7 @@ function handleUploaderClick(uploader) {
   executeSearch(
     `uploader:${uploader}`,
     t("explore.search_title_uploader", { uploader }),
+    { global: true },
   );
 }
 
