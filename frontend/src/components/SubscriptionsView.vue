@@ -97,7 +97,8 @@ watch(
       favorite_categories: (sub.query?.favorite_categories || []).join(","),
       sort: sub.query?.sort || "newest",
       preset: sub.query?.preset || "latest",
-      max_pages: sub.query?.max_pages || 10,
+      max_pages:
+        sub.source === "favorites" ? sub.query?.max_pages || 10 : 1,
       interval_seconds: sub.interval_seconds ?? 3600,
       enabled: sub.enabled !== false,
       auto_download: Boolean(sub.auto_download),
@@ -539,6 +540,12 @@ function downloadItem(item) {
                 v-model="draft.query_categories"
                 :placeholder="t('subscription.search_categories')"
             /></template>
+            <p
+              v-if="draft.source === 'search' || draft.source === 'preset'"
+              class="text-xs text-muted-foreground"
+            >
+              {{ t("subscription.single_page") }}
+            </p>
             <label class="block text-xs text-muted-foreground"
               >{{ t("subscription.interval")
               }}<Input
@@ -621,7 +628,7 @@ function downloadItem(item) {
               <p v-if="selected.source === 'preset'" class="text-xs">
                 {{ t("subscription.preset_latest") }}
               </p>
-              <label class="block"
+              <label v-if="selected.source === 'favorites'" class="block"
                 >{{ t("subscription.max_pages")
                 }}<Input
                   v-model.number="settingsDraft.max_pages"
@@ -629,7 +636,12 @@ function downloadItem(item) {
                   min="1"
                   max="50"
                   class="mt-1" /></label
-              ><label class="flex gap-2"
+              ><p
+                v-else
+                class="rounded bg-muted px-2 py-1.5 text-xs text-muted-foreground"
+              >
+                {{ t("subscription.single_page") }}
+              </p><label class="flex gap-2"
                 ><input v-model="settingsDraft.enabled" type="checkbox" />{{
                   t("subscription.enabled")
                 }}</label

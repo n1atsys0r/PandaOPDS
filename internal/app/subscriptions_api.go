@@ -33,7 +33,7 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 		e = w.Store.DB().QueryRowContext(r.Context(), `SELECT c.mime,c.data FROM covers c JOIN publications p ON p.id=c.publication_id WHERE p.provider='eh' AND p.gid=? AND p.token=?`, gid, token).Scan(&mime, &data)
 		if e == sql.ErrNoRows {
 			var raw string
-			if err := w.Store.DB().QueryRowContext(r.Context(), `SELECT COALESCE(NULLIF(cover_url,''),json_extract(metadata_json,'$.thumb'),'') FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, token).Scan(&raw); err != nil || raw == "" || !hasAllowedCoverThumb(map[string]any{"thumb": raw}, w.Settings.ImageProxyHosts) {
+			if err := w.Store.DB().QueryRowContext(r.Context(), `SELECT COALESCE(NULLIF(cover_url,''),NULLIF(json_extract(metadata_json,'$.cover_url'),''),json_extract(metadata_json,'$.thumb'),'') FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, token).Scan(&raw); err != nil || raw == "" || !hasAllowedCoverThumb(map[string]any{"thumb": raw}, w.Settings.ImageProxyHosts) {
 				http.NotFound(rw, r)
 				return
 			}
@@ -396,7 +396,11 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 			return err
 		}
 	}
-	if n, ok := c.Query["max_pages"]; ok {
+	if c.Source == "search" || c.Source == "preset" {
+		// These sources take one rolling page per fetch. Keep the normalized
+		// representation consistent with worker enforcement and legacy clients.
+		c.Query["max_pages"] = 1
+	} else if n, ok := c.Query["max_pages"]; ok {
 		v := number(n)
 		if v < 1 {
 			v = 1

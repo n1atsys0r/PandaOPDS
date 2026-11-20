@@ -274,16 +274,15 @@ func TestRunOneCompletesRealBaselineOnlyAfterEndOfResults(t *testing.T) {
 	}
 }
 
-func TestRunOnePartialPageDoesNotCompleteBaseline(t *testing.T) {
+func TestRunOneSinglePageWithMoreResultsCompletesWindowBaseline(t *testing.T) {
 	db := workerTestDB(t)
 	c := testSubscriptionConfig(t, db, "partial")
+	listRequests := 0
 	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("f_search") == "" {
 			return responseHTML(`<html><body>home</body></html>`), nil
 		}
-		if r.URL.Query().Get("next") != "" {
-			return &http.Response{StatusCode: 500, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("error"))}, nil
-		}
+		listRequests++
 		return responseHTML(listFixture(502, "abc502", "502-123")), nil
 	}))
 	w := NewWorker(db.DB, service, nil, nil, config.Settings{})
@@ -291,36 +290,33 @@ func TestRunOnePartialPageDoesNotCompleteBaseline(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, runID, c.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.runOne(context.Background(), c.ID, runID, c); err == nil {
-		t.Fatal("expected second page failure")
+	if err := w.runOne(context.Background(), c.ID, runID, c); err != nil {
+		t.Fatal(err)
 	}
 	var complete, baseline, pages int
-	var status string
-	if err := db.QueryRow(`SELECT complete,status,pages FROM subscription_runs WHERE id=?`, runID).Scan(&complete, &status, &pages); err != nil {
+	var status, coverage string
+	if err := db.QueryRow(`SELECT complete,status,pages,coverage FROM subscription_runs WHERE id=?`, runID).Scan(&complete, &status, &pages, &coverage); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(`SELECT baseline_complete FROM subscriptions WHERE id=?`, c.ID).Scan(&baseline); err != nil {
 		t.Fatal(err)
 	}
-	if complete != 0 || baseline != 0 || pages != 1 || status != "failed" {
-		t.Fatalf("partial run complete=%d baseline=%d pages=%d status=%s", complete, baseline, pages, status)
+	if complete != 1 || baseline != 1 || pages != 1 || status != "complete" || coverage != "window" || listRequests != 1 {
+		t.Fatalf("single page complete=%d baseline=%d pages=%d status=%s coverage=%s listRequests=%d", complete, baseline, pages, status, coverage, listRequests)
 	}
 }
 
-func TestRunOneRevisionChangeRejectsLaterPageAndKeepsPartialBaseline(t *testing.T) {
+func TestRunOneRevisionChangeRejectsInFlightSearchPage(t *testing.T) {
 	db := workerTestDB(t)
 	c := testSubscriptionConfig(t, db, "revision")
-	secondPage := make(chan struct{})
+	firstPage := make(chan struct{})
 	release := make(chan struct{})
 	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("f_search") == "" {
 			return responseHTML(`<html><body>home</body></html>`), nil
 		}
-		if r.URL.Query().Get("next") != "" {
-			close(secondPage)
-			<-release
-			return responseHTML(listFixture(504, "abc504", "")), nil
-		}
+		close(firstPage)
+		<-release
 		return responseHTML(listFixture(503, "abc503", "503-123")), nil
 	}))
 	w := NewWorker(db.DB, service, nil, nil, config.Settings{})
@@ -331,9 +327,9 @@ func TestRunOneRevisionChangeRejectsLaterPageAndKeepsPartialBaseline(t *testing.
 	done := make(chan error, 1)
 	go func() { done <- w.runOne(context.Background(), c.ID, runID, c) }()
 	select {
-	case <-secondPage:
+	case <-firstPage:
 	case <-time.After(3 * time.Second):
-		t.Fatal("second upstream page did not start")
+		t.Fatal("upstream page did not start")
 	}
 	if _, err := db.Exec(`UPDATE subscriptions SET revision=2 WHERE id=?`, c.ID); err != nil {
 		t.Fatal(err)
@@ -353,7 +349,7 @@ func TestRunOneRevisionChangeRejectsLaterPageAndKeepsPartialBaseline(t *testing.
 	if err := db.QueryRow(`SELECT COUNT(*) FROM subscription_items WHERE subscription_id=?`, c.ID).Scan(&items); err != nil {
 		t.Fatal(err)
 	}
-	if complete != 0 || baseline != 0 || items != 1 || status != "partial" {
+	if complete != 0 || baseline != 0 || items != 0 || status != "partial" {
 		t.Fatalf("revision run complete=%d baseline=%d items=%d status=%s", complete, baseline, items, status)
 	}
 }
@@ -941,9 +937,21 @@ func TestFailedBaselineCursorRestartsAtHeadOnNextAttempt(t *testing.T) {
 func TestSearchMaxPagesCompletesAsWindowNotFullRemoteCoverage(t *testing.T) {
 	db := workerTestDB(t)
 	c := testSubscriptionConfig(t, db, "search-window")
+	c.Query["keywords"] = `l:chinese expunged -o:"rough translation$" -o:"extraneous ads$"`
+	c.Query["max_pages"] = float64(10) // pre-existing configuration from before the one-page policy
+	listRequests := 0
+	wantSearch := `l:chinese -o:"rough translation$" -o:"extraneous ads$"`
 	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("f_search") == "" {
 			return responseHTML(`<html>session</html>`), nil
+		}
+		listRequests++
+		searchValues := r.URL.Query()["f_search"]
+		if len(searchValues) != 1 || searchValues[0] != wantSearch {
+			t.Fatalf("upstream f_search values=%q, want exactly one value %q; full URL=%s", searchValues, wantSearch, r.URL)
+		}
+		if r.URL.Query().Get("f_sh") != "on" || r.URL.Query().Get("advsearch") != "1" {
+			t.Fatalf("advanced query params=%v, want expunged/advsearch filters", r.URL.Query())
 		}
 		return responseHTML(listFixture(991, "abc991", "991-1786365950")), nil
 	}))
@@ -952,7 +960,6 @@ func TestSearchMaxPagesCompletesAsWindowNotFullRemoteCoverage(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, runID, c.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	c.Query["max_pages"] = float64(1)
 	if err := w.runOne(context.Background(), c.ID, runID, c); err != nil {
 		t.Fatal(err)
 	}
@@ -963,6 +970,13 @@ func TestSearchMaxPagesCompletesAsWindowNotFullRemoteCoverage(t *testing.T) {
 	}
 	if status != "complete" || coverage != "window" || complete != 1 {
 		t.Fatalf("search capped coverage status=%s coverage=%s complete=%d", status, coverage, complete)
+	}
+	if listRequests != 1 {
+		t.Fatalf("search upstream list requests=%d, want exactly one despite legacy max_pages=10 and next page", listRequests)
+	}
+	var pages int
+	if err := db.QueryRow(`SELECT pages FROM subscription_runs WHERE id=?`, runID).Scan(&pages); err != nil || pages != 1 {
+		t.Fatalf("stored pages=%d err=%v, want 1", pages, err)
 	}
 }
 

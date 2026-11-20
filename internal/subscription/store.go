@@ -480,8 +480,13 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 		args = append(args, id)
 	}
 	base := ` FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.purged=0 AND si.subscription_id IN (` + placeholders(len(q.SubscriptionIDs)) + `)`
+	// Legacy favorites known-key imports contain only identity and baseline
+	// membership. Keep those rows for deduplication and remote reconciliation,
+	// but don't expose them as blank publication cards until a fetch supplies
+	// usable display metadata.
+	base += ` AND (NULLIF(trim(COALESCE(p.title,'')),'') IS NOT NULL OR NULLIF(trim(COALESCE(p.title_jpn,'')),'') IS NOT NULL OR NULLIF(trim(COALESCE(json_extract(p.metadata_json,'$.title'),'')),'') IS NOT NULL OR NULLIF(trim(COALESCE(json_extract(p.metadata_json,'$.title_jpn'),'')),'') IS NOT NULL)`
 	if q.Q != "" {
-		base += ` AND (lower(p.title) LIKE ? OR lower(p.title_jpn) LIKE ? OR lower(p.uploader) LIKE ?)`
+		base += ` AND (lower(COALESCE(NULLIF(p.title,''),json_extract(p.metadata_json,'$.title'),'')) LIKE ? OR lower(COALESCE(NULLIF(p.title_jpn,''),json_extract(p.metadata_json,'$.title_jpn'),'')) LIKE ? OR lower(COALESCE(p.uploader,'')) LIKE ?)`
 		v := "%" + strings.ToLower(q.Q) + "%"
 		args = append(args, v, v, v)
 	}
@@ -502,7 +507,7 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 	if e := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT p.id`+base+group+`)`, args...).Scan(&total); e != nil {
 		return nil, 0, e
 	}
-	query := `SELECT p.id,p.gid,p.token,p.metadata_json,GROUP_CONCAT(DISTINCT si.subscription_id),SUM(CASE WHEN si.inspected=1 THEN 1 ELSE 0 END),SUM(CASE WHEN si.hidden=1 THEN 1 ELSE 0 END),COUNT(*),MIN(si.first_seen_at),MAX(si.last_seen_at),(SELECT GROUP_CONCAT(d.id) FROM documents d WHERE d.publication_id=p.id AND d.status='available'),EXISTS(SELECT 1 FROM documents d WHERE d.publication_id=p.id AND d.status='available'),(SELECT j.status FROM download_jobs j WHERE j.provider=p.provider AND j.gid=p.gid AND j.token=p.token ORDER BY j.created_at DESC LIMIT 1),EXISTS(SELECT 1 FROM covers c WHERE c.publication_id=p.id)` + base + group + ` ORDER BY MIN(si.first_seen_at) DESC,p.id DESC LIMIT ? OFFSET ?`
+	query := `SELECT p.id,p.gid,p.token,p.metadata_json,p.title,p.title_jpn,p.cover_url,GROUP_CONCAT(DISTINCT si.subscription_id),SUM(CASE WHEN si.inspected=1 THEN 1 ELSE 0 END),SUM(CASE WHEN si.hidden=1 THEN 1 ELSE 0 END),COUNT(*),MIN(si.first_seen_at),MAX(si.last_seen_at),(SELECT GROUP_CONCAT(d.id) FROM documents d WHERE d.publication_id=p.id AND d.status='available'),EXISTS(SELECT 1 FROM documents d WHERE d.publication_id=p.id AND d.status='available'),(SELECT j.status FROM download_jobs j WHERE j.provider=p.provider AND j.gid=p.gid AND j.token=p.token ORDER BY j.created_at DESC LIMIT 1),EXISTS(SELECT 1 FROM covers c WHERE c.publication_id=p.id)` + base + group + ` ORDER BY MIN(si.first_seen_at) DESC,p.id DESC LIMIT ? OFFSET ?`
 	params := append(append([]any{}, args...), q.PerPage, (q.Page-1)*q.PerPage)
 	rows, e := s.db.QueryContext(ctx, query, params...)
 	if e != nil {
@@ -512,13 +517,13 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 	out := []map[string]any{}
 	for rows.Next() {
 		var pubID, gid int
-		var token, raw, members, first, last string
+		var token, raw, title, titleJPN, coverURL, members, first, last string
 		var inspected, hidden, count int
 		var docs sql.NullString
 		var archived int
 		var download sql.NullString
 		var cachedCover int
-		if e = rows.Scan(&pubID, &gid, &token, &raw, &members, &inspected, &hidden, &count, &first, &last, &docs, &archived, &download, &cachedCover); e != nil {
+		if e = rows.Scan(&pubID, &gid, &token, &raw, &title, &titleJPN, &coverURL, &members, &inspected, &hidden, &count, &first, &last, &docs, &archived, &download, &cachedCover); e != nil {
 			return nil, 0, e
 		}
 		item := map[string]any{"publication_id": pubID, "gid": gid, "token": token, "inspected": inspected == count, "hidden": hidden == count, "first_seen_at": first, "last_seen_at": last, "archived": archived != 0, "document_ids": []string{}, "download_status": download.String}
@@ -529,7 +534,16 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 				item[k] = v
 			}
 		}
-		if cachedCover != 0 {
+		if stringVal(item["title"]) == "" {
+			item["title"] = title
+		}
+		if stringVal(item["title_jpn"]) == "" {
+			item["title_jpn"] = titleJPN
+		}
+		// Always route cover requests through the local endpoint so it can fetch
+		// and persist an upstream thumbnail on first use. Returning the raw URL
+		// only worked in detail views that separately load the full metadata.
+		if cachedCover != 0 || coverURL != "" || stringVal(meta["cover_url"]) != "" || stringVal(meta["thumb"]) != "" {
 			item["cover_url"] = fmt.Sprintf("/api/publications/eh/%d/%s/cover", gid, url.PathEscape(token))
 		}
 		if docs.Valid && docs.String != "" {
@@ -747,11 +761,10 @@ func (s *Store) CleanupItems(ctx context.Context, id, mode string) (int64, error
 
 func QueryFromConfig(c Config) url.Values {
 	v := url.Values{}
-	if keywords := stringVal(c.Query["keywords"]); keywords != "" {
-		v.Set("f_search", keywords)
-	}
 	// Store the upstream category bitmask at subscription creation. Query
 	// categories are otherwise presentation names and must not be guessed here.
+	// Keywords are passed as Search's query argument, where advanced tokens are
+	// extracted once; duplicating f_search here breaks operator/quoted searches.
 	if mask := intNumber(c.Query["category_mask"]); mask > 0 {
 		v.Set("f_cats", fmt.Sprint(mask))
 	}

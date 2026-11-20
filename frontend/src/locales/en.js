@@ -37,7 +37,9 @@ export default {
     settings: "Subscription settings",
     preset: "Search preset",
     preset_latest: "Latest",
-    max_pages: "Maximum pages per fetch",
+    max_pages: "Maximum pages per fetch (favorites)",
+    single_page:
+      "Each fetch reads one upstream page; the upstream determines the number of entries.",
     enabled: "Enable scheduled fetches",
     quality: "Automatic download quality",
     categories: "Allowed category IDs (comma separated; blank means all)",

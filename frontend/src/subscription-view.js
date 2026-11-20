@@ -34,14 +34,14 @@ export function createSubscriptionPayload(draft) {
           favorite_categories: parseCategoryIDs(draft.favorite_categories),
         }
       : source === "preset"
-        ? { preset: "latest", max_pages: 10 }
+        ? { preset: "latest", max_pages: 1 }
         : {
             keywords: String(draft.keywords || "").trim(),
             categories: parseCategoryIDs(
               draft.query_categories ?? draft.categories,
             ),
             sort: "newest",
-            max_pages: 10,
+            max_pages: 1,
           };
   return {
     name: String(draft.name || "").trim(),
@@ -63,13 +63,13 @@ export function createSubscriptionUpdate(subscription, draft) {
           favorite_categories: parseCategoryIDs(draft.favorite_categories),
         }
       : subscription.source === "preset"
-        ? { preset: "latest", max_pages: Number(draft.max_pages) }
+        ? { preset: "latest", max_pages: 1 }
         : {
             ...subscription.query,
             keywords: String(draft.keywords || "").trim(),
             categories: parseCategoryIDs(draft.query_categories),
             sort: "newest",
-            max_pages: Number(draft.max_pages),
+            max_pages: 1,
           };
   const downloadRules = { quality: draft.quality };
   if (subscription.source === "favorites") {

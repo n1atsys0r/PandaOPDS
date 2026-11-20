@@ -8106,7 +8106,8 @@
           "max_pages": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 50
+            "maximum": 50,
+            "description": "Favorites subscriptions may fetch up to this many upstream pages per run. Search and preset subscriptions are normalized and enforced to one upstream page per run regardless of this value; entry count is determined by the upstream page size."
           }
         }
       },

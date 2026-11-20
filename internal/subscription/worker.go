@@ -261,11 +261,18 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 	}
 	resumeBaseline := c.Source == "favorites" && !baseComplete && cursor != ""
 	maxPages := 50
-	if n := intNumber(c.Query["max_pages"]); n > 0 && n <= 50 {
-		maxPages = n
-	}
-	if c.Source == "favorites" && w.Settings.FavoritesSyncMaxPages > 0 && w.Settings.FavoritesSyncMaxPages < maxPages {
-		maxPages = w.Settings.FavoritesSyncMaxPages
+	if c.Source == "search" || c.Source == "preset" {
+		// Search subscriptions are rolling snapshots. Fetch one upstream page per
+		// run; the upstream determines page size, and older stored page budgets
+		// must not trigger a deep crawl on an upgraded server.
+		maxPages = 1
+	} else {
+		if n := intNumber(c.Query["max_pages"]); n > 0 && n <= 50 {
+			maxPages = n
+		}
+		if c.Source == "favorites" && w.Settings.FavoritesSyncMaxPages > 0 && w.Settings.FavoritesSyncMaxPages < maxPages {
+			maxPages = w.Settings.FavoritesSyncMaxPages
+		}
 	}
 	favScope, err := favoriteScope(c)
 	if err != nil {

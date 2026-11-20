@@ -74,6 +74,32 @@ test("new subscription payloads start with automatic downloads disabled", () => 
   assert.equal(payload.enabled, true);
 });
 
+test("search and preset subscriptions fetch one page while favorites keep their budget", () => {
+  for (const source of ["search", "preset"]) {
+    const payload = createSubscriptionPayload({
+      name: source,
+      source,
+      keywords: "l:chinese expunged",
+    });
+    assert.equal(payload.query.max_pages, 1);
+    const update = createSubscriptionUpdate(
+      { source, query: { max_pages: 10 } },
+      { name: source, max_pages: 10, interval_seconds: 3600 },
+    );
+    assert.equal(update.query.max_pages, 1);
+  }
+  assert.equal(
+    createSubscriptionPayload({ name: "Favorites", source: "favorites" })
+      .query.max_pages,
+    10,
+  );
+  const favoriteUpdate = createSubscriptionUpdate(
+    { source: "favorites", query: { max_pages: 10 } },
+    { name: "Favorites", max_pages: 4, interval_seconds: 3600 },
+  );
+  assert.equal(favoriteUpdate.query.max_pages, 4);
+});
+
 test("favorite fetch scope is separate from automatic-download rules", () => {
   const payload = createSubscriptionPayload({
     name: "Favorites",
@@ -192,7 +218,7 @@ test("search subscriptions snapshot supported keyword and category filters", () 
     keywords: "test",
     categories: [1, 8],
     sort: "newest",
-    max_pages: 10,
+    max_pages: 1,
   });
   assert.throws(() => parseCategoryIDs("1,banana"));
   assert.throws(() => parseCategoryIDs("10"));
@@ -221,7 +247,7 @@ test("subscription updates send favorite category rules only for favorite source
     keywords: "cats",
     categories: [2, 4],
     sort: "newest",
-    max_pages: 5,
+    max_pages: 1,
   });
   assert.deepEqual(search.download_rules, { quality: "org" });
 

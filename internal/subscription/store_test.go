@@ -80,6 +80,42 @@ func TestAddPagePersistsBaselineMembershipAndLocalFilters(t *testing.T) {
 	}
 }
 
+func TestLegacyKnownFavoritePlaceholderStaysHiddenUntilFetchedAndUsesCoverProxy(t *testing.T) {
+	ctx := context.Background()
+	db, s := testStore(t)
+	c, err := s.EnsureFavorites(ctx, 3600, false, nil, nil, "res")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "7123:abcdef12"
+	if err = s.SeedKnownFavorites(ctx, c.ID, map[string]bool{key: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := s.ListItems(ctx, ItemQuery{SubscriptionIDs: []string{c.ID}, View: "all", Page: 1, PerPage: 20})
+	if err != nil || total != 0 || len(items) != 0 {
+		t.Fatalf("identity-only placeholder leaked into cards: items=%#v total=%d err=%v", items, total, err)
+	}
+	_, err = db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision)VALUES('legacy-fetch',?,?,'running',1)`, c.ID, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cover := "https://ehgt.org/t/7123.jpg"
+	if _, err = s.AddPage(ctx, c.ID, "legacy-fetch", 1, 1, "", false, false, []eh.GalleryListItem{{GID: 7123, Token: "abcdef12", Title: "Fetched title", CoverURL: cover}}); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err = s.ListItems(ctx, ItemQuery{SubscriptionIDs: []string{c.ID}, View: "all", Page: 1, PerPage: 20})
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("fetched favorite not visible: items=%#v total=%d err=%v", items, total, err)
+	}
+	if got := items[0]["cover_url"]; got != "/api/publications/eh/7123/abcdef12/cover" {
+		t.Fatalf("grid cover URL=%v; want local lazy-cache endpoint", got)
+	}
+	var member, baseline int
+	if err = db.QueryRow(`SELECT remote_member,baseline_item FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=7123`, c.ID).Scan(&member, &baseline); err != nil || member != 1 || baseline != 1 {
+		t.Fatalf("legacy membership changed: remote_member=%d baseline=%d err=%v", member, baseline, err)
+	}
+}
+
 func TestAddPageRejectsOldRevisionAndDoesNotCreateRows(t *testing.T) {
 	ctx := context.Background()
 	db, s := testStore(t)

@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"pandaopds/internal/eh"
-	"pandaopds/internal/subscription"
 )
 
 func TestArchiveListCoverUsesDecimalGalleryID(t *testing.T) {
@@ -268,9 +267,10 @@ func TestFavoriteRemovalDoesNotDeleteArchiveAndArchiveDeleteDoesNotUnsubscribe(t
 	if err = server.Database.QueryRow(`SELECT COUNT(*) FROM download_suppressions WHERE provider='eh' AND gid=9001 AND token='aa9001'`).Scan(&suppressed); err != nil || suppressed != 1 {
 		t.Fatalf("suppression=%d err=%v", suppressed, err)
 	}
-	items, total, err := server.Subscriptions.Store.ListItems(t.Context(), subscription.ItemQuery{SubscriptionIDs: []string{server.FavoriteSubscriptionID}, Page: 1, PerPage: 20})
-	if err != nil || total != 1 || len(items) != 1 {
-		t.Fatalf("favorite membership lost after archive delete: items=%v total=%d err=%v", items, total, err)
+	memberships, err := server.Subscriptions.Store.FavoriteMemberships(t.Context(), server.FavoriteSubscriptionID)
+	_, stillMember := memberships["9001:aa9001"]
+	if err != nil || !stillMember {
+		t.Fatalf("favorite membership lost after archive delete: memberships=%v err=%v", memberships, err)
 	}
 }
 
