@@ -51,7 +51,7 @@ async function review(job, resolution) {
 
 onMounted(() => {
   load();
-  timer = setInterval(load, 3000);
+  timer = setInterval(load, 5000);
 });
 onBeforeUnmount(() => {
   clearInterval(timer);

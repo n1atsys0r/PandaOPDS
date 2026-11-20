@@ -4,7 +4,6 @@ import { useApp } from "@/state.js";
 import { t } from "@/i18n.js";
 import PublicationCard from "@/components/PublicationCard.vue";
 import PublicationDetailDialog from "@/components/PublicationDetailDialog.vue";
-import DownloadJobsPanel from "@/components/DownloadJobsPanel.vue";
 import {
   createSubscriptionItemsController,
   createSubscriptionPayload,
@@ -1054,9 +1053,6 @@ function onDetailCategory(cat) {
         </div>
       </div>
     </div>
-
-    <!-- Active Download Jobs Tracker -->
-    <DownloadJobsPanel />
 
     <!-- Apple Books Style Gallery Detail Dialog (Reused from Explore) -->
     <PublicationDetailDialog
