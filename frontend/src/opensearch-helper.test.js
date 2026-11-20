@@ -53,35 +53,75 @@ test("root explore search resolves to root catalog global search template", () =
 });
 
 test("watched subroute scoped search resolves to watched f_search by default", () => {
-  const activeRoute = { title: "Watched", href: "/opds/v2.0/gallery?query=watched" };
-  const url = resolveOpenSearchUrl("touhou", activeRoute, watchedFeedLinks, rootCatalogLinks);
+  const activeRoute = {
+    title: "Watched",
+    href: "/opds/v2.0/gallery?query=watched",
+  };
+  const url = resolveOpenSearchUrl(
+    "touhou",
+    activeRoute,
+    watchedFeedLinks,
+    rootCatalogLinks,
+  );
   assert.equal(url, "/opds/v2.0/gallery?query=watched&f_search=touhou");
 });
 
 test("watched subroute global search resolves to global query template", () => {
-  const activeRoute = { title: "Watched", href: "/opds/v2.0/gallery?query=watched" };
-  const url = resolveOpenSearchUrl("female:catgirl", activeRoute, watchedFeedLinks, rootCatalogLinks, {
-    global: true,
-  });
+  const activeRoute = {
+    title: "Watched",
+    href: "/opds/v2.0/gallery?query=watched",
+  };
+  const url = resolveOpenSearchUrl(
+    "female:catgirl",
+    activeRoute,
+    watchedFeedLinks,
+    rootCatalogLinks,
+    {
+      global: true,
+    },
+  );
   assert.equal(url, "/opds/v2.0/gallery?query=female%3Acatgirl");
 });
 
 test("favorites subroute scoped search resolves to favorites f_search by default", () => {
-  const activeRoute = { title: "Favorites", href: "/opds/v2.0/gallery?query=favorites&favcat=all" };
-  const url = resolveOpenSearchUrl("genshin", activeRoute, favoritesFeedLinks, rootCatalogLinks);
-  assert.equal(url, "/opds/v2.0/gallery?query=favorites&favcat=all&f_search=genshin");
+  const activeRoute = {
+    title: "Favorites",
+    href: "/opds/v2.0/gallery?query=favorites&favcat=all",
+  };
+  const url = resolveOpenSearchUrl(
+    "genshin",
+    activeRoute,
+    favoritesFeedLinks,
+    rootCatalogLinks,
+  );
+  assert.equal(
+    url,
+    "/opds/v2.0/gallery?query=favorites&favcat=all&f_search=genshin",
+  );
 });
 
 test("favorites subroute global search resolves to global query template", () => {
-  const activeRoute = { title: "Favorites", href: "/opds/v2.0/gallery?query=favorites&favcat=all" };
-  const url = resolveOpenSearchUrl("artist:alice$", activeRoute, favoritesFeedLinks, rootCatalogLinks, {
-    global: true,
-  });
+  const activeRoute = {
+    title: "Favorites",
+    href: "/opds/v2.0/gallery?query=favorites&favcat=all",
+  };
+  const url = resolveOpenSearchUrl(
+    "artist:alice$",
+    activeRoute,
+    favoritesFeedLinks,
+    rootCatalogLinks,
+    {
+      global: true,
+    },
+  );
   assert.equal(url, "/opds/v2.0/gallery?query=artist%3Aalice%24");
 });
 
 test("fallback to standard endpoint when search link is missing or catalog is empty", () => {
-  assert.equal(resolveOpenSearchUrl("test", null, [], []), "/opds/v2.0/gallery?query=test");
+  assert.equal(
+    resolveOpenSearchUrl("test", null, [], []),
+    "/opds/v2.0/gallery?query=test",
+  );
 });
 
 test("handles search link without {searchTerms} template using query param", () => {
@@ -90,7 +130,9 @@ test("handles search link without {searchTerms} template using query param", () 
     resolveOpenSearchUrl("abc", null, [], customLinks),
     "/opds/v2.0/search?query=abc",
   );
-  const customLinksWithParams = [{ rel: "search", href: "/opds/v2.0/search?mode=deep" }];
+  const customLinksWithParams = [
+    { rel: "search", href: "/opds/v2.0/search?mode=deep" },
+  ];
   assert.equal(
     resolveOpenSearchUrl("abc", null, [], customLinksWithParams),
     "/opds/v2.0/search?mode=deep&query=abc",

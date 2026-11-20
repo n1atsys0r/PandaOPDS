@@ -1121,3 +1121,53 @@ func TestVerifiedEmptyFavoritesPageCanReconcileMembership(t *testing.T) {
 		t.Fatalf("verified empty page remote=%d complete=%d coverage=%s", remote, complete, coverage)
 	}
 }
+
+func TestFetchSubscriptionPageExpandedPresets(t *testing.T) {
+	db := workerTestDB(t)
+	var requestedPath, requestedQuery string
+	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/" && r.URL.RawQuery == "" {
+			return responseHTML(`<html>session</html>`), nil
+		}
+		requestedPath = r.URL.Path
+		requestedQuery = r.URL.RawQuery
+		return responseHTML(listFixture(100, "token100", "")), nil
+	}))
+	w := NewWorker(db.DB, service, nil, nil, config.Settings{IPBMemberID: "1", IPBPassHash: "a"})
+
+	// 1. popular
+	cPop := Config{Source: "preset", Query: map[string]any{"preset": "popular"}}
+	if _, err := w.runSourcePage(context.Background(), cPop, ""); err != nil {
+		t.Fatalf("popular: %v", err)
+	}
+	if requestedPath != "/popular" {
+		t.Errorf("popular requested path=%q, want /popular", requestedPath)
+	}
+
+	// 2. watched
+	cWatched := Config{Source: "preset", Query: map[string]any{"preset": "watched"}}
+	if _, err := w.runSourcePage(context.Background(), cWatched, ""); err != nil {
+		t.Fatalf("watched: %v", err)
+	}
+	if requestedPath != "/watched" {
+		t.Errorf("watched requested path=%q, want /watched", requestedPath)
+	}
+
+	// 3. favorites:2
+	cFav := Config{Source: "preset", Query: map[string]any{"preset": "favorites:2"}}
+	if _, err := w.runSourcePage(context.Background(), cFav, ""); err != nil {
+		t.Fatalf("favorites:2: %v", err)
+	}
+	if requestedPath != "/favorites.php" || !strings.Contains(requestedQuery, "favcat=2") {
+		t.Errorf("favorites:2 path=%q query=%q, want /favorites.php with favcat=2", requestedPath, requestedQuery)
+	}
+
+	// 4. toplist:month
+	cTop := Config{Source: "preset", Query: map[string]any{"preset": "toplist:month"}}
+	if _, err := w.runSourcePage(context.Background(), cTop, ""); err != nil {
+		t.Fatalf("toplist:month: %v", err)
+	}
+	if requestedPath != "/toplist.php" || !strings.Contains(requestedQuery, "tl=13") {
+		t.Errorf("toplist:month path=%q query=%q, want /toplist.php with tl=13", requestedPath, requestedQuery)
+	}
+}

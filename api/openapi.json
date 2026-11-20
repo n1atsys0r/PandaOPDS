@@ -8100,7 +8100,24 @@
           "preset": {
             "type": "string",
             "enum": [
-              "latest"
+              "latest",
+              "popular",
+              "watched",
+              "favorites",
+              "favorites:0",
+              "favorites:1",
+              "favorites:2",
+              "favorites:3",
+              "favorites:4",
+              "favorites:5",
+              "favorites:6",
+              "favorites:7",
+              "favorites:8",
+              "favorites:9",
+              "toplist:yesterday",
+              "toplist:month",
+              "toplist:year",
+              "toplist:alltime"
             ]
           },
           "max_pages": {

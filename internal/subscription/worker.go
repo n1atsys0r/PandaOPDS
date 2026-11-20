@@ -309,19 +309,7 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 			break
 		}
 		var page eh.GalleryPageInfo
-		if c.Source == "favorites" {
-			page, e = w.Service.FavoritesSyncPage(ctx, cursor)
-		} else {
-			extra := QueryFromConfig(c)
-			if c.Source == "preset" {
-				preset := stringVal(c.Query["preset"])
-				if preset != "" && preset != "latest" {
-					e = fmt.Errorf("unsupported preset %q", preset)
-					break
-				}
-			}
-			page, e = w.Service.Search(ctx, stringVal(c.Query["keywords"]), cursor, extra)
-		}
+		page, e = w.fetchSubscriptionPage(ctx, c, cursor, pages+1)
 		if e != nil {
 			break
 		}
@@ -1589,7 +1577,7 @@ func (w *Worker) QueueManualForce(ctx context.Context, gid int, token, quality s
 	return id, nil
 }
 
-func (w *Worker) runSourcePage(ctx context.Context, c Config, cursor string) (eh.GalleryPageInfo, error) {
+func (w *Worker) fetchSubscriptionPage(ctx context.Context, c Config, cursor string, pageNumber int) (eh.GalleryPageInfo, error) {
 	if c.Source == "favorites" {
 		return w.Service.FavoritesSyncPage(ctx, cursor)
 	}
@@ -1597,5 +1585,33 @@ func (w *Worker) runSourcePage(ctx context.Context, c Config, cursor string) (eh
 	if q := QueryFromConfig(c); q != nil {
 		extra = q
 	}
+	if c.Source == "preset" {
+		preset := stringVal(c.Query["preset"])
+		if preset == "" {
+			preset = "latest"
+		}
+		switch {
+		case preset == "latest":
+			return w.Service.Search(ctx, "", cursor, extra)
+		case preset == "popular":
+			return w.Service.Popular(ctx, cursor)
+		case preset == "watched":
+			return w.Service.Watched(ctx, cursor, extra)
+		case preset == "favorites":
+			return w.Service.Favorites(ctx, cursor, "")
+		case strings.HasPrefix(preset, "favorites:"):
+			favcat := strings.TrimPrefix(preset, "favorites:")
+			return w.Service.Favorites(ctx, cursor, favcat)
+		case strings.HasPrefix(preset, "toplist:"):
+			period := strings.TrimPrefix(preset, "toplist:")
+			return w.Service.Toplist(ctx, period, pageNumber)
+		default:
+			return eh.GalleryPageInfo{}, fmt.Errorf("unsupported preset %q", preset)
+		}
+	}
 	return w.Service.Search(ctx, stringVal(c.Query["keywords"]), cursor, extra)
+}
+
+func (w *Worker) runSourcePage(ctx context.Context, c Config, cursor string) (eh.GalleryPageInfo, error) {
+	return w.fetchSubscriptionPage(ctx, c, cursor, 1)
 }

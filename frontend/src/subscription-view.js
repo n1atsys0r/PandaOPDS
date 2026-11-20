@@ -26,7 +26,7 @@ export async function loadSubscriptionItems(api, options) {
 }
 
 export function createSubscriptionPayload(draft) {
-  const source = draft.source;
+  const source = draft.source === "search" ? "search" : draft.source === "favorites" ? "favorites" : "preset";
   const query =
     source === "favorites"
       ? {
@@ -34,7 +34,7 @@ export function createSubscriptionPayload(draft) {
           favorite_categories: parseCategoryIDs(draft.favorite_categories),
         }
       : source === "preset"
-        ? { preset: "latest", max_pages: 1 }
+        ? { preset: draft.preset || "latest", max_pages: 1 }
         : {
             keywords: String(draft.keywords || "").trim(),
             categories: parseCategoryIDs(
@@ -63,7 +63,11 @@ export function createSubscriptionUpdate(subscription, draft) {
           favorite_categories: parseCategoryIDs(draft.favorite_categories),
         }
       : subscription.source === "preset"
-        ? { preset: "latest", max_pages: 1 }
+        ? {
+            ...subscription.query,
+            preset: draft.preset || subscription.query?.preset || "latest",
+            max_pages: 1,
+          }
         : {
             ...subscription.query,
             keywords: String(draft.keywords || "").trim(),
@@ -257,4 +261,67 @@ export function createSubscriptionPoller({
     running = false;
   }
   return { start, stop, pollOnce };
+}
+
+export const EH_CATEGORIES = [
+  { key: "Doujinshi", label: "Doujinshi", color: "#fc4e4e" },
+  { key: "Manga", label: "Manga", color: "#e58200" },
+  { key: "Artist CG", label: "Artist CG", color: "#dde500" },
+  { key: "Game CG", label: "Game CG", color: "#05bf0b" },
+  { key: "Western", label: "Western", color: "#14e723" },
+  { key: "Non-H", label: "Non-H", color: "#68c9de" },
+  { key: "Image Set", label: "Image Set", color: "#5050d7" },
+  { key: "Cosplay", label: "Cosplay", color: "#9755f5" },
+  { key: "Asian Porn", label: "Asian Porn", color: "#fe93ff" },
+  { key: "Misc", label: "Misc", color: "#9e9e9e" },
+];
+
+export function getCategoryColor(category) {
+  const c = EH_CATEGORIES.find(
+    (x) => x.key.toLowerCase() === (category || "").toLowerCase(),
+  );
+  return c ? c.color : "#9e9e9e";
+}
+
+export const SUBSCRIPTION_PRESET_GROUPS = [
+  {
+    group: "subscription.preset_gallery",
+    items: [
+      { id: "latest", labelKey: "subscription.preset_latest" },
+      { id: "watched", labelKey: "subscription.preset_watched" },
+      { id: "popular", labelKey: "subscription.preset_popular" },
+      { id: "favorites", labelKey: "subscription.preset_favorites" },
+    ],
+  },
+  {
+    group: "subscription.preset_toplist",
+    items: [
+      { id: "toplist:yesterday", labelKey: "subscription.preset_toplist_yesterday" },
+      { id: "toplist:month", labelKey: "subscription.preset_toplist_month" },
+      { id: "toplist:year", labelKey: "subscription.preset_toplist_year" },
+      { id: "toplist:alltime", labelKey: "subscription.preset_toplist_alltime" },
+    ],
+  },
+  {
+    group: "subscription.preset_favcats",
+    items: Array.from({ length: 10 }, (_, i) => ({
+      id: `favorites:${i}`,
+      labelKey: "subscription.preset_favcat_item",
+      favcatIndex: i,
+    })),
+  },
+];
+
+export function getPresetLabel(presetId, t) {
+  if (!presetId) return "";
+  for (const group of SUBSCRIPTION_PRESET_GROUPS) {
+    const found = group.items.find((item) => item.id === presetId);
+    if (found) {
+      if (found.favcatIndex !== undefined) {
+        return t ? t(found.labelKey, { id: found.favcatIndex }) : `Favorites ${found.favcatIndex}`;
+      }
+      return t ? t(found.labelKey) : presetId;
+    }
+  }
+  return presetId;
 }

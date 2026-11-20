@@ -247,7 +247,9 @@ test("favorite overrides resolve immediate optimistic state over stale feed meta
     const key = `${pub.gid}:${pub.token}`;
     const override = overridesMap[key];
     const rawMeta = pub.raw?.metadata || {};
-    let isFavorited = Boolean(rawMeta["x:favorite"] || rawMeta["x:is_favorited"]);
+    let isFavorited = Boolean(
+      rawMeta["x:favorite"] || rawMeta["x:is_favorited"],
+    );
     let favcat = rawMeta["x:favcat"] ?? null;
     if (override != null) {
       isFavorited = override.isFavorited;

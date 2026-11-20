@@ -15,6 +15,9 @@ import {
   parseCategoryIDs,
   archiveProgressionURL,
   archiveProgressionKey,
+  getCategoryColor,
+  getPresetLabel,
+  SUBSCRIPTION_PRESET_GROUPS,
 } from "./subscription-view.js";
 
 test("subscription pagination only requests its persisted local-items endpoint", async () => {
@@ -89,8 +92,8 @@ test("search and preset subscriptions fetch one page while favorites keep their 
     assert.equal(update.query.max_pages, 1);
   }
   assert.equal(
-    createSubscriptionPayload({ name: "Favorites", source: "favorites" })
-      .query.max_pages,
+    createSubscriptionPayload({ name: "Favorites", source: "favorites" }).query
+      .max_pages,
     10,
   );
   const favoriteUpdate = createSubscriptionUpdate(
@@ -300,4 +303,37 @@ test("progression storage identity follows the frozen EH target after reassociat
     }),
     "12:frozen-token",
   );
+});
+
+test("getCategoryColor resolves EH category hex colors accurately", () => {
+  assert.equal(getCategoryColor("Doujinshi"), "#fc4e4e");
+  assert.equal(getCategoryColor("Manga"), "#e58200");
+  assert.equal(getCategoryColor("Unknown Category"), "#9e9e9e");
+  assert.equal(getCategoryColor(null), "#9e9e9e");
+});
+
+test("preset subscriptions preserve chosen preset and allow label lookup", () => {
+  const payload = createSubscriptionPayload({
+    name: "Watched Feed",
+    source: "preset",
+    preset: "watched",
+  });
+  assert.equal(payload.source, "preset");
+  assert.equal(payload.query.preset, "watched");
+  assert.equal(payload.query.max_pages, 1);
+
+  const update = createSubscriptionUpdate(
+    { source: "preset", query: { preset: "latest" } },
+    { preset: "toplist:month", interval_seconds: 3600 },
+  );
+  assert.equal(update.query.preset, "toplist:month");
+  assert.equal(update.query.max_pages, 1);
+
+  const mockT = (key, params) => {
+    if (params?.id !== undefined) return `Fav ${params.id}`;
+    return key;
+  };
+  assert.equal(getPresetLabel("watched", mockT), "subscription.preset_watched");
+  assert.equal(getPresetLabel("favorites:3", mockT), "Fav 3");
+  assert.equal(getPresetLabel("unknown", mockT), "unknown");
 });

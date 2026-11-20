@@ -324,6 +324,21 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 	})
 }
 
+func isKnownSubscriptionPreset(p string) bool {
+	switch p {
+	case "latest", "popular", "watched", "favorites",
+		"toplist:yesterday", "toplist:month", "toplist:year", "toplist:alltime":
+		return true
+	}
+	if strings.HasPrefix(p, "favorites:") {
+		cat := strings.TrimPrefix(p, "favorites:")
+		if len(cat) == 1 && cat[0] >= '0' && cat[0] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeSubscription(c *subscription.Config, settings config.Settings) error {
 	if c.Query == nil {
 		c.Query = map[string]any{}
@@ -335,8 +350,9 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 		if c.Query["preset"] == nil {
 			c.Query["preset"] = "latest"
 		}
-		if c.Query["preset"] != "latest" {
-			return errors.New("only the latest preset is supported")
+		preset := subscriptionString(c.Query["preset"])
+		if !isKnownSubscriptionPreset(preset) {
+			return fmt.Errorf("unsupported preset %q", preset)
 		}
 	}
 	if c.Source != "favorites" && c.Source != "search" && c.Source != "preset" {

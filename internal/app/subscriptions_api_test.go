@@ -119,6 +119,35 @@ func TestNormalizeSubscriptionUsesSinglePageForSearchButKeepsFavoritesBudget(t *
 	}
 }
 
+func TestNormalizeSubscriptionSupportsExpandedPresets(t *testing.T) {
+	validPresets := []string{
+		"latest",
+		"popular",
+		"watched",
+		"favorites",
+		"favorites:0",
+		"favorites:5",
+		"favorites:9",
+		"toplist:yesterday",
+		"toplist:month",
+		"toplist:year",
+		"toplist:alltime",
+	}
+	for _, p := range validPresets {
+		c := subscription.Config{Source: "preset", Query: map[string]any{"preset": p}}
+		if err := normalizeSubscription(&c, config.Settings{}); err != nil {
+			t.Errorf("expected preset %q to be valid, got: %v", p, err)
+		}
+	}
+	invalidPresets := []string{"invalid", "toplist:unknown", "favorites:10", "page:home"}
+	for _, p := range invalidPresets {
+		c := subscription.Config{Source: "preset", Query: map[string]any{"preset": p}}
+		if err := normalizeSubscription(&c, config.Settings{}); err == nil {
+			t.Errorf("expected preset %q to be rejected, but it succeeded", p)
+		}
+	}
+}
+
 func TestSubscriptionCleanupAPIRequiresAcknowledgmentAndRetainsMember(t *testing.T) {
 	db, err := storage.Open(filepath.Join(t.TempDir(), "cleanup.db"))
 	if err != nil {
