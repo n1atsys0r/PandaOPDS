@@ -11,6 +11,7 @@ import {
   splitHomeSections,
 } from "./home-layout.js";
 import { t } from "./i18n.js";
+import { documentReaderPaths } from "./subscription-view.js";
 import {
   READER_PAGE_KEY_PREFIX,
   parseSavedProgress,
@@ -232,8 +233,16 @@ const progressionCache = reactive(new Map());
 async function getProgression(gid, token) {
   if (!gid || !token) return null;
   const key = `${gid}:${token}`;
+  return getProgressionURL(
+    `/opds/progression/${gid}/${encodeURIComponent(token)}`,
+    key,
+  );
+}
+
+async function getProgressionURL(path, key = path) {
+  if (!path?.startsWith("/opds/progression/")) return null;
   try {
-    const res = await api(`/opds/progression/${gid}/${token}`);
+    const res = await api(path);
     if (res && res.data && typeof res.data.progression === "number") {
       progressionCache.set(key, res.data);
       return res.data;
@@ -247,10 +256,24 @@ async function getProgression(gid, token) {
 async function putProgression(gid, token, { pageIndex, pageCount }) {
   if (!gid || !token || !Number.isFinite(pageCount) || pageCount <= 0)
     return null;
-  const payload = buildProgressionPayload(pageIndex, pageCount);
   const key = `${gid}:${token}`;
+  return putProgressionURL(
+    `/opds/progression/${gid}/${encodeURIComponent(token)}`,
+    { pageIndex, pageCount },
+    key,
+  );
+}
+
+async function putProgressionURL(path, { pageIndex, pageCount }, key = path) {
+  if (
+    !path?.startsWith("/opds/progression/") ||
+    !Number.isFinite(pageCount) ||
+    pageCount <= 0
+  )
+    return null;
+  const payload = buildProgressionPayload(pageIndex, pageCount);
   try {
-    const res = await api(`/opds/progression/${gid}/${token}`, {
+    const res = await api(path, {
       method: "PUT",
       body: JSON.stringify(payload),
     });
@@ -264,6 +287,19 @@ async function putProgression(gid, token, { pageIndex, pageCount }) {
     }
   }
   return null;
+}
+
+async function getDocumentProgression(documentId) {
+  if (!documentId) return null;
+  return getProgressionURL(documentReaderPaths(documentId, 1).progression);
+}
+
+async function putDocumentProgression(documentId, { pageIndex, pageCount }) {
+  if (!documentId || !Number.isFinite(pageCount) || pageCount <= 0) return null;
+  return putProgressionURL(documentReaderPaths(documentId, 1).progression, {
+    pageIndex,
+    pageCount,
+  });
 }
 
 function updateLocalProgress(
@@ -327,7 +363,9 @@ async function loadStatus() {
     const range = state.incidentRange || "24h";
     const [statusRes, incRes] = await Promise.all([
       api("/api/status"),
-      api(`/api/incidents?range=${encodeURIComponent(range)}`).catch(() => ({ data: null })),
+      api(`/api/incidents?range=${encodeURIComponent(range)}`).catch(() => ({
+        data: null,
+      })),
     ]);
     state.status = statusRes.data;
     if (incRes.data) state.incidents = incRes.data;
@@ -363,7 +401,10 @@ async function resetCircuit() {
     if (r.data?.ok) {
       state.notice = t("dashboard.circuit_reset_success");
       await Promise.all([loadStatus(), loadIncidents()]);
-      if (state.selectedIncident && state.selectedIncident.state === "ongoing") {
+      if (
+        state.selectedIncident &&
+        state.selectedIncident.state === "ongoing"
+      ) {
         state.selectedIncident.state = "reset";
       }
     }
@@ -1516,7 +1557,14 @@ function onPopState(e) {
     const parts = rawHash.split("/");
     const rootPage = parts[0] || "dashboard";
     if (
-      ["dashboard", "explore", "archive", "config", "home"].includes(rootPage)
+      [
+        "dashboard",
+        "explore",
+        "archive",
+        "subscriptions",
+        "config",
+        "home",
+      ].includes(rootPage)
     ) {
       state.page = rootPage;
     }
@@ -1549,10 +1597,8 @@ function route(v, historyMode = true) {
   }
   if (v === "config") loadConfig();
   if (v === "archive") {
-    loadArchives();
-    loadArchiveScanStatus();
-    loadCategories();
-    loadStatus();
+    // The archive view is backed by local documents. Legacy EH archive state
+    // remains loaded for Explore badges and task status only.
   }
   if (typeof window !== "undefined") {
     if (historyMode === true) {
@@ -1609,7 +1655,7 @@ function logout() {
   state.authRequired = true;
 }
 
-let timer, archiveTimer, archiveScanTimer, media;
+let timer, archiveTimer, media;
 function init() {
   media = matchMedia("(prefers-color-scheme: dark)");
   applyTheme();
@@ -1622,7 +1668,14 @@ function init() {
     const parts = rawHash.split("/");
     const rootPage = parts[0];
     if (
-      ["dashboard", "explore", "archive", "config", "home"].includes(rootPage)
+      [
+        "dashboard",
+        "explore",
+        "archive",
+        "subscriptions",
+        "config",
+        "home",
+      ].includes(rootPage)
     ) {
       route(rootPage, false);
       if (rootPage === "explore" && window.history.state?.subRoute) {
@@ -1642,31 +1695,17 @@ function init() {
     if (state.authChecked && !state.authRequired && state.page === "dashboard")
       loadStatus();
   }, 15000);
-  let archiveTicks = 0;
   archiveTimer = setInterval(() => {
     if (!state.authChecked || state.authRequired) return;
-    archiveTicks++;
     const active = hasActiveArchives();
     if (active) {
       loadArchives();
-    } else if (state.page === "archive" && archiveTicks % 3 === 0) {
-      loadArchives();
     }
   }, 3000);
-  archiveScanTimer = setInterval(() => {
-    if (
-      state.authChecked &&
-      !state.authRequired &&
-      state.page === "archive" &&
-      state.archiveScan.status === "running"
-    )
-      loadArchiveScanStatus();
-  }, 1000);
 }
 function destroy() {
   clearInterval(timer);
   clearInterval(archiveTimer);
-  clearInterval(archiveScanTimer);
   clearTimeout(archiveScanDismissTimer);
   media?.removeEventListener?.("change", applyTheme);
   if (typeof window !== "undefined") {
@@ -1759,6 +1798,10 @@ export function useApp() {
     clearCoverCache,
     getProgression,
     putProgression,
+    getProgressionURL,
+    putProgressionURL,
+    getDocumentProgression,
+    putDocumentProgression,
     updateLocalProgress,
     getGalleryProgress,
     progressionCache,

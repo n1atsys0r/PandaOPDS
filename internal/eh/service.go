@@ -241,7 +241,13 @@ func (s *Service) FavoritesSearch(ctx context.Context, next string, favcat, sear
 // incremental syncer. It deliberately bypasses the browsing list cache and
 // fixes the upstream Extended layout without changing ordinary favorites
 // browsing behavior.
+var ErrAuthenticationRequired = errors.New("EH authentication is required")
+var ErrUnverifiedFavoritesPage = errors.New("EH favorites response is not a verified favorites page")
+
 func (s *Service) FavoritesSyncPage(ctx context.Context, next string) (GalleryPageInfo, error) {
+	if !s.Settings.HasIPB() {
+		return GalleryPageInfo{}, ErrAuthenticationRequired
+	}
 	params := url.Values{"inline_set": {"fs_f dm_e"}}
 	if next != "" {
 		params.Set("next", next)
@@ -251,7 +257,27 @@ func (s *Service) FavoritesSyncPage(ctx context.Context, next string) (GalleryPa
 	if err != nil {
 		return GalleryPageInfo{}, err
 	}
-	return ParseListPage(string(raw))
+	html := string(raw)
+	if looksLikeFavoritesLoginPage(html) {
+		return GalleryPageInfo{}, ErrAuthenticationRequired
+	}
+	page, err := ParseListPage(html)
+	if err != nil {
+		return GalleryPageInfo{}, err
+	}
+	lower := strings.ToLower(html)
+	page.FavoritesPageVerified = len(page.FavcatMap) > 0 || strings.Contains(lower, `class="itg`) || strings.Contains(lower, `class='itg`) || strings.Contains(lower, `id="gdf"`) || strings.Contains(lower, `id='gdf'`)
+	return page, nil
+}
+
+func looksLikeFavoritesLoginPage(html string) bool {
+	lower := strings.ToLower(html)
+	if strings.Contains(lower, "you are not logged in") || strings.Contains(lower, "please log in") || strings.Contains(lower, "authentication required") {
+		return true
+	}
+	passwordForm := strings.Contains(lower, `type="password"`) || strings.Contains(lower, `type='password'`)
+	loginForm := strings.Contains(lower, `id="login_form"`) || strings.Contains(lower, `action="/login.php`) || strings.Contains(lower, `action='/login.php`)
+	return passwordForm && loginForm
 }
 
 func (s *Service) Toplist(ctx context.Context, period string, page int) (GalleryPageInfo, error) {
@@ -793,6 +819,7 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 	}
 	return nil, "", lastErr
 }
+
 type thumbResult struct {
 	data []byte
 	mime string

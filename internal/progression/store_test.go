@@ -48,6 +48,76 @@ func TestProgressionPersistsMergesAliasAndRejectsStaleWrite(t *testing.T) {
 	}
 }
 
+func TestImportBoltCopiesProgressionsAliasesSnapshotsAndProtectionOnce(t *testing.T) {
+	dir := t.TempDir()
+	legacy := dir + "/old.db"
+	b, err := bolt.Open(legacy, 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rawFixture []byte
+	err = b.Update(func(tx *bolt.Tx) error {
+		bucket, e := tx.CreateBucket([]byte("progression-v1"))
+		if e != nil {
+			return e
+		}
+		x := stored{GID: 9, Token: "tok", Written: 77, Doc: Document{Modified: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Device: Device{ID: "dev", Name: "Reader"}, Progression: .4, References: []string{"page4"}}, Snapshot: &Snapshot{Title: "Work", Category: "Manga"}}
+		raw, _ := json.Marshal(x)
+		var payload map[string]any
+		_ = json.Unmarshal(raw, &payload)
+		payload["future_field"] = map[string]any{"nested": []any{"keep", float64(7)}}
+		raw, _ = json.Marshal(payload)
+		rawFixture = append([]byte(nil), raw...)
+		if e = bucket.Put([]byte("r/9/tok"), raw); e != nil {
+			return e
+		}
+		if e = bucket.Put([]byte("a/8/old"), []byte("9/tok")); e != nil {
+			return e
+		}
+		return bucket.Put([]byte("p/9/tok"), []byte{1})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.ImportBolt(legacy); err != nil {
+		t.Fatal(err)
+	}
+	var preserved []byte
+	if err = s.db.QueryRow(`SELECT legacy_raw_json FROM progressions WHERE target_type='eh' AND target_id='9/tok'`).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	if string(preserved) != string(rawFixture) {
+		t.Fatalf("legacy raw record changed: %s", preserved)
+	}
+	got, err := s.Get(8, "old")
+	if err != nil || len(got) != 1 || got[0].Progression != .4 {
+		t.Fatalf("imported progression=%#v err=%v", got, err)
+	}
+	if err = s.SetSnapshot(9, "tok", Snapshot{Title: "Updated", Category: "Drama"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ImportBolt(legacy); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := s.ListHistoryQuery(HistoryQuery{Offset: 0, Limit: 10, Category: "Drama"})
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("SQL filtered history=%#v total=%d err=%v", items, total, err)
+	}
+	var count int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM legacy_imports WHERE name='bbolt_progression'`).Scan(&count)
+	if count != 1 {
+		t.Fatalf("import marker count=%d", count)
+	}
+}
+
 func TestEqualTimestampDifferentPayloadConflictsButRetryIsIdempotent(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
@@ -64,6 +134,47 @@ func TestEqualTimestampDifferentPayloadConflictsButRetryIsIdempotent(t *testing.
 	d.Progression = .6
 	if _, _, err = s.Put(1, "tok", d); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict error=%v", err)
+	}
+}
+
+func TestObserveTrimsOnlyExcessOrphanAliasesAndKeepsProgressTargets(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<20005) INSERT INTO progression_aliases(alias,target_id,target_type) SELECT 'orphan/'||x,'100/'||x,'eh' FROM n`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,references_json,written)VALUES('eh','55/keep',55,'keep','2026-01-01T00:00:00Z','{}',0.5,'[]',1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{"55/keep", "56/keep", "57/keep"} {
+		if _, err = tx.Exec(`INSERT INTO progression_aliases(alias,target_id,target_type)VALUES(?,?,'eh')`, alias, "55/keep"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Observe(1, "new", 1, "new"); err != nil {
+		t.Fatal(err)
+	}
+	var orphans, protected int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM progression_aliases a WHERE a.target_type='eh' AND NOT EXISTS(SELECT 1 FROM progressions p WHERE p.target_type=a.target_type AND p.target_id=a.target_id)`).Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM progression_aliases WHERE alias IN ('55/keep','56/keep','57/keep')`).Scan(&protected); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 20000 || protected != 3 {
+		t.Fatalf("orphans=%d protected aliases=%d", orphans, protected)
 	}
 }
 
@@ -137,20 +248,17 @@ func TestCapEvictsOldestUnarchivedAndKeepsArchivedWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	err = s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		for i := 1; i <= MaxWorks+2; i++ {
-			x := stored{GID: i, Token: "t", Doc: Document{Modified: time.Unix(int64(i), 0), Device: Device{ID: "urn:uuid:x", Name: "x"}}, Written: int64(i)}
-			raw, _ := json.Marshal(x)
-			if e := b.Put(recKey(i, "t"), raw); e != nil {
-				return e
-			}
-			if e := b.Put(lruKey(x.Written, identity(i, "t")), []byte{}); e != nil {
-				return e
-			}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= MaxWorks+2; i++ {
+		_, err = tx.Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,references_json,written) VALUES('eh',?,?,?,?,?,0,'[]',?)`, identity(i, "t"), i, "t", time.Unix(int64(i), 0).UTC().Format(time.RFC3339Nano), `{"id":"urn:uuid:x","name":"x"}`, i)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return nil
-	})
+	}
+	err = tx.Commit()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -59,6 +59,15 @@ type ArchiverUnavailableError struct{ Detail string }
 
 func (e *ArchiverUnavailableError) Error() string { return e.Detail }
 
+// SubmissionUncertainError means the paid archive POST may have been accepted.
+// Callers must not automatically submit it again.
+type SubmissionUncertainError struct{ Err error }
+
+func (e *SubmissionUncertainError) Error() string {
+	return "archive submission outcome uncertain: " + e.Err.Error()
+}
+func (e *SubmissionUncertainError) Unwrap() error { return e.Err }
+
 type VersionUpdateConflictError struct{ Detail string }
 
 func (e *VersionUpdateConflictError) Error() string { return e.Detail }
@@ -498,14 +507,17 @@ func (m *Manager) Start(ctx context.Context, gid int, token, quality string, for
 			// Record the uncertain outcome and never replay the paid operation.
 			_, _ = m.Store.Upsert(gid, token, map[string]any{"title": firstNonEmpty(page.Title, "Archive submission"), "quality": o.Label, "or": o.Or, "gp_price": o.GPPrice, "status": "failed", "error": "archive submit outcome uncertain; inspect upstream before retrying: " + e.Error()})
 		}
+		if !errors.As(e, &upstream) {
+			return nil, &SubmissionUncertainError{Err: e}
+		}
 		return nil, e
 	}
 	p := parseArchiver(string(submitted), m.archiverURL(gid, token))
 	if p.Error != "" {
-		return nil, errors.New(p.Error)
+		return nil, &SubmissionUncertainError{Err: errors.New(p.Error)}
 	}
 	if p.URL == "" {
-		return nil, errors.New("archive submission returned no status URL")
+		return nil, &SubmissionUncertainError{Err: errors.New("archive submission returned no status URL")}
 	}
 	backup := map[string]any{}
 	if old != nil && old["status"] == "ready" {
@@ -521,7 +533,7 @@ func (m *Manager) Start(ctx context.Context, gid int, token, quality string, for
 	}
 	_, e = m.Store.Upsert(gid, token, map[string]any{"title": firstNonEmpty(p.Title, page.Title), "quality": o.Label, "or": o.Or, "gp_price": o.GPPrice, "download_url": p.URL, "status": "pending", "error": nil, "upgrade_backup": backup})
 	if e != nil {
-		return nil, e
+		return nil, &SubmissionUncertainError{Err: fmt.Errorf("paid request accepted but pending state could not be saved: %w", e)}
 	}
 	taskCtx, cancel := context.WithCancel(m.ctx)
 	done := make(chan struct{})
@@ -656,20 +668,20 @@ func (m *Manager) StartVersionUpdate(ctx context.Context, rootGID int, rootToken
 	submitted, _, err := m.Client.PostFormOnce(ctx, m.archiverURL(targetGID, targetToken), form, eh.KindHTML)
 	if err != nil {
 		_, _ = m.Store.Upsert(targetGID, targetToken, map[string]any{"status": "failed", "error": "archive update submission outcome uncertain; automatic retry suppressed: " + err.Error()})
-		return nil, err
+		return nil, &SubmissionUncertainError{Err: err}
 	}
 	result := parseArchiver(string(submitted), m.archiverURL(targetGID, targetToken))
 	if result.Error != "" {
 		_, _ = m.Store.Upsert(targetGID, targetToken, map[string]any{"status": "failed", "error": result.Error})
-		return nil, errors.New(result.Error)
+		return nil, &SubmissionUncertainError{Err: errors.New(result.Error)}
 	}
 	if result.URL == "" {
 		_, _ = m.Store.Upsert(targetGID, targetToken, map[string]any{"status": "failed", "error": "archive update submission returned no status URL; automatic retry suppressed"})
-		return nil, errors.New("archive submission returned no status URL")
+		return nil, &SubmissionUncertainError{Err: errors.New("archive submission returned no status URL")}
 	}
 	_, err = m.Store.Upsert(targetGID, targetToken, map[string]any{"title": firstNonEmpty(result.Title, page.Title), "download_url": result.URL, "status": "pending", "error": nil})
 	if err != nil {
-		return nil, err
+		return nil, &SubmissionUncertainError{Err: fmt.Errorf("paid update accepted but pending state could not be saved: %w", err)}
 	}
 	jobKey := key(targetGID, targetToken)
 	taskCtx, cancel := context.WithCancel(m.ctx)

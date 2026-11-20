@@ -1,7 +1,9 @@
 package favorites
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +16,47 @@ type State struct {
 	path string
 	mu   sync.RWMutex
 	data map[string]any
+	db   *sql.DB
+}
+
+// NewDBState imports the legacy favorites snapshot once, then persists every
+// state update in SQLite. The legacy file is read only and retained for rollback.
+func NewDBState(db *sql.DB, path string) (*State, error) {
+	if db == nil {
+		return nil, fmt.Errorf("favorites database is nil")
+	}
+	s := NewState(path)
+	s.db = db
+	var raw string
+	err := db.QueryRow(`SELECT value_json FROM app_state WHERE state_key='favorites_sync'`).Scan(&raw)
+	if err == nil {
+		if e := json.Unmarshal([]byte(raw), &s.data); e != nil {
+			return nil, e
+		}
+		return s, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+	b, e := json.Marshal(s.data)
+	if e != nil {
+		return nil, e
+	}
+	tx, e := db.Begin()
+	if e != nil {
+		return nil, e
+	}
+	defer tx.Rollback()
+	if _, e = tx.Exec(`INSERT INTO app_state(state_key,value_json,updated_at) VALUES('favorites_sync',?,?)`, string(b), time.Now().UTC().Format(time.RFC3339Nano)); e != nil {
+		return nil, e
+	}
+	if _, e = tx.Exec(`INSERT OR IGNORE INTO legacy_imports(name,completed_at,details_json) VALUES('favorites_sync',?,?)`, time.Now().UTC().Format(time.RFC3339Nano), fmt.Sprintf(`{"source":%q}`, path)); e != nil {
+		return nil, e
+	}
+	if e = tx.Commit(); e != nil {
+		return nil, e
+	}
+	return s, nil
 }
 
 func NewState(path string) *State {
@@ -37,6 +80,14 @@ func (s *State) load() {
 	}
 }
 func (s *State) saveLocked() error {
+	if s.db != nil {
+		b, e := json.Marshal(s.data)
+		if e != nil {
+			return e
+		}
+		_, e = s.db.Exec(`INSERT INTO app_state(state_key,value_json,updated_at) VALUES('favorites_sync',?,?) ON CONFLICT(state_key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, string(b), time.Now().UTC().Format(time.RFC3339Nano))
+		return e
+	}
 	if e := os.MkdirAll(filepath.Dir(s.path), 0o755); e != nil {
 		return e
 	}
@@ -149,6 +200,25 @@ func (s *State) Summary() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return map[string]any{"known_count": len(s.stringSet("known")), "archived_count": len(s.stringSet("archived")), "error_count": len(s.ErrorsUnsafe()), "baseline": s.data["baseline"], "last_run": s.data["last_run"], "last_ok": s.data["last_ok"], "scanned_pages": s.data["scanned_pages"]}
+}
+
+// LegacyDiagnostics returns a detached snapshot of import-only sync metadata.
+func (s *State) LegacyDiagnostics() (baseline bool, lastRun float64, lastOK bool, pages int, errs map[string]string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	baseline, _ = s.data["baseline"].(bool)
+	switch v := s.data["last_run"].(type) {
+	case float64:
+		lastRun = v
+	case int:
+		lastRun = float64(v)
+	case int64:
+		lastRun = float64(v)
+	}
+	lastOK, _ = s.data["last_ok"].(bool)
+	pages = toInt(s.data["scanned_pages"])
+	errs = s.ErrorsUnsafe()
+	return
 }
 func (s *State) ErrorsUnsafe() map[string]string {
 	out := map[string]string{}

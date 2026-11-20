@@ -4,6 +4,7 @@ import {
   LayoutDashboardIcon as LayoutDashboard,
   PanelsTopLeftIcon as PanelsTopLeft,
   CompassIcon as Compass,
+  RssIcon as Rss,
   SettingsIcon as Settings,
 } from "@lucide/vue";
 import {
@@ -65,6 +66,17 @@ function navigate(page) {
             >
               <Compass /><span class="group-data-[collapsible=icon]:hidden">{{
                 t("nav.explore")
+              }}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              :is-active="props.page === 'subscriptions'"
+              :tooltip="t('nav.subscriptions')"
+              @click="navigate('subscriptions')"
+            >
+              <Rss /><span class="group-data-[collapsible=icon]:hidden">{{
+                t("nav.subscriptions")
               }}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

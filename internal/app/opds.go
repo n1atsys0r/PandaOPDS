@@ -399,12 +399,12 @@ func (s *Server) archives12(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	items := s.Service.ArchivedGalleries(page)
-	next := ""
-	if page*100 < s.Store.ReadyCount() {
-		next = s.builder().Href(fmt.Sprintf("/opds/v1.2/archives?page=%d", page+1))
+	body, _, err := DocumentArchiveAtomFeed(r.Context(), s.Documents, s.Settings, page, 100)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
 	}
-	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, []byte(s.builder().AtomList(items, "E-Hentai: Archives", "archives", "", next, nil)))
+	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, body)
 }
 
 func (s *Server) history12(w http.ResponseWriter, r *http.Request) {
@@ -689,27 +689,65 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	category := r.URL.Query().Get("category")
-
-	info, err := s.ArchivedGalleriesFiltered(page, 100, category, "")
+	doc, _, err := s.archiveOPDSFeed(r.Context(), page, 100, r.URL.Query().Get("category"))
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
-	pubs := []map[string]any{}
-	for _, item := range info.Galleries {
-		pubs = append(pubs, s.builder().Publication(item, false))
-	}
-	next := ""
-	if info.NextPage != nil {
-		nextURL := fmt.Sprintf("/opds/v2.0/archives?page=%d", *info.NextPage)
-		if category != "" {
-			nextURL += "&category=" + url.QueryEscape(category)
-		}
-		next = s.builder().Href(nextURL)
-	}
-	doc := s.builder().Acquisition("E-Hentai: Archives", "urn:ehentai:archives", "/opds/v2.0/archives", pubs, next, nil)
 	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
+}
+
+func (s *Server) archiveOPDSFeed(ctx context.Context, page, perPage int, category string) (map[string]any, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 100
+	}
+	if category == "" {
+		return DocumentArchiveOPDSFeed(ctx, s.Documents, s.Settings, page, perPage)
+	}
+	where := `d.status='available' AND lower(p.category)=lower(?)`
+	args := []any{category}
+	var total int
+	if err := s.Database.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.Database.QueryContext(ctx, `SELECT d.id FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE `+where+` ORDER BY d.created_at DESC,d.id LIMIT ? OFFSET ?`, append(args, perPage, (page-1)*perPage)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, 0, err
+	}
+	publications := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		d, e := s.Documents.Get(ctx, id)
+		if e != nil || d.Status != "available" {
+			if e != nil {
+				return nil, 0, e
+			}
+			continue
+		}
+		publications = append(publications, LocalDocumentPublication(ctx, d, s.Documents, s.Settings))
+	}
+	self := "/opds/v2.0/archives"
+	next := ""
+	if page*perPage < total {
+		next = s.builder().Href(fmt.Sprintf("%s?page=%d&category=%s", self, page+1, url.QueryEscape(category)))
+	}
+	return s.builder().Acquisition("PandaOPDS: Archives", "urn:pandaopds:archives", self, publications, next, nil), total, nil
 }
 
 func (s *Server) history20(w http.ResponseWriter, r *http.Request) {
@@ -1525,29 +1563,7 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 		page = 1
 	}
 	offset := (page - 1) * pageSize
-	predicate := func(it progression.HistoryItem) bool {
-		if filter != "" && !progression.MatchReadingStatus(true, it.Doc.Progression, filter) {
-			return false
-		}
-		if category != "" {
-			cat := ""
-			if it.Snapshot != nil {
-				cat = it.Snapshot.Category
-			} else if s.Store != nil {
-				if snap, ok := s.Store.GetMetadataSnapshot(it.GID, it.Token); ok {
-					cat = toString(snap["category"])
-				}
-			}
-			if cat == "" {
-				cat = "Misc"
-			}
-			if !strings.EqualFold(cat, category) {
-				return false
-			}
-		}
-		return true
-	}
-	items, total, err := s.Progression.ListHistoryFiltered(offset, pageSize, predicate)
+	items, total, err := s.Progression.ListHistoryQuery(progression.HistoryQuery{Offset: offset, Limit: pageSize, ReadingStatus: filter, Category: category})
 	if err != nil {
 		return eh.GalleryPageInfo{}, err
 	}

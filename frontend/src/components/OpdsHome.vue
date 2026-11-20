@@ -30,6 +30,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import CoverImage from "@/components/CoverImage.vue";
+import PublicationCard from "@/components/PublicationCard.vue";
 import {
   activeSearchFragment,
   moveSuggestionIndex,
@@ -594,7 +595,9 @@ const currentFavcatInfo = computed(() => {
       override.favcat != null && override.favcat >= 0 && override.favcat <= 9
         ? override.favcat
         : 0;
-    const found = (s.favcats.value || []).find((c) => Number(c.id) === favcatId);
+    const found = (s.favcats.value || []).find(
+      (c) => Number(c.id) === favcatId,
+    );
     const name =
       override.favcatName ||
       found?.name ||
@@ -942,7 +945,8 @@ function normalizePublication(pub, feedHref = window.location.href) {
     } else if (isArchiveDownloading(archiveItem.status)) {
       archiveBadge = {
         labelKey:
-          archiveItem.status === "pending" || archiveItem.status === "submitting"
+          archiveItem.status === "pending" ||
+          archiveItem.status === "submitting"
             ? "explore.badge_pending"
             : "explore.badge_downloading",
         get label() {
@@ -1062,7 +1066,8 @@ function getPubBadge(pub) {
     } else if (isArchiveDownloading(archiveItem.status)) {
       return {
         label:
-          archiveItem.status === "pending" || archiveItem.status === "submitting"
+          archiveItem.status === "pending" ||
+          archiveItem.status === "submitting"
             ? t("explore.badge_pending", t("explore.badge_downloading"))
             : t("explore.badge_downloading"),
         variant: "secondary",
@@ -3340,82 +3345,14 @@ onUnmounted(() => {
           v-else
           class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
         >
-          <div
+          <PublicationCard
             v-for="pub in drillDownPublications"
             :key="pub.gid + ':' + pub.token"
-            class="group relative flex flex-col cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-            @click="openGallery(pub, drillDownPublications)"
-          >
-            <!-- Cover -->
-            <div
-              class="relative aspect-[1/1.414] w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow group-hover:shadow-md"
-            >
-              <CoverImage :src="pub.coverUrl" :alt="pub.title" />
-
-              <!-- Overlay Gradient (only covering bottom 1/2) -->
-              <div
-                class="absolute bottom-0 inset-x-0 h-1/2 bg-gradient-to-t from-black/80 via-black/25 to-transparent pointer-events-none"
-              />
-
-              <!-- Category -->
-              <div
-                v-if="pub.category"
-                class="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded text-white shadow-sm"
-                :style="{ backgroundColor: getCategoryColor(pub.category) }"
-              >
-                {{ pub.category }}
-              </div>
-
-              <!-- Archive Badge -->
-              <div v-if="getPubBadge(pub)" class="absolute top-1.5 right-1.5">
-                <Badge
-                  :variant="getPubBadge(pub).variant"
-                  class="text-[10px] px-1.5 py-0 font-medium"
-                >
-                  {{ getPubBadge(pub).label }}
-                </Badge>
-              </div>
-
-              <!-- Bottom info -->
-              <div
-                class="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between text-[11px] text-white/90 font-medium"
-              >
-                <div class="flex items-center gap-0.5 shrink-0">
-                  <Star class="size-3 fill-amber-400 text-amber-400" />
-                  <span>{{ pub.rating.toFixed(1) }}</span>
-                </div>
-                <span
-                  v-if="pub.language || pub.pageCount > 0"
-                  class="truncate ml-1.5 text-right drop-shadow-xs"
-                  :title="
-                    pub.language && pub.pageCount > 0
-                      ? `${pub.language} · ${pub.pageCount}P`
-                      : pub.language || `${pub.pageCount}P`
-                  "
-                >
-                  <template v-if="pub.language && pub.pageCount > 0">
-                    <span>{{ pub.language }}</span>
-                    <span class="mx-1 opacity-70">·</span>
-                    <span class="font-mono">{{ pub.pageCount }}P</span>
-                  </template>
-                  <template v-else-if="pub.pageCount > 0">
-                    <span class="font-mono">{{ pub.pageCount }}P</span>
-                  </template>
-                  <template v-else>
-                    <span>{{ pub.language }}</span>
-                  </template>
-                </span>
-              </div>
-            </div>
-
-            <!-- Title -->
-            <div
-              class="mt-1.5 text-xs font-medium leading-snug line-clamp-2 transition-colors group-hover:text-primary"
-              :title="pub.title"
-            >
-              {{ pub.title }}
-            </div>
-          </div>
+            :publication="pub"
+            :badge="getPubBadge(pub)"
+            :category-color="getCategoryColor(pub.category)"
+            @select="openGallery($event, drillDownPublications)"
+          />
         </div>
 
         <!-- Infinite Scroll Sentinel & Status Footer -->

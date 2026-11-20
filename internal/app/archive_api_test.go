@@ -2,7 +2,9 @@ package app
 
 import (
 	"archive/zip"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"pandaopds/internal/eh"
+	"pandaopds/internal/subscription"
 )
 
 func TestArchiveListCoverUsesDecimalGalleryID(t *testing.T) {
@@ -30,7 +33,15 @@ func TestArchiveListCoverUsesDecimalGalleryID(t *testing.T) {
 	if _, err := server.Store.Upsert(gid, token, map[string]any{"status": "ready"}); err != nil {
 		t.Fatal(err)
 	}
-	coverBytes := []byte("local cover bytes")
+	zipPath := filepath.Join(settings.ArchiveDir, fmt.Sprintf("%d.zip", gid))
+	writeTestArchiveZIP(t, zipPath)
+	if _, err := server.Documents.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Documents.RegisterPublished(t.Context(), filepath.Base(zipPath), gid, token, "download_job"); err != nil {
+		t.Fatal(err)
+	}
+	coverBytes := []byte("\xff\xd8\xff\xe0local cover bytes")
 	if err := server.Store.WriteCover(gid, token, coverBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +69,7 @@ func TestArchiveListCoverUsesDecimalGalleryID(t *testing.T) {
 	if coverResponse.Code != http.StatusOK {
 		t.Fatalf("cover response status=%d for emitted URL %q body=%q", coverResponse.Code, entry.CoverURL, coverResponse.Body.String())
 	}
-	if entry.CoverURL != "/api/archive/1234567/abcdef1234/cover" {
+	if entry.CoverURL != "/api/publications/eh/1234567/abcdef1234/cover" {
 		t.Fatalf("cover URL=%q, want decimal gallery ID", entry.CoverURL)
 	}
 	if !strings.Contains(coverResponse.Header().Get("Content-Type"), "image/jpeg") || string(coverResponse.Body.Bytes()) != string(coverBytes) {
@@ -115,8 +126,13 @@ func TestUnarchivedEntryStatusAndFavoriteRemoveCleanup(t *testing.T) {
 	if removeRes.Code != http.StatusOK {
 		t.Fatalf("remove favorite status=%d body=%s", removeRes.Code, removeRes.Body.String())
 	}
-	if server.Store.Get(7001, "aa7001") != nil {
-		t.Fatal("unarchived catalog entry was not cleaned up after favorite removal")
+	if server.Store.Get(7001, "aa7001") == nil {
+		t.Fatal("favorite removal mutated archive state")
+	}
+	list := httptest.NewRecorder()
+	server.Handler().ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/archive", nil))
+	if list.Code != 200 || strings.Contains(list.Body.String(), `"gid":7001`) {
+		t.Fatalf("archive API exposed a non-file catalog record: %d %s", list.Code, list.Body.String())
 	}
 	if server.Store.Get(7002, "bb7002") == nil {
 		t.Fatal("ready archive entry should remain after favorite removal")
@@ -132,6 +148,18 @@ func TestArchiveCoverLazyFetchesAndPersistsThumbOnDemand(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
+	if _, err := server.Store.Catalog(7003, "cc7003", map[string]any{"title": "Lazy Cover"}, map[string]any{"title": "Lazy Cover", "thumb": "https://ehgt.org/t/7003.jpg"}); err != nil {
+		t.Fatal(err)
+	}
+	zipPath := filepath.Join(settings.ArchiveDir, "7003.zip")
+	writeTestArchiveZIP(t, zipPath)
+	if _, err := server.Documents.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := server.Documents.RegisterPublished(t.Context(), "7003.zip", 7003, "cc7003", "download_job")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var thumbFetches int
 	coverBytes := []byte("\xff\xd8\xff\xe0lazy-cover")
@@ -140,13 +168,9 @@ func TestArchiveCoverLazyFetchesAndPersistsThumbOnDemand(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"image/jpeg"}}, Body: io.NopCloser(strings.NewReader(string(coverBytes))), Request: r}, nil
 	}), server.Service.Throttle)
 
-	if _, err := server.Store.Catalog(7003, "cc7003", map[string]any{"title": "Lazy Cover"}, map[string]any{"title": "Lazy Cover", "thumb": "https://ehgt.org/t/7003.jpg"}); err != nil {
-		t.Fatal(err)
-	}
-
 	listRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(listRes, httptest.NewRequest(http.MethodGet, "/api/archive", nil))
-	if listRes.Code != 200 || !strings.Contains(listRes.Body.String(), `"/api/archive/7003/cc7003/cover"`) {
+	if listRes.Code != 200 || !strings.Contains(listRes.Body.String(), `"/image/documents/`+registered.ID+`/thumb"`) {
 		t.Fatalf("archive list missing lazy cover_url: status=%d body=%s", listRes.Code, listRes.Body.String())
 	}
 
@@ -162,6 +186,11 @@ func TestArchiveCoverLazyFetchesAndPersistsThumbOnDemand(t *testing.T) {
 	if coverRes2.Code != 200 || string(coverRes2.Body.Bytes()) != string(coverBytes) || thumbFetches != 1 {
 		t.Fatalf("second cover fetch status=%d fetches=%d (want 1)", coverRes2.Code, thumbFetches)
 	}
+	publicationCover := httptest.NewRecorder()
+	server.Handler().ServeHTTP(publicationCover, httptest.NewRequest(http.MethodGet, "/api/publications/eh/7003/cc7003/cover", nil))
+	if publicationCover.Code != 200 || string(publicationCover.Body.Bytes()) != string(coverBytes) || thumbFetches != 1 {
+		t.Fatalf("cached publication cover status=%d fetches=%d", publicationCover.Code, thumbFetches)
+	}
 }
 
 func writeTestArchiveZIP(t *testing.T, path string) {
@@ -174,11 +203,15 @@ func writeTestArchiveZIP(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	zw := zip.NewWriter(f)
-	w, err := zw.Create("01.jpg")
+	w, err := zw.Create("01.png")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Write([]byte("img")); err != nil {
+	imageBytes, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/gXcAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(imageBytes); err != nil {
 		t.Fatal(err)
 	}
 	if err := zw.Close(); err != nil {
@@ -189,12 +222,12 @@ func writeTestArchiveZIP(t *testing.T, path string) {
 	}
 }
 
-func TestDeleteArchiveRetainsUnarchivedForFavoritedAndRemovesNonFavorited(t *testing.T) {
+func TestFavoriteRemovalDoesNotDeleteArchiveAndArchiveDeleteDoesNotUnsubscribe(t *testing.T) {
 	base := t.TempDir()
 	settings := loadTestSettings(base)
 	settings.IPBMemberID = "1"
 	settings.IPBPassHash = "hash"
-	if err := os.WriteFile(settings.FavoritesSyncState, []byte(`{"known":["9001:aa9001","9002:bb9002","9004:dd9004"],"archived":["9001:aa9001"],"errors":{"9002:bb9002":"old err"}}`), 0o600); err != nil {
+	if err := os.WriteFile(settings.FavoritesSyncState, []byte(`{"known":["9001:aa9001"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	server, err := New(settings, nil)
@@ -202,132 +235,42 @@ func TestDeleteArchiveRetainsUnarchivedForFavoritedAndRemovesNonFavorited(t *tes
 		t.Fatal(err)
 	}
 	defer server.Close()
-	server.Service.Client = eh.NewClient(settings, staticRoundTripper(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader("<html>ok</html>")), Request: r}, nil
-	}), server.Service.Throttle)
-
-	// 9001: favorited ready archive
-	if _, err := server.Store.Upsert(9001, "aa9001", map[string]any{"status": "ready", "or": "org", "page_count": 1}); err != nil {
+	zipPath := filepath.Join(settings.ArchiveDir, "9001.zip")
+	writeTestArchiveZIP(t, zipPath)
+	if _, err = server.Documents.Scan(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	writeTestArchiveZIP(t, filepath.Join(settings.ArchiveDir, "9001.zip"))
-	if err := server.Store.WriteMetadata(9001, "aa9001", map[string]any{"gid": 9001, "token": "aa9001", "title": "Fav Ready", "filecount": 10}); err != nil {
+	if _, err = server.Documents.RegisterPublished(t.Context(), "9001.zip", 9001, "aa9001", "download_job"); err != nil {
 		t.Fatal(err)
 	}
-
-	// 9002: favorited failed archive with staging partial
-	if _, err := server.Store.Upsert(9002, "bb9002", map[string]any{"status": "failed", "error": "boom"}); err != nil {
+	remove := httptest.NewRequest(http.MethodPost, "/api/favorites", strings.NewReader(`{"action":"remove","gid":9001,"token":"aa9001"}`))
+	remove.Header.Set("Content-Type", "application/json")
+	removeRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(removeRes, remove)
+	if removeRes.Code != 200 {
+		t.Fatalf("favorite remove=%d %s", removeRes.Code, removeRes.Body.String())
+	}
+	if _, err = os.Stat(zipPath); err != nil {
+		t.Fatalf("favorite removal deleted archive: %v", err)
+	}
+	if _, _, err = server.Documents.List(t.Context(), 1, 20, "available", ""); err != nil {
 		t.Fatal(err)
 	}
-	stagePart := filepath.Join(settings.CacheDir, "archive-staging", "9002", "bb9002", "archive.part")
-	if err := os.MkdirAll(filepath.Dir(stagePart), 0o755); err != nil {
-		t.Fatal(err)
+	deleteRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(deleteRes, httptest.NewRequest(http.MethodDelete, "/api/archive/9001/aa9001", nil))
+	if deleteRes.Code != 200 {
+		t.Fatalf("archive delete=%d %s", deleteRes.Code, deleteRes.Body.String())
 	}
-	if err := os.WriteFile(stagePart, []byte("partial"), 0o600); err != nil {
-		t.Fatal(err)
+	if _, err = os.Stat(zipPath); !os.IsNotExist(err) {
+		t.Fatalf("archive delete retained ZIP: %v", err)
 	}
-
-	// 9003 -> 9004: shelf updated to 9004 where 9004 is in favorites known
-	if _, err := server.Store.Upsert(9003, "cc9003", map[string]any{"status": "ready", "or": "org", "page_count": 1}); err != nil {
-		t.Fatal(err)
+	var suppressed int
+	if err = server.Database.QueryRow(`SELECT COUNT(*) FROM download_suppressions WHERE provider='eh' AND gid=9001 AND token='aa9001'`).Scan(&suppressed); err != nil || suppressed != 1 {
+		t.Fatalf("suppression=%d err=%v", suppressed, err)
 	}
-	writeTestArchiveZIP(t, filepath.Join(settings.ArchiveDir, "9003.zip"))
-	if _, err := server.Store.Upsert(9004, "dd9004", map[string]any{"root_gid": 9003, "root_token": "cc9003", "is_version_update": true, "status": "ready", "or": "org", "page_count": 1}); err != nil {
-		t.Fatal(err)
-	}
-	writeTestArchiveZIP(t, filepath.Join(settings.ArchiveDir, "9004.zip"))
-	if err := server.Store.ActivateVersion(9003, "cc9003", 9004, "dd9004", map[string]any{"gid": 9004, "token": "dd9004", "title": "V2"}, []byte("c"), true); err != nil {
-		t.Fatal(err)
-	}
-
-	// 9005: non-favorited ready archive
-	if _, err := server.Store.Upsert(9005, "ee9005", map[string]any{"status": "ready", "or": "org", "page_count": 1}); err != nil {
-		t.Fatal(err)
-	}
-	writeTestArchiveZIP(t, filepath.Join(settings.ArchiveDir, "9005.zip"))
-
-	// 9006: non-favorited ready archive -> user adds to favorites -> then deletes archive
-	if _, err := server.Store.Upsert(9006, "ff9006", map[string]any{"status": "ready", "or": "org", "page_count": 1}); err != nil {
-		t.Fatal(err)
-	}
-	writeTestArchiveZIP(t, filepath.Join(settings.ArchiveDir, "9006.zip"))
-
-	// Delete 9001 (favorited) -> demotes to unarchived, deletes ZIP, clears archived flag, keeps known
-	del9001 := httptest.NewRecorder()
-	server.Handler().ServeHTTP(del9001, httptest.NewRequest(http.MethodDelete, "/api/archive/9001/aa9001", nil))
-	if del9001.Code != 200 || !strings.Contains(del9001.Body.String(), `"retained_catalog":true`) {
-		t.Fatalf("DELETE 9001=%d %s", del9001.Code, del9001.Body.String())
-	}
-	if _, err := os.Stat(filepath.Join(settings.ArchiveDir, "9001.zip")); !os.IsNotExist(err) {
-		t.Fatalf("9001.zip still exists: %v", err)
-	}
-	if got := server.Store.Get(9001, "aa9001"); got == nil || got["status"] != "unarchived" {
-		t.Fatalf("9001 after delete=%#v, want unarchived", got)
-	}
-	if server.Favorites.State.Archived()["9001:aa9001"] || !server.Favorites.State.Known()["9001:aa9001"] {
-		t.Fatalf("9001 favorites tracking=%v known=%v", server.Favorites.State.Archived(), server.Favorites.State.Known())
-	}
-
-	// Removing 9001 from favorites now auto-deletes the unarchived record
-	rem9001 := httptest.NewRequest(http.MethodPost, "/api/favorites", strings.NewReader(`{"action":"remove","gid":9001,"token":"aa9001"}`))
-	rem9001.Header.Set("Content-Type", "application/json")
-	rem9001Res := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rem9001Res, rem9001)
-	if rem9001Res.Code != 200 || server.Store.Get(9001, "aa9001") != nil {
-		t.Fatalf("9001 still present after favorite remove: code=%d store=%#v", rem9001Res.Code, server.Store.Get(9001, "aa9001"))
-	}
-
-	// Clear failed 9002 (favorited) -> removes staging part, clears error, demotes to unarchived
-	del9002 := httptest.NewRecorder()
-	server.Handler().ServeHTTP(del9002, httptest.NewRequest(http.MethodDelete, "/api/archive/9002/bb9002", nil))
-	if del9002.Code != 200 || !strings.Contains(del9002.Body.String(), `"retained_catalog":true`) {
-		t.Fatalf("DELETE 9002=%d %s", del9002.Code, del9002.Body.String())
-	}
-	if _, err := os.Stat(stagePart); !os.IsNotExist(err) {
-		t.Fatalf("9002 staging part survived: %v", err)
-	}
-	if got := server.Store.Get(9002, "bb9002"); got == nil || got["status"] != "unarchived" {
-		t.Fatalf("9002 after clear=%#v", got)
-	}
-	if server.Favorites.State.Errors()["9002:bb9002"] != "" {
-		t.Fatalf("9002 favorite error not cleared: %v", server.Favorites.State.Errors())
-	}
-
-	// Delete 9003 (version 9004 is favorited) -> retains 9003 as unarchived
-	del9003 := httptest.NewRecorder()
-	server.Handler().ServeHTTP(del9003, httptest.NewRequest(http.MethodDelete, "/api/archive/9003/cc9003", nil))
-	if del9003.Code != 200 || !strings.Contains(del9003.Body.String(), `"retained_catalog":true`) {
-		t.Fatalf("DELETE 9003=%d %s", del9003.Code, del9003.Body.String())
-	}
-	if got := server.Store.Get(9003, "cc9003"); got == nil || got["status"] != "unarchived" {
-		t.Fatalf("9003 after delete=%#v", got)
-	}
-
-	// Delete 9005 (not favorited) -> removes completely
-	del9005 := httptest.NewRecorder()
-	server.Handler().ServeHTTP(del9005, httptest.NewRequest(http.MethodDelete, "/api/archive/9005/ee9005", nil))
-	if del9005.Code != 200 || !strings.Contains(del9005.Body.String(), `"retained_catalog":false`) {
-		t.Fatalf("DELETE 9005=%d %s", del9005.Code, del9005.Body.String())
-	}
-	if server.Store.Get(9005, "ee9005") != nil {
-		t.Fatal("9005 non-favorited archive was not removed")
-	}
-
-	// 9006: add to favorites first, then delete archive -> retained as unarchived until removed from favorites
-	add9006 := httptest.NewRequest(http.MethodPost, "/api/favorites", strings.NewReader(`{"action":"add","gid":9006,"token":"ff9006","favcat":0}`))
-	add9006.Header.Set("Content-Type", "application/json")
-	add9006Res := httptest.NewRecorder()
-	server.Handler().ServeHTTP(add9006Res, add9006)
-	if add9006Res.Code != 200 {
-		t.Fatalf("add 9006 favorite=%d %s", add9006Res.Code, add9006Res.Body.String())
-	}
-	del9006 := httptest.NewRecorder()
-	server.Handler().ServeHTTP(del9006, httptest.NewRequest(http.MethodDelete, "/api/archive/9006/ff9006", nil))
-	if del9006.Code != 200 || !strings.Contains(del9006.Body.String(), `"retained_catalog":true`) {
-		t.Fatalf("DELETE 9006=%d %s", del9006.Code, del9006.Body.String())
-	}
-	if got := server.Store.Get(9006, "ff9006"); got == nil || got["status"] != "unarchived" {
-		t.Fatalf("9006 after delete=%#v, want unarchived", got)
+	items, total, err := server.Subscriptions.Store.ListItems(t.Context(), subscription.ItemQuery{SubscriptionIDs: []string{server.FavoriteSubscriptionID}, Page: 1, PerPage: 20})
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("favorite membership lost after archive delete: items=%v total=%d err=%v", items, total, err)
 	}
 }
 

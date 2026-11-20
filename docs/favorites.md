@@ -1,23 +1,7 @@
 # 收藏夹
 
-收藏逻辑位于 `internal/favorites/` 与 `internal/eh/`。请求和响应 schema 见 [`api/openapi.json`](../api/openapi.json)，配置见[配置指南](configuration.md)。收藏读写与扫描需要成对配置的 IPB 登录 cookie。
+收藏读取和写入需要成对配置 IPB 登录 cookie。添加、移动和移除操作由 `/api/favorites` 代理到上游；成功后同步更新内置「EH 收藏」订阅的本地成员关系。若上游写入成功但本地 SQLite 更新失败，响应会附带 `local_warnings`，下一轮订阅抓取可重新校准本地缓存。
 
-## 写操作与触发方式
+收藏夹的定期扫描、增量状态和缓存条目现在由 SQLite 订阅管理。旧 `/api/favorites/sync` 与 `/api/favorites/sync/run` 路径保留兼容，新的订阅接口和行为见[订阅与下载任务](subscriptions.md)。旧 favorites JSON 只在迁移期间作为导入来源，不再是运行期权威数据。
 
-服务可代理添加、移动和移除收藏，成功后使收藏列表缓存失效，并安排一次约 3 秒防抖的后台扫描；短时间内的多次写入会合并。分类目录由上游收藏页读取并缓存。
-
-同步默认每小时运行，`FAVORITES_SYNC_INTERVAL_SECONDS=0` 关闭周期循环。关闭周期后，手动运行与成功写操作触发的防抖扫描仍然可用。扫描是单飞行的，避免周期、手动和防抖任务重叠。
-
-## 增量游标与首次基线
-
-扫描使用按收藏时间排序的列表，并设置单轮最大页数。分页 `next` 可能是 `gid-timestamp` 复合游标；Go 将它视为不透明字符串原样传回上游，不能转整数、截断或自行重建。连续遇到达到阈值的已知项目后停止翻页。
-
-第一次成功扫描只把现有收藏加入 `known` 并置 `baseline=true`，**不会自动归档存量收藏**。从后续扫描开始，真正新发现的项目才可能进入自动归档。状态快照保存在 `FAVORITES_SYNC_STATE`，记录已知、已归档、错误及分类信息；移除该快照会重置基线。
-
-## 分类作用域、建档与自动归档
-
-每轮扫描完整记录收藏，不按 `FAVORITES_SYNC_CATEGORIES` 过滤可见收藏。无论 `FAVORITES_SYNC_ARCHIVE` 是否开启（包括首次基线扫描与历史 `known` 补齐），扫描到的收藏都会直接利用列表页解析结果在 `ARCHIVE_STATE_DIR` 中建档（初始状态为 `unarchived`，保存 `state.json` 与 `gallery.json`，不额外触发 `gdata` API 请求；封面在浏览查看时按需懒加载并持久化为 `cover.jpg`，完整 `gdata` 元数据则在正式发起归档或手动刷新元数据时补齐），可在管理界面“浏览”页展示和在线阅读，但不占用 `ARCHIVE_DIR` 的 ZIP 卷，也不会进入 `/opds/.../archives` 离线架；未归档或归档失败的图库仍走常规 OPDS 与 `/stream` 在线缓存路径。对仍在收藏夹中的条目执行“删除归档 / 清除失败 / 取消归档”时，会删去本地 ZIP 与临时文件并回退保留为 `unarchived`；通过 `/api/favorites` 移除收藏（或全量校准确认上游已取消收藏）时，会同步清理 `unarchived` 本地建档记录；非收藏条目删除归档时直接彻底清除本地记录与文件。
-
-`FAVORITES_SYNC_CATEGORIES` 只限制自动归档范围：留空表示全部，提供 ID 表示白名单，`-ID` 表示排除分类；分类未知的条目按实现允许通过作用域门控。
-
-自动归档默认关闭（`FAVORITES_SYNC_ARCHIVE=false`），开启后可能消耗 GP。被发现的项目会记录为已知；归档失败记入错误状态，不自动反复重试，避免重复触发付费行为。已有 ready 归档通常跳过，仅在当前配置要求从 res 升级到 org 时尝试升级；升级失败时归档管理器会尝试回滚并保留旧版本。需要重试错误项目时，应由用户明确发起归档操作。
+第一次同步建立基线，不会自动下载已有收藏。收藏来源范围由订阅的 `query.favorite_categories` 控制；自动下载的 `download_rules.categories` 与 `excluded_categories` 独立限制哪些新收藏允许排队。自动下载默认关闭，开启后可能产生账户费用；详见[归档](archive.md)中的购买安全规则。

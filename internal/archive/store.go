@@ -2,10 +2,15 @@ package archive
 
 import (
 	"archive/zip"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +49,7 @@ type rootRecord struct {
 type Store struct {
 	Root              string
 	DataRoot          string
+	db                *sql.DB
 	mu                sync.RWMutex
 	roots             map[string]*rootRecord
 	identityRoot      map[string]string
@@ -54,6 +60,7 @@ type Store struct {
 	zipPool           *zipPool
 	closeOnce         sync.Once
 	checkpointBlocked bool
+	readOnly          bool
 	closed            bool
 }
 
@@ -70,7 +77,11 @@ func NewStoreWithState(dataRoot, stateRoot string) (*Store, error) {
 // newStoreForMigration loads durable state without applying archive recovery
 // actions that can rename or delete ZIP payloads before migration preflight.
 func newStoreForMigration(dataRoot, stateRoot string) (*Store, error) {
-	return newStoreWithState(dataRoot, stateRoot, false)
+	s, err := newStoreWithState(dataRoot, stateRoot, false)
+	if err == nil {
+		s.readOnly = true
+	}
+	return s, err
 }
 
 func newStoreWithState(dataRoot, stateRoot string, recoverPayloads bool) (*Store, error) {
@@ -80,8 +91,18 @@ func newStoreWithState(dataRoot, stateRoot string, recoverPayloads bool) (*Store
 	if stateRoot == "" {
 		stateRoot = dataRoot
 	}
-	if err := os.MkdirAll(stateRoot, 0o755); err != nil {
-		return nil, err
+	if recoverPayloads {
+		if err := os.MkdirAll(stateRoot, 0o755); err != nil {
+			return nil, err
+		}
+	} else {
+		st, err := os.Lstat(stateRoot)
+		if err != nil {
+			return nil, err
+		}
+		if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("archive state root is not a real directory")
+		}
 	}
 	s := &Store{Root: stateRoot, DataRoot: dataRoot, roots: map[string]*rootRecord{}, identityRoot: map[string]string{}, conflicts: map[string]bool{}, snapshotWake: make(chan struct{}, 1), snapshotStop: make(chan struct{}), snapshotDone: make(chan struct{}), zipPool: newZipPool(defaultZipPoolSize, defaultZipPoolIdleTTL)}
 	type metaFile struct {
@@ -228,16 +249,22 @@ func newStoreWithState(dataRoot, stateRoot string, recoverPayloads bool) (*Store
 		for id, state := range versionRecords(rec.meta) {
 			gid, token, ok := parseKey(id)
 			if !usedIndex && ok && (gid != toInt(rec.meta["gid"]) || token != toString(rec.meta["token"])) && toString(state["storage_dir"]) == strconv.Itoa(gid) {
-				_ = s.persistVersionLocked(rec, gid, token)
+				if recoverPayloads {
+					_ = s.persistVersionLocked(rec, gid, token)
+				}
 			}
 		}
 	}
-	if !usedIndex {
+	if !usedIndex && recoverPayloads {
 		if err := s.writeIndexSnapshotLocked(); err != nil {
 			return nil, err
 		}
 	}
-	go s.snapshotLoop()
+	if recoverPayloads {
+		go s.snapshotLoop()
+	} else {
+		close(s.snapshotDone)
+	}
 	return s, nil
 }
 
@@ -285,7 +312,18 @@ func (s *Store) Close() error {
 	if s.zipPool != nil {
 		s.zipPool.close()
 	}
-	s.closeOnce.Do(func() { close(s.snapshotStop); <-s.snapshotDone })
+	if s.readOnly {
+		return nil
+	}
+	if s.db != nil {
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		if !s.readOnly {
+			close(s.snapshotStop)
+			<-s.snapshotDone
+		}
+	})
 	if _, err := os.Lstat(filepath.Join(s.Root, ".dirty")); err == nil {
 		return errors.New("archive index checkpoint remains dirty")
 	} else if !os.IsNotExist(err) {
@@ -367,6 +405,9 @@ func (s *Store) flatOwnedLocked(rec *rootRecord) bool {
 func (s *Store) flatOwnedWithMetaLocked(rec *rootRecord, expectedMeta map[string]any) bool {
 	if rec == nil {
 		return false
+	}
+	if s.db != nil {
+		return s.roots[rec.key] == rec
 	}
 	stateFile := rec.stateFileName
 	if stateFile == "" {
@@ -485,6 +526,10 @@ func (s *Store) versionDirOwnedLocked(rec *rootRecord, gid int, token string) bo
 	if !ok {
 		return false
 	}
+	if s.db != nil {
+		_, exists := versionRecords(rec.meta)[key(gid, token)]
+		return exists
+	}
 	if dir == rec.dir {
 		return true
 	}
@@ -517,6 +562,22 @@ func (s *Store) versionDirOwnedLocked(rec *rootRecord, gid int, token string) bo
 }
 
 func (s *Store) archivePathLocked(rec *rootRecord, gid int, token string) string {
+	if state := s.versionStateLocked(rec, gid, token); state != nil {
+		if stored := toString(state["archive_path"]); stored != "" {
+			candidate := stored
+			if !filepath.IsAbs(candidate) {
+				candidate = filepath.Join(s.DataRoot, filepath.FromSlash(candidate))
+			}
+			clean, err := filepath.Abs(candidate)
+			if err == nil {
+				rel, e := filepath.Rel(s.DataRoot, clean)
+				if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					return clean
+				}
+			}
+			return ""
+		}
+	}
 	dir, ok := s.versionDirLocked(rec, gid, token)
 	if !ok || !s.versionDirOwnedLocked(rec, gid, token) {
 		return ""
@@ -673,6 +734,9 @@ func (s *Store) persistWithExpectedMetaLocked(rec *rootRecord, expectedMeta map[
 	if rec == nil {
 		return errors.New("archive root not found")
 	}
+	if s.db != nil {
+		return s.persistSQLiteLocked(rec)
+	}
 	if !s.flatOwnedWithMetaLocked(rec, expectedMeta) {
 		return errors.New("archive root ownership conflict")
 	}
@@ -777,7 +841,7 @@ func (s *Store) writeIndexSnapshotLocked() error {
 	if err := s.writeAtomic(path, b); err != nil {
 		return err
 	}
-	if err := os.Remove(filepath.Join(s.Root, ".dirty")); err != nil && !os.IsNotExist(err) {
+	if err := removeArchiveTree(s.Root, filepath.Join(s.Root, ".dirty")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return syncDirectory(s.Root)
@@ -816,6 +880,9 @@ func syncDirectory(path string) error {
 }
 
 func (s *Store) persistVersionLocked(rec *rootRecord, gid int, token string) error {
+	if s.db != nil {
+		return s.persistSQLiteLocked(rec)
+	}
 	rootGID, rootToken := s.rootIdentity(rec)
 	if gid == rootGID && token == rootToken {
 		return nil
@@ -916,6 +983,31 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	originalRoots := make(map[string]*rootRecord, len(s.roots))
+	for k, v := range s.roots {
+		originalRoots[k] = v
+	}
+	originalIdentity := make(map[string]string, len(s.identityRoot))
+	for k, v := range s.identityRoot {
+		originalIdentity[k] = v
+	}
+	originalConflicts := make(map[string]bool, len(s.conflicts))
+	for k, v := range s.conflicts {
+		originalConflicts[k] = v
+	}
+	var touched *rootRecord
+	var priorMeta map[string]any
+	var hadPriorMeta bool
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		if touched != nil && hadPriorMeta {
+			touched.meta = priorMeta
+		}
+		s.roots, s.identityRoot, s.conflicts = originalRoots, originalIdentity, originalConflicts
+	}()
 	id := key(gid, token)
 	if s.conflicts[id] {
 		return nil, errors.New("archive identity conflicts with another shelf")
@@ -940,10 +1032,12 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 				return nil, err
 			}
 		}
-		if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
-			return nil, errors.New("archive root directory already exists without matching shelf ownership")
-		} else if err != nil && !os.IsNotExist(err) {
-			return nil, err
+		if s.db == nil {
+			if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
+				return nil, errors.New("archive root directory already exists without matching shelf ownership")
+			} else if err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
 		}
 		for _, existing := range s.roots {
 			if toInt(existing.meta["gid"]) == gid && toString(existing.meta["token"]) != token {
@@ -958,6 +1052,16 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 		rec = &rootRecord{key: id, dir: rootDir, stateFileName: stateName, meta: meta}
 		s.roots[id] = rec
 		s.registerIdentityLocked(rec, gid, token)
+		touched = rec
+	} else {
+		touched = rec
+		priorMeta = cloneMap(rec.meta)
+		hadPriorMeta = true
+	}
+	if s.db != nil && rec != nil {
+		if err := s.rejectPendingDeleteIntentLocked(rec); err != nil {
+			return nil, err
+		}
 	}
 	if !s.flatOwnedLocked(rec) {
 		return nil, errors.New("archive root ownership conflict")
@@ -1035,9 +1139,12 @@ func (s *Store) Upsert(gid int, token string, patch map[string]any) (map[string]
 	if err := s.persistLocked(rec); err != nil {
 		return nil, err
 	}
-	if err := s.persistVersionLocked(rec, gid, token); err != nil {
-		return nil, err
+	if s.db == nil {
+		if err := s.persistVersionLocked(rec, gid, token); err != nil {
+			return nil, err
+		}
 	}
+	succeeded = true
 	return cloneMap(state), nil
 }
 
@@ -1365,6 +1472,18 @@ func (s *Store) WriteMetadata(gid int, token string, payload any) error {
 	if !s.flatOwnedLocked(rec) {
 		return errors.New("archive root ownership conflict")
 	}
+	if s.db != nil {
+		tx, e := s.db.Begin()
+		if e != nil {
+			return e
+		}
+		defer tx.Rollback()
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if e = upsertPublicationMetadata(tx, gid, token, string(b), now, now); e != nil {
+			return e
+		}
+		return tx.Commit()
+	}
 	if err := s.writeDirtyMarker(); err != nil {
 		return err
 	}
@@ -1383,6 +1502,16 @@ func (s *Store) ReadMetadata(gid int, token string) (map[string]any, error) {
 	if !ok {
 		return nil, os.ErrNotExist
 	}
+	if s.db != nil {
+		var raw string
+		err := s.db.QueryRow(`SELECT metadata_json FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, strings.ToLower(token)).Scan(&raw)
+		if err != nil {
+			return nil, err
+		}
+		meta := map[string]any{}
+		err = json.Unmarshal([]byte(raw), &meta)
+		return meta, err
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -1392,6 +1521,17 @@ func (s *Store) ReadMetadata(gid int, token string) (map[string]any, error) {
 	return meta, err
 }
 
+func (s *Store) readPublicationMetadataLocked(gid int, token string) (map[string]any, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT metadata_json FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, strings.ToLower(token)).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	err = json.Unmarshal([]byte(raw), &out)
+	return out, err
+}
+
 func (s *Store) Cover(gid int, token string) ([]byte, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1399,6 +1539,11 @@ func (s *Store) Cover(gid int, token string) ([]byte, bool) {
 	path, ok := s.metadataPathLocked(rec, gid, token)
 	if !ok {
 		return nil, false
+	}
+	if s.db != nil {
+		var b []byte
+		err := s.db.QueryRow(`SELECT c.data FROM covers c JOIN publications p ON p.id=c.publication_id WHERE p.provider='eh' AND p.gid=? AND p.token=?`, gid, strings.ToLower(token)).Scan(&b)
+		return b, err == nil
 	}
 	b, err := os.ReadFile(filepath.Join(filepath.Dir(path), coverName))
 	return b, err == nil
@@ -1421,6 +1566,13 @@ func (s *Store) WriteCover(gid int, token string, b []byte) error {
 	if !s.flatOwnedLocked(rec) {
 		return errors.New("archive root ownership conflict")
 	}
+	if s.db != nil {
+		sum := sha256.Sum256(b)
+		mt := http.DetectContentType(b)
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		_, err := s.db.Exec(`INSERT INTO covers(publication_id,mime,data,sha256,source,updated_at) SELECT id,?,?,?,?,? FROM publications WHERE provider='eh' AND gid=? AND token=? ON CONFLICT(publication_id) DO UPDATE SET mime=excluded.mime,data=excluded.data,sha256=excluded.sha256,source=excluded.source,updated_at=excluded.updated_at`, mt, b, hex.EncodeToString(sum[:]), "upstream", now, gid, strings.ToLower(token))
+		return err
+	}
 	if err := s.writeDirtyMarker(); err != nil {
 		return err
 	}
@@ -1442,6 +1594,17 @@ func (s *Store) CurrentUpdate(gid int, token string) (int, string) {
 	path, ok := s.metadataPathLocked(rec, activeGID, activeToken)
 	if !ok {
 		return 0, ""
+	}
+	if s.db != nil {
+		m, err := s.readPublicationMetadataLocked(activeGID, activeToken)
+		if err != nil {
+			return 0, ""
+		}
+		targetGID, targetToken := toInt(m["current_gid"]), toString(m["current_key"])
+		if targetGID <= 0 || targetToken == "" || targetGID == activeGID && targetToken == activeToken {
+			return 0, ""
+		}
+		return targetGID, targetToken
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -1474,6 +1637,27 @@ func (s *Store) UpdateVersionLinks(gid int, token string, metadata eh.GalleryMet
 	path, ok := s.metadataPathLocked(rec, activeGID, activeToken)
 	if !ok {
 		return nil
+	}
+	if s.db != nil {
+		current, err := s.readPublicationMetadataLocked(activeGID, activeToken)
+		if err != nil {
+			return err
+		}
+		if len(current) == 0 {
+			b, _ := json.Marshal(metadata)
+			_ = json.Unmarshal(b, &current)
+			current["gid"], current["token"] = activeGID, activeToken
+			current["saved_at"] = float64(time.Now().Unix())
+		}
+		current["parent_gid"], current["parent_key"] = metadata.ParentGID, metadata.ParentKey
+		current["first_gid"], current["first_key"] = metadata.FirstGID, metadata.FirstKey
+		current["current_gid"], current["current_key"] = metadata.CurrentGID, metadata.CurrentKey
+		b, err := json.Marshal(current)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`UPDATE publications SET metadata_json=?,updated_at=? WHERE provider='eh' AND gid=? AND token=?`, string(b), time.Now().UTC().Format(time.RFC3339Nano), activeGID, strings.ToLower(activeToken))
+		return err
 	}
 	current := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil {
@@ -1555,6 +1739,11 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 	if rec == nil || rec.key != key(rootGID, rootToken) || !s.flatOwnedLocked(rec) {
 		return errors.New("archive root identity or ownership conflict")
 	}
+	if s.db != nil {
+		if err := s.rejectPendingDeleteIntentLocked(rec); err != nil {
+			return err
+		}
+	}
 	if cleanup, _ := rec.meta["cleanup_previous_zip"].(map[string]any); cleanup != nil {
 		if err := s.cleanupPreviousZipLocked(rec); err != nil {
 			return errors.New("previous ZIP cleanup is incomplete; refusing another activation")
@@ -1577,6 +1766,51 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 		return errors.New("target archive has no pages")
 	}
 	_ = zr.Close()
+	if s.db != nil {
+		snapshot = cloneMap(snapshot)
+		snapshot["gid"], snapshot["token"] = targetGID, targetToken
+		if snapshot["saved_at"] == nil {
+			snapshot["saved_at"] = float64(time.Now().Unix())
+		}
+		metaBytes, e := json.Marshal(snapshot)
+		if e != nil {
+			return e
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		tx, e := s.db.Begin()
+		if e != nil {
+			return e
+		}
+		defer tx.Rollback()
+		if e = upsertPublicationMetadata(tx, targetGID, targetToken, string(metaBytes), now, now); e != nil {
+			return e
+		}
+		if hasCover {
+			sum := sha256.Sum256(cover)
+			_, e = tx.Exec(`INSERT INTO covers(publication_id,mime,data,sha256,source,updated_at) SELECT id,?,?,?,?,? FROM publications WHERE provider='eh' AND gid=? AND token=? ON CONFLICT(publication_id) DO UPDATE SET mime=excluded.mime,data=excluded.data,sha256=excluded.sha256,source=excluded.source,updated_at=excluded.updated_at`, http.DetectContentType(cover), cover, hex.EncodeToString(sum[:]), "upstream", now, targetGID, strings.ToLower(targetToken))
+			if e != nil {
+				return e
+			}
+		}
+		oldGID, oldToken := s.activeIdentity(rec)
+		oldMeta := cloneMap(rec.meta)
+		rec.meta["activation_pending"] = map[string]any{"target_gid": targetGID, "target_token": targetToken, "old_gid": oldGID, "old_token": oldToken}
+		if e = s.persistSQLiteTxLocked(tx, rec); e != nil {
+			rec.meta = oldMeta
+			return e
+		}
+		if e = tx.Commit(); e != nil {
+			rec.meta = oldMeta
+			return e
+		}
+		if e = s.completeActivationLocked(rec, targetGID, targetToken); e != nil {
+			if recoveryErr := s.recoverActivationLocked(rec); recoveryErr != nil {
+				return errors.Join(e, recoveryErr)
+			}
+			return e
+		}
+		return s.cleanupPreviousZipLocked(rec)
+	}
 	dir, _ := s.versionDirLocked(rec, targetGID, targetToken)
 	snapshot = cloneMap(snapshot)
 	snapshot["gid"], snapshot["token"] = targetGID, targetToken
@@ -1596,13 +1830,13 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 		return err
 	}
 	coverMarker := filepath.Join(dir, ".cover.none")
-	_ = os.Remove(coverMarker)
+	_ = removeArchiveTree(s.Root, coverMarker)
 	if hasCover {
 		if err = s.writeAtomic(coverPath+".next", cover); err != nil {
 			return err
 		}
 	} else {
-		_ = os.Remove(coverPath + ".next")
+		_ = removeArchiveTree(s.Root, coverPath+".next")
 		if err = s.writeAtomic(coverMarker, []byte("none")); err != nil {
 			return err
 		}
@@ -1612,9 +1846,9 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 	rec.meta["activation_pending"] = map[string]any{"target_gid": targetGID, "target_token": targetToken, "old_gid": oldGID, "old_token": oldToken}
 	if err = s.persistLocked(rec); err != nil {
 		rec.meta = oldMeta
-		_ = os.Remove(metaPath + ".next")
-		_ = os.Remove(coverPath + ".next")
-		_ = os.Remove(coverMarker)
+		_ = removeArchiveTree(s.Root, metaPath+".next")
+		_ = removeArchiveTree(s.Root, coverPath+".next")
+		_ = removeArchiveTree(s.Root, coverMarker)
 		return err
 	}
 	if err = s.completeActivationLocked(rec, targetGID, targetToken); err != nil {
@@ -1632,6 +1866,9 @@ func (s *Store) ActivateVersion(rootGID int, rootToken string, targetGID int, ta
 }
 
 func (s *Store) completeActivationLocked(rec *rootRecord, targetGID int, targetToken string) error {
+	if s.db != nil {
+		return s.finishActivationLocked(rec, targetGID, targetToken)
+	}
 	if err := s.writeDirtyMarker(); err != nil {
 		return err
 	}
@@ -1656,8 +1893,8 @@ func (s *Store) completeActivationLocked(rec *rootRecord, targetGID int, targetT
 		}
 	}
 	if _, err := os.Stat(marker); err == nil {
-		_ = os.Remove(coverPath)
-		_ = os.Remove(nextCover)
+		_ = removeArchiveTree(s.Root, coverPath)
+		_ = removeArchiveTree(s.Root, nextCover)
 	} else if _, err := os.Stat(nextCover); err == nil {
 		if err := os.Rename(nextCover, coverPath); err != nil {
 			return err
@@ -1684,7 +1921,16 @@ func (s *Store) finishActivationLocked(rec *rootRecord, targetGID int, targetTok
 	rec.meta["active_gid"], rec.meta["active_token"] = targetGID, targetToken
 	rec.meta["activation_pending"] = nil
 	if oldGID != targetGID || oldToken != targetToken {
-		rec.meta["cleanup_previous_zip"] = map[string]any{"gid": oldGID, "token": oldToken, "target_gid": targetGID, "target_token": targetToken}
+		oldPath := s.archivePathLocked(rec, oldGID, oldToken)
+		rel, err := filepath.Rel(s.DataRoot, oldPath)
+		if oldPath == "" || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return errors.New("previous ZIP path is unsafe; preserving it")
+		}
+		size, mtime, hash, missing, err := archivePayloadFingerprint(s.DataRoot, filepath.ToSlash(rel))
+		if err != nil {
+			return fmt.Errorf("fingerprint previous ZIP: %w", err)
+		}
+		rec.meta["cleanup_previous_zip"] = map[string]any{"gid": oldGID, "token": oldToken, "target_gid": targetGID, "target_token": targetToken, "archive_path": filepath.ToSlash(rel), "source_size": size, "source_mtime_ns": strconv.FormatInt(mtime, 10), "source_sha256": hash, "source_missing": missing}
 	}
 	if err := s.persistLocked(rec); err != nil {
 		rec.meta = oldMeta
@@ -1703,6 +1949,13 @@ func (s *Store) cleanupPreviousZipLocked(rec *rootRecord) error {
 		return errors.New("previous ZIP cleanup target is no longer active")
 	}
 	targetPath := s.archivePathLocked(rec, activeGID, activeToken)
+	targetRel, err := filepath.Rel(s.DataRoot, targetPath)
+	if err != nil || targetRel == ".." || strings.HasPrefix(targetRel, ".."+string(filepath.Separator)) {
+		return errors.New("active target ZIP path is unsafe")
+	}
+	if _, _, _, missing, e := archivePayloadFingerprint(s.DataRoot, filepath.ToSlash(targetRel)); e != nil || missing {
+		return errors.New("active target ZIP is missing or unsafe; preserving previous ZIP")
+	}
 	zr, err := zip.OpenReader(targetPath)
 	if err != nil {
 		return errors.New("active target ZIP is missing; preserving previous ZIP")
@@ -1718,14 +1971,35 @@ func (s *Store) cleanupPreviousZipLocked(rec *rootRecord) error {
 		if oldPath == "" || filepath.Clean(oldPath) == filepath.Clean(targetPath) {
 			return errors.New("previous ZIP ownership conflict")
 		}
-		if err := s.writeDirtyMarker(); err != nil {
-			return err
+		rel := toString(cleanup["archive_path"])
+		if rel == "" {
+			return errors.New("previous ZIP cleanup lacks a verified fingerprint; preserving it for review")
+		}
+		size, mtime, hash, missing, e := archivePayloadFingerprint(s.DataRoot, rel)
+		if e != nil {
+			return e
+		}
+		if !missing && (size != toInt64(cleanup["source_size"]) || mtime != toInt64(cleanup["source_mtime_ns"]) || !strings.EqualFold(hash, toString(cleanup["source_sha256"]))) {
+			return errors.New("previous ZIP changed after activation; preserving it for review")
+		}
+		if s.db == nil {
+			if err := s.writeDirtyMarker(); err != nil {
+				return err
+			}
 		}
 		if s.zipPool != nil {
 			s.zipPool.invalidate(oldPath)
 		}
-		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
-			return err
+		if !missing {
+			if err := removeArchivePayload(s.DataRoot, rel); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		if s.db != nil {
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			if _, e := s.db.Exec(`UPDATE documents SET status='missing',missing_at=?,updated_at=? WHERE archive_path=? AND status='available'`, now, now, rel); e != nil {
+				return e
+			}
 		}
 		if old := versionRecords(rec.meta)[key(oldGID, oldToken)]; old != nil {
 			old["archive_size"], old["page_count"] = int64(0), 0
@@ -1757,17 +2031,21 @@ func (s *Store) recoverActivationLocked(rec *rootRecord) error {
 		_ = zr.Close()
 	}
 	if validZip {
-		if err := s.completeActivationLocked(rec, targetGID, targetToken); err == nil {
-			return nil
+		if err := s.completeActivationLocked(rec, targetGID, targetToken); err != nil {
+			// A valid target is already published. If durable catalog registration
+			// fails, keep the activation intent for restart recovery rather than
+			// clearing it and falsely reverting the in-memory record.
+			return err
 		}
+		return nil
 	}
 	// Incomplete target publication stays hidden; keep the old active pointer
 	// and remove only staged files owned by the target version.
 	dir, ok := s.versionDirLocked(rec, targetGID, targetToken)
-	if ok && s.versionDirOwnedLocked(rec, targetGID, targetToken) {
-		_ = os.Remove(filepath.Join(dir, s.galleryFileNameLocked(rec, targetGID, targetToken)+".next"))
-		_ = os.Remove(filepath.Join(dir, coverName+".next"))
-		_ = os.Remove(filepath.Join(dir, ".cover.none"))
+	if s.db == nil && ok && s.versionDirOwnedLocked(rec, targetGID, targetToken) {
+		_ = removeArchiveTree(s.Root, filepath.Join(dir, s.galleryFileNameLocked(rec, targetGID, targetToken)+".next"))
+		_ = removeArchiveTree(s.Root, filepath.Join(dir, coverName+".next"))
+		_ = removeArchiveTree(s.Root, filepath.Join(dir, ".cover.none"))
 	}
 	oldMeta := cloneMap(rec.meta)
 	rec.meta["active_gid"], rec.meta["active_token"] = pending["old_gid"], pending["old_token"]
@@ -1798,6 +2076,9 @@ func (s *Store) RemoveWithError(gid int, token string) error {
 	}
 	if !s.flatOwnedLocked(rec) {
 		return fmt.Errorf("archive state ownership check failed for gid %d", gid)
+	}
+	if s.db != nil {
+		return s.removeSQLiteLocked(rec, true)
 	}
 	if err := s.writeDirtyMarker(); err != nil {
 		return fmt.Errorf("write archive state dirty marker: %w", archiveDeleteCause(err))
@@ -1833,16 +2114,16 @@ func (s *Store) RemoveWithError(gid int, token string) error {
 		if s.zipPool != nil {
 			s.zipPool.invalidate(payload)
 		}
-		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
+		if err := removeArchiveTree(s.DataRoot, payload); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove archive payload for gid %d: %w", gid, archiveDeleteCause(err))
 		}
 	}
 	for dir, versionGID := range versionDirs {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeArchiveTree(s.Root, dir); err != nil {
 			return fmt.Errorf("remove archive version directory for gid %d: %w", versionGID, archiveDeleteCause(err))
 		}
 	}
-	if err := os.RemoveAll(rec.dir); err != nil {
+	if err := removeArchiveTree(s.Root, rec.dir); err != nil {
 		return fmt.Errorf("remove archive state directory for gid %d: %w", gid, archiveDeleteCause(err))
 	}
 	delete(s.roots, rec.key)
@@ -1892,6 +2173,9 @@ func (s *Store) ResetToUnarchivedWithError(gid int, token string) error {
 	if !s.flatOwnedLocked(rec) {
 		return fmt.Errorf("archive state ownership check failed for gid %d", gid)
 	}
+	if s.db != nil {
+		return s.removeSQLiteLocked(rec, false)
+	}
 	rootGID, rootToken := s.rootIdentity(rec)
 	if err := s.writeDirtyMarker(); err != nil {
 		return fmt.Errorf("write archive state dirty marker: %w", archiveDeleteCause(err))
@@ -1927,20 +2211,20 @@ func (s *Store) ResetToUnarchivedWithError(gid int, token string) error {
 		if s.zipPool != nil {
 			s.zipPool.invalidate(payload)
 		}
-		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
+		if err := removeArchiveTree(s.DataRoot, payload); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove archive payload for gid %d: %w", gid, archiveDeleteCause(err))
 		}
 	}
 	for dir, versionGID := range versionDirs {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeArchiveTree(s.Root, dir); err != nil {
 			return fmt.Errorf("remove archive version directory for gid %d: %w", versionGID, archiveDeleteCause(err))
 		}
 	}
-	_ = os.Remove(filepath.Join(rec.dir, partName))
-	_ = os.Remove(filepath.Join(rec.dir, ".cover.none"))
+	_ = removeArchiveTree(s.Root, filepath.Join(rec.dir, partName))
+	_ = removeArchiveTree(s.Root, filepath.Join(rec.dir, ".cover.none"))
 	rootGallery := inferGalleryFile(rec.dir, rec.stateFileName)
-	_ = os.Remove(filepath.Join(rec.dir, rootGallery+".next"))
-	_ = os.Remove(filepath.Join(rec.dir, coverName+".next"))
+	_ = removeArchiveTree(s.Root, filepath.Join(rec.dir, rootGallery+".next"))
+	_ = removeArchiveTree(s.Root, filepath.Join(rec.dir, coverName+".next"))
 
 	now := float64(time.Now().Unix())
 	createdAt := toFloat(rec.meta["created_at"])
@@ -2017,6 +2301,366 @@ func (s *Store) ResetToUnarchivedWithError(gid int, token string) error {
 	return nil
 }
 
+// removeSQLiteLocked records an automatic-download suppression before touching
+// any ZIP. Legacy sidecars are immutable migration inputs in SQLite mode.
+func (s *Store) removeSQLiteLocked(rec *rootRecord, deleteShelf bool) error {
+	operation := "reset"
+	if deleteShelf {
+		operation = "remove"
+	}
+	rootGID, rootToken := s.rootIdentity(rec)
+	var intentID string
+	err := s.db.QueryRow(`SELECT id FROM archive_delete_intents WHERE provider='eh' AND root_gid=? AND root_token=? AND status IN ('pending','needs_review') ORDER BY created_at DESC LIMIT 1`, rootGID, strings.ToLower(rootToken)).Scan(&intentID)
+	if err == nil {
+		var oldOperation, status string
+		if err = s.db.QueryRow(`SELECT operation,status FROM archive_delete_intents WHERE id=?`, intentID).Scan(&oldOperation, &status); err != nil {
+			return err
+		}
+		if oldOperation != operation {
+			return errors.New("an incomplete archive deletion intent must be resolved first")
+		}
+		if status == "needs_review" {
+			return errors.New("archive deletion requires review because a payload changed")
+		}
+		return s.resumeDeleteIntentLocked(rec, intentID)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	intentID, err = newArchiveIntentID()
+	if err != nil {
+		return err
+	}
+	type payload struct {
+		gid                  int
+		token, fullPath, rel string
+		size, mtime          int64
+		hash                 string
+		missing              bool
+	}
+	ids := make([]string, 0, len(versionRecords(rec.meta)))
+	for id := range versionRecords(rec.meta) {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	files := []payload{}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		gid, token, ok := parseKey(id)
+		if !ok {
+			continue
+		}
+		fullPath := s.archivePathLocked(rec, gid, token)
+		if fullPath == "" {
+			continue
+		}
+		rel, e := filepath.Rel(s.DataRoot, fullPath)
+		if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return errors.New("archive payload path escapes data root")
+		}
+		rel = filepath.ToSlash(rel)
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		size, mtime, hash, missing, e := archivePayloadFingerprint(s.DataRoot, rel)
+		if e != nil {
+			return fmt.Errorf("inspect archive payload for gid %d: %w", gid, archiveDeleteCause(e))
+		}
+		files = append(files, payload{gid: gid, token: token, fullPath: fullPath, rel: rel, size: size, mtime: mtime, hash: hash, missing: missing})
+	}
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, e = tx.Exec(`INSERT INTO archive_delete_intents(id,provider,root_gid,root_token,operation,status,created_at,updated_at) VALUES(?,'eh',?,?,?,'pending',?,?)`, intentID, rootGID, strings.ToLower(rootToken), operation, now, now); e != nil {
+		return e
+	}
+	for _, f := range files {
+		status := "pending"
+		if f.missing {
+			status = "deleted"
+		}
+		if _, e = tx.Exec(`INSERT INTO archive_delete_payloads(intent_id,archive_path,status,expected_size,expected_mtime_ns,expected_sha256) VALUES(?,?,?,?,?,?)`, intentID, f.rel, status, f.size, f.mtime, f.hash); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(`INSERT INTO download_suppressions(provider,gid,token,created_at) VALUES('eh',?,?,?) ON CONFLICT(provider,gid,token) DO NOTHING`, f.gid, strings.ToLower(f.token), now); e != nil {
+			return e
+		}
+		if f.missing {
+			if _, e = tx.Exec(`UPDATE documents SET status='missing',missing_at=?,updated_at=? WHERE archive_path=? AND status='available'`, now, now, f.rel); e != nil {
+				return e
+			}
+		}
+	}
+	if e = tx.Commit(); e != nil {
+		return e
+	}
+	return s.resumeDeleteIntentLocked(rec, intentID)
+}
+
+func newArchiveIntentID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+func archivePayloadFingerprint(rootPath, rel string) (int64, int64, string, bool, error) {
+	info, err := os.Lstat(rootPath)
+	if err != nil {
+		return 0, 0, "", false, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return 0, 0, "", false, errors.New("archive data root is not a real directory")
+	}
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return 0, 0, "", false, errors.New("unsafe archive relative path")
+	}
+	r, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return 0, 0, "", false, err
+	}
+	defer r.Close()
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i := range parts {
+		p := filepath.Join(parts[:i+1]...)
+		st, e := r.Lstat(p)
+		if os.IsNotExist(e) {
+			return 0, 0, "", true, nil
+		}
+		if e != nil {
+			return 0, 0, "", false, e
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return 0, 0, "", false, errors.New("archive path contains symlink")
+		}
+		if i < len(parts)-1 && !st.IsDir() {
+			return 0, 0, "", false, errors.New("archive path component is not a directory")
+		}
+	}
+	f, err := r.Open(clean)
+	if os.IsNotExist(err) {
+		return 0, 0, "", true, nil
+	}
+	if err != nil {
+		return 0, 0, "", false, err
+	}
+	defer f.Close()
+	before, err := f.Stat()
+	if err != nil {
+		return 0, 0, "", false, err
+	}
+	if !before.Mode().IsRegular() {
+		return 0, 0, "", false, errors.New("archive payload is not regular")
+	}
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		return 0, 0, "", false, err
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return 0, 0, "", false, err
+	}
+	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return 0, 0, "", false, errors.New("archive payload changed during fingerprint")
+	}
+	return before.Size(), before.ModTime().UnixNano(), hex.EncodeToString(h.Sum(nil)), false, nil
+}
+
+func removeArchivePayload(rootPath, rel string) error {
+	info, err := os.Lstat(rootPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("archive data root is not a real directory")
+	}
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return errors.New("unsafe archive relative path")
+	}
+	r, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i := range parts {
+		p := filepath.Join(parts[:i+1]...)
+		st, e := r.Lstat(p)
+		if e != nil {
+			return e
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return errors.New("archive path contains symlink")
+		}
+		if i < len(parts)-1 && !st.IsDir() {
+			return errors.New("archive path component is not a directory")
+		}
+	}
+	return r.Remove(clean)
+}
+
+func removeArchiveTree(rootPath, fullPath string) error {
+	rel, err := filepath.Rel(rootPath, fullPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("archive removal path escapes its root")
+	}
+	info, err := os.Lstat(rootPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("archive root is not a real directory")
+	}
+	r, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	clean := filepath.Clean(rel)
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i := range parts {
+		p := filepath.Join(parts[:i+1]...)
+		st, e := r.Lstat(p)
+		if e != nil {
+			return e
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return errors.New("archive removal path contains symlink")
+		}
+		if i < len(parts)-1 && !st.IsDir() {
+			return errors.New("archive removal component is not a directory")
+		}
+	}
+	return r.RemoveAll(clean)
+}
+
+func (s *Store) resumeDeleteIntentLocked(rec *rootRecord, intentID string) error {
+	var operation string
+	if err := s.db.QueryRow(`SELECT operation FROM archive_delete_intents WHERE id=?`, intentID).Scan(&operation); err != nil {
+		return err
+	}
+	rows, err := s.db.Query(`SELECT archive_path,expected_size,expected_mtime_ns,expected_sha256 FROM archive_delete_payloads WHERE intent_id=? AND status='pending' ORDER BY archive_path`, intentID)
+	if err != nil {
+		return err
+	}
+	type payload struct {
+		path        string
+		size, mtime int64
+		hash        string
+	}
+	files := []payload{}
+	for rows.Next() {
+		var f payload
+		if err = rows.Scan(&f.path, &f.size, &f.mtime, &f.hash); err != nil {
+			rows.Close()
+			return err
+		}
+		files = append(files, f)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, f := range files {
+		size, mtime, hash, missing, e := archivePayloadFingerprint(s.DataRoot, f.path)
+		if e != nil {
+			return s.markDeleteIntentError(intentID, "pending", f.path, e)
+		}
+		if !missing && (size != f.size || mtime != f.mtime || !strings.EqualFold(hash, f.hash)) {
+			return s.markDeleteIntentError(intentID, "needs_review", f.path, errors.New("payload fingerprint changed; preserved for review"))
+		}
+		if !missing {
+			if s.zipPool != nil {
+				s.zipPool.invalidate(filepath.Join(s.DataRoot, filepath.FromSlash(f.path)))
+			}
+			if e = removeArchivePayload(s.DataRoot, f.path); e != nil {
+				return s.markDeleteIntentError(intentID, "pending", f.path, e)
+			}
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		tx, e := s.db.Begin()
+		if e != nil {
+			return e
+		}
+		if _, e = tx.Exec(`UPDATE archive_delete_payloads SET status='deleted',error=NULL WHERE intent_id=? AND archive_path=?`, intentID, f.path); e == nil {
+			_, e = tx.Exec(`UPDATE documents SET status='missing',missing_at=?,updated_at=? WHERE archive_path=? AND status='available'`, now, now, f.path)
+		}
+		if e != nil {
+			tx.Rollback()
+			return e
+		}
+		if e = tx.Commit(); e != nil {
+			return e
+		}
+	}
+	var pending int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM archive_delete_payloads WHERE intent_id=? AND status='pending'`, intentID).Scan(&pending); err != nil {
+		return err
+	}
+	if pending > 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	oldMeta := cloneMap(rec.meta)
+	if operation == "remove" {
+		if _, err = tx.Exec(`DELETE FROM archive_works WHERE provider='eh' AND gid=? AND token=?`, toInt(rec.meta["gid"]), strings.ToLower(toString(rec.meta["token"]))); err != nil {
+			return err
+		}
+	} else {
+		for _, v := range versionRecords(rec.meta) {
+			v["status"] = "unarchived"
+			v["archive_size"] = int64(0)
+			v["page_count"] = 0
+		}
+		rec.meta["status"] = "unarchived"
+		rec.meta["archive_size"] = int64(0)
+		rec.meta["page_count"] = 0
+		if err = s.persistSQLiteTxLocked(tx, rec); err != nil {
+			rec.meta = oldMeta
+			return err
+		}
+	}
+	if _, err = tx.Exec(`UPDATE archive_delete_intents SET status='complete',updated_at=?,error=NULL WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), intentID); err != nil {
+		rec.meta = oldMeta
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		rec.meta = oldMeta
+		return err
+	}
+	if operation == "remove" {
+		delete(s.roots, rec.key)
+		for id, owner := range s.identityRoot {
+			if owner == rec.key {
+				delete(s.identityRoot, id)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) markDeleteIntentError(intentID, status, path string, cause error) error {
+	message := archiveDeleteCause(cause).Error()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if path != "" {
+		_, _ = s.db.Exec(`UPDATE archive_delete_payloads SET error=?,status=CASE WHEN ?='needs_review' THEN 'needs_review' ELSE status END WHERE intent_id=? AND archive_path=?`, message, status, intentID, path)
+	}
+	_, _ = s.db.Exec(`UPDATE archive_delete_intents SET status=?,updated_at=?,error=? WHERE id=?`, status, now, message, intentID)
+	return cause
+}
+
 func (s *Store) Stats() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -2091,6 +2735,14 @@ func (s *Store) Catalog(gid int, token string, metaPatch, galleryPayload map[str
 			return false, errors.New("archive root ownership conflict")
 		}
 		if len(galleryPayload) > 0 {
+			if s.db != nil {
+				b, err := json.Marshal(galleryPayload)
+				if err != nil {
+					return false, err
+				}
+				_, err = s.db.Exec(`UPDATE publications SET metadata_json=? WHERE provider='eh' AND gid=? AND token=? AND metadata_json='{}'`, string(b), gid, strings.ToLower(token))
+				return false, err
+			}
 			if metaPath, ok := s.metadataPathLocked(rec, gid, token); ok {
 				if _, err := os.Stat(metaPath); os.IsNotExist(err) {
 					payload := cloneMap(galleryPayload)
@@ -2123,10 +2775,12 @@ func (s *Store) Catalog(gid int, token string, metaPatch, galleryPayload map[str
 			return false, err
 		}
 	}
-	if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
-		return false, errors.New("archive root directory already exists without matching shelf ownership")
-	} else if err != nil && !os.IsNotExist(err) {
-		return false, err
+	if s.db == nil {
+		if entries, err := os.ReadDir(rootDir); err == nil && len(entries) != 0 {
+			return false, errors.New("archive root directory already exists without matching shelf ownership")
+		} else if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
 	}
 	now := float64(time.Now().Unix())
 	createdAt := now
@@ -2174,7 +2828,11 @@ func (s *Store) Catalog(gid int, token string, metaPatch, galleryPayload map[str
 		meta["payload_layout"] = "flat-gid"
 	}
 	rec := &rootRecord{key: id, dir: rootDir, stateFileName: stateName, meta: meta}
+	s.roots[id] = rec
+	s.registerIdentityLocked(rec, gid, token)
 	if err := s.persistLocked(rec); err != nil {
+		delete(s.roots, id)
+		delete(s.identityRoot, id)
 		return false, err
 	}
 	if len(galleryPayload) > 0 {
@@ -2184,12 +2842,15 @@ func (s *Store) Catalog(gid int, token string, metaPatch, galleryPayload map[str
 		if err != nil {
 			return false, err
 		}
-		if err := s.writeAtomic(filepath.Join(rootDir, galleryName), b); err != nil {
+		if s.db != nil {
+			_, err = s.db.Exec(`UPDATE publications SET metadata_json=? WHERE provider='eh' AND gid=? AND token=?`, string(b), gid, strings.ToLower(token))
+			if err != nil {
+				return false, err
+			}
+		} else if err := s.writeAtomic(filepath.Join(rootDir, galleryName), b); err != nil {
 			return false, err
 		}
 	}
-	s.roots[id] = rec
-	s.registerIdentityLocked(rec, gid, token)
 	return true, nil
 }
 

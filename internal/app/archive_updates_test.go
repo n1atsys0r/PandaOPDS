@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,14 @@ func TestArchiveVersionCheckMarksCandidateWithoutBuying(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Store.WriteMetadata(100, "aaaa", map[string]any{"gid": 100, "token": "aaaa", "title": "Local snapshot"}); err != nil {
+		t.Fatal(err)
+	}
+	zipPath := filepath.Join(settings.ArchiveDir, "100.zip")
+	writeTestArchiveZIP(t, zipPath)
+	if _, err := s.Documents.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Documents.RegisterPublished(t.Context(), "100.zip", 100, "aaaa", "download_job"); err != nil {
 		t.Fatal(err)
 	}
 	requests := 0

@@ -37,6 +37,7 @@ services:
       CACHE_DIR: /data/cache
       ARCHIVE_DIR: /data/archives
       ARCHIVE_STATE_DIR: /config/archive
+      DATABASE_PATH: /config/pandaopds.db
       # --- deployment-level switches (.env may override; defaults shown here) ---
       FAVORITES_SYNC_ARCHIVE: ${FAVORITES_SYNC_ARCHIVE:-0}      # auto-archive new favorites (GP cost!)
       # --- throttling (ban-avoidance) ---

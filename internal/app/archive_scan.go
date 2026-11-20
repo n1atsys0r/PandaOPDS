@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"pandaopds/internal/migration"
 )
 
 type ArchiveScanJob struct {
@@ -42,21 +44,24 @@ func (s *Server) startArchiveScan(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusAccepted, job)
 
 	go func() {
-		report, err := s.Store.ScanLegacySidecarsContext(ctx)
+		report, err := s.Documents.Scan(ctx)
+		if err == nil && s.Database != nil {
+			_, err = migration.LinkLegacyDocuments(s.Database, s.Settings.ArchiveDir)
+		}
 		completed := time.Now().Unix()
-		result := ArchiveScanJob{ID: job.ID, Imported: report.State + report.Gallery + report.Cover, Skipped: report.Skipped, Conflicts: report.Conflicts, StartedAt: job.StartedAt, CompletedAt: completed}
+		result := ArchiveScanJob{ID: job.ID, StartedAt: job.StartedAt, CompletedAt: completed}
 		if err != nil {
 			result.Status, result.Error = "error", err.Error()
-		} else if result.Imported > 0 {
+		} else if found, ok := report["documents_found"].(int); ok {
+			result.Imported = found
 			result.Status = "success"
-		} else if result.Conflicts > 0 {
-			result.Status = "conflict"
-		} else if result.Skipped > 0 {
-			result.Status = "skipped"
 		} else {
 			result.Status = "success"
 		}
-		s.refreshProgressionArchiveIndex()
+		s.ArchiveScanReady = err == nil
+		if err == nil && s.Subscriptions != nil {
+			s.Subscriptions.EnableDispatch()
+		}
 		s.archiveScanMu.Lock()
 		s.archiveScan = result
 		s.archiveScanCancel = nil

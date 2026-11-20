@@ -270,17 +270,39 @@
             },
             "description": "Search terms within Watched or the selected Favorites folder."
           },
-          {"$ref": "#/components/parameters/f_cats"},
-          {"$ref": "#/components/parameters/advsearch"},
-          {"$ref": "#/components/parameters/f_sr"},
-          {"$ref": "#/components/parameters/f_srdd"},
-          {"$ref": "#/components/parameters/f_sh"},
-          {"$ref": "#/components/parameters/f_sfl"},
-          {"$ref": "#/components/parameters/f_sfu"},
-          {"$ref": "#/components/parameters/f_sft"},
-          {"$ref": "#/components/parameters/f_sp"},
-          {"$ref": "#/components/parameters/f_spf"},
-          {"$ref": "#/components/parameters/f_spt"}
+          {
+            "$ref": "#/components/parameters/f_cats"
+          },
+          {
+            "$ref": "#/components/parameters/advsearch"
+          },
+          {
+            "$ref": "#/components/parameters/f_sr"
+          },
+          {
+            "$ref": "#/components/parameters/f_srdd"
+          },
+          {
+            "$ref": "#/components/parameters/f_sh"
+          },
+          {
+            "$ref": "#/components/parameters/f_sfl"
+          },
+          {
+            "$ref": "#/components/parameters/f_sfu"
+          },
+          {
+            "$ref": "#/components/parameters/f_sft"
+          },
+          {
+            "$ref": "#/components/parameters/f_sp"
+          },
+          {
+            "$ref": "#/components/parameters/f_spf"
+          },
+          {
+            "$ref": "#/components/parameters/f_spt"
+          }
         ],
         "responses": {
           "200": {
@@ -1107,17 +1129,39 @@
             },
             "description": "Search terms within Watched or the selected Favorites folder."
           },
-          {"$ref": "#/components/parameters/f_cats"},
-          {"$ref": "#/components/parameters/advsearch"},
-          {"$ref": "#/components/parameters/f_sr"},
-          {"$ref": "#/components/parameters/f_srdd"},
-          {"$ref": "#/components/parameters/f_sh"},
-          {"$ref": "#/components/parameters/f_sfl"},
-          {"$ref": "#/components/parameters/f_sfu"},
-          {"$ref": "#/components/parameters/f_sft"},
-          {"$ref": "#/components/parameters/f_sp"},
-          {"$ref": "#/components/parameters/f_spf"},
-          {"$ref": "#/components/parameters/f_spt"}
+          {
+            "$ref": "#/components/parameters/f_cats"
+          },
+          {
+            "$ref": "#/components/parameters/advsearch"
+          },
+          {
+            "$ref": "#/components/parameters/f_sr"
+          },
+          {
+            "$ref": "#/components/parameters/f_srdd"
+          },
+          {
+            "$ref": "#/components/parameters/f_sh"
+          },
+          {
+            "$ref": "#/components/parameters/f_sfl"
+          },
+          {
+            "$ref": "#/components/parameters/f_sfu"
+          },
+          {
+            "$ref": "#/components/parameters/f_sft"
+          },
+          {
+            "$ref": "#/components/parameters/f_sp"
+          },
+          {
+            "$ref": "#/components/parameters/f_spf"
+          },
+          {
+            "$ref": "#/components/parameters/f_spt"
+          }
         ],
         "responses": {
           "200": {
@@ -1785,21 +1829,65 @@
     },
     "/opds/v2.0/gallery/{gid}/{token}/manifest": {
       "get": {
-        "tags": ["opds2"],
+        "tags": [
+          "opds2"
+        ],
         "summary": "Divina Gallery Manifest",
         "description": "Returns a Readium Divina manifest with a nonempty per-page readingOrder. Ready archives use stored metadata and pages. If the page count is unknown or zero, returns 503 because a valid Divina manifest cannot be produced.",
         "operationId": "gallery_manifest_opds_v2_0_gallery__gid___token__manifest_get",
         "parameters": [
-          {"name":"gid","in":"path","required":true,"schema":{"type":"integer"},"example":12345},
-          {"name":"token","in":"path","required":true,"schema":{"type":"string"},"example":"abcdef0123"}
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 12345
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "abcdef0123"
+          }
         ],
         "responses": {
-          "200": {"description":"Divina manifest","content":{"application/divina+json":{"schema":{"$ref":"#/components/schemas/DivinaManifest"}}}},
-          "401": {"description":"Basic authentication required when configured"},
-          "404": {"description":"Gallery unavailable"},
-          "422": {"description":"Invalid gallery identifier"},
-          "502": {"description":"Upstream or parsing failure"},
-          "503": {"description":"Gallery page count unavailable or upstream service unavailable","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}
+          "200": {
+            "description": "Divina manifest",
+            "content": {
+              "application/divina+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DivinaManifest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured"
+          },
+          "404": {
+            "description": "Gallery unavailable"
+          },
+          "422": {
+            "description": "Invalid gallery identifier"
+          },
+          "502": {
+            "description": "Upstream or parsing failure"
+          },
+          "503": {
+            "description": "Gallery page count unavailable or upstream service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2669,22 +2757,62 @@
     },
     "/api/archive/import/scan": {
       "get": {
-        "tags": ["archive"],
+        "tags": [
+          "archive"
+        ],
         "summary": "Archive scan status",
         "operationId": "archive_import_scan_status",
         "responses": {
-          "200": {"description": "Current archive scan status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArchiveScanStatus"}}}},
-          "401": {"description": "Basic authentication required when configured", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "200": {
+            "description": "Current archive scan status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveScanStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       },
       "post": {
-        "tags": ["archive"],
+        "tags": [
+          "archive"
+        ],
         "summary": "Scan configured archive storage for legacy sidecars",
         "operationId": "start_archive_import_scan",
         "description": "Starts a state-backed scan of configured ARCHIVE_DIR. Repeated requests while running share the current job. ZIP-only files without state identity are ignored; this operation does not purchase or delete archives.",
         "responses": {
-          "202": {"description": "Scan started or an existing scan is running", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArchiveScanStatus"}}}},
-          "401": {"description": "Basic authentication required when configured", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "202": {
+            "description": "Scan started or an existing scan is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveScanStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Basic authentication required when configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2858,25 +2986,6 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ArchiveStatus"
-                },
-                "example": {
-                  "gid": 12345,
-                  "token": "abcdef0123",
-                  "status": "pending",
-                  "title": "Example gallery",
-                  "or": "org",
-                  "page_count": 12,
-                  "active": true
-                }
-              }
-            }
-          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2915,7 +3024,7 @@
             }
           },
           "503": {
-            "description": "Upstream unavailable or circuit breaker open",
+            "description": "Download job service unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -2926,6 +3035,26 @@
           },
           "403": {
             "description": "Archiver unavailable, credentials missing, or insufficient GP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Manual archive job durably queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuedDownload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid archive request",
             "content": {
               "application/json": {
                 "schema": {
@@ -3420,22 +3549,30 @@
     },
     "/api/archive/{gid}/{token}/update": {
       "post": {
-        "tags": ["archive"],
+        "tags": [
+          "archive"
+        ],
         "summary": "Update an archive to its discovered gallery version",
         "operationId": "archive_update",
-        "description": "Confirm the discovered gallery version and a maximum GP charge. The original archive remains readable during the update.",
+        "description": "Confirms the target version and max_gp cap, durably records a manual version-update job, and then submits the update. The response includes job_id for tracking in /api/download-jobs.",
         "parameters": [
           {
             "name": "gid",
             "in": "path",
             "required": true,
-            "schema": { "type": "integer", "minimum": 1 }
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           },
           {
             "name": "token",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "pattern": "^[0-9a-fA-F]+$" }
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]+$"
+            }
           }
         ],
         "requestBody": {
@@ -3444,11 +3581,24 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["gid", "token", "max_gp"],
+                "required": [
+                  "gid",
+                  "token",
+                  "max_gp"
+                ],
                 "properties": {
-                  "gid": { "type": "integer", "minimum": 1 },
-                  "token": { "type": "string", "pattern": "^[0-9a-fA-F]+$" },
-                  "max_gp": { "type": "integer", "minimum": 0 }
+                  "gid": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "token": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]+$"
+                  },
+                  "max_gp": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
                 }
               }
             }
@@ -3456,22 +3606,59 @@
         },
         "responses": {
           "200": {
-            "description": "Archive update status",
+            "description": "Version update accepted and tracked by job_id",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ArchiveStatus" }
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveVersionUpdateResponse"
+                }
               }
             }
           },
-          "401": { "description": "Basic authentication required when configured" },
-          "403": { "description": "Archiver access is unavailable" },
-          "404": { "description": "Archive entry not found" },
-          "409": { "description": "The version, archive state, or quoted GP cap no longer permits the update" },
-          "415": { "description": "The update request must use application/json" },
-          "422": { "description": "Invalid archive identifier or update confirmation" },
-          "429": { "description": "Upstream rate limit reached" },
-          "502": { "description": "Archive submission or upstream response failed" },
-          "503": { "description": "Upstream is temporarily unavailable or rate limited" }
+          "401": {
+            "description": "Basic authentication required when configured"
+          },
+          "403": {
+            "description": "Archiver access is unavailable"
+          },
+          "404": {
+            "description": "Archive entry not found"
+          },
+          "409": {
+            "description": "The target is stale or the active archive cannot be updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The update request must use application/json"
+          },
+          "422": {
+            "description": "Invalid archive identifier or update confirmation"
+          },
+          "429": {
+            "description": "Upstream rate limit reached"
+          },
+          "502": {
+            "description": "Archive submission or upstream response failed"
+          },
+          "503": {
+            "description": "Upstream is temporarily unavailable or rate limited"
+          },
+          "500": {
+            "description": "Could not submit or persist update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -4804,20 +4991,32 @@
                 "type": "object",
                 "properties": {
                   "archive_update_interval_days": {
-                    "type": ["integer", "null"],
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
                     "minimum": 0,
                     "description": "Archive version check interval in days. The default is 7, 0 disables periodic checks, and null resets the default. Stored in settings.toml."
                   },
                   "archive_auto_update": {
-                    "type": ["boolean", "null"],
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
                     "description": "Automatically download newer archive versions, which may spend GP. Defaults to false. Stored in settings.toml."
                   },
                   "favorites_sync_archive": {
-                    "type": ["boolean", "null"],
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
                     "description": "Automatically archive newly discovered favorites, which may spend GP. Defaults to false. The initial scan only creates a baseline. Stored in settings.toml; environment overrides lock this setting."
                   },
                   "favorites_sync_categories": {
-                    "type": ["string", "null"],
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "description": "Limits auto-archive scope using comma-separated favorite folder IDs 0-9; -ID excludes a folder; empty means all folders. It does not filter the sync scan. Stored in settings.toml; environment overrides lock this setting."
                   }
                 },
@@ -5211,22 +5410,1690 @@
         }
       }
     },
-    "/opds/progression/{gid}/{token}": {"parameters":[{"name":"gid","in":"path","required":true,"schema":{"type":"integer"}},{"name":"token","in":"path","required":true,"schema":{"type":"string"}}],"get":{"summary":"Get OPDS progression","responses":{"200":{"description":"Progression document or empty body","content":{"application/opds-progression+json":{"schema":{"$ref":"#/components/schemas/Progression"}}}}}},"put":{"summary":"Update OPDS progression","requestBody":{"required":true,"content":{"application/opds-progression+json":{"schema":{"$ref":"#/components/schemas/Progression"}}}},"responses":{"200":{"description":"Progression updated or identical retry"},"201":{"description":"Progression created"},"400":{"description":"Invalid progression document"},"401":{"description":"Authentication required"},"409":{"description":"Older or conflicting progression"},"default":{"description":"Problem details"}}}},
-    "/opds/authentication.json": {"get":{"summary":"OPDS Basic authentication document","responses":{"200":{"description":"OPDS Authentication Document","content":{"application/opds-authentication+json":{"schema":{"type":"object"}}}}}}}
+    "/opds/progression/{gid}/{token}": {
+      "parameters": [
+        {
+          "name": "gid",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "token",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Get OPDS progression",
+        "responses": {
+          "200": {
+            "description": "Progression document or empty body",
+            "content": {
+              "application/opds-progression+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressionDocument"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update OPDS progression",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/opds-progression+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressionDocument"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Progression updated or identical retry"
+          },
+          "201": {
+            "description": "Progression created"
+          },
+          "400": {
+            "description": "Invalid progression document"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Older or conflicting progression"
+          },
+          "default": {
+            "description": "Problem details"
+          }
+        }
+      }
+    },
+    "/opds/authentication.json": {
+      "get": {
+        "summary": "OPDS Basic authentication document",
+        "responses": {
+          "200": {
+            "description": "OPDS Authentication Document",
+            "content": {
+              "application/opds-authentication+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscriptions": {
+      "get": {
+        "summary": "List subscriptions",
+        "responses": {
+          "200": {
+            "description": "Subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not list subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": []
+      },
+      "post": {
+        "summary": "Create subscription",
+        "responses": {
+          "201": {
+            "description": "Created subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Favorites authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscriptions/{id}": {
+      "get": {
+        "summary": "Get subscription",
+        "responses": {
+          "200": {
+            "description": "Subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not read subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "summary": "Update subscription",
+        "responses": {
+          "200": {
+            "description": "Updated subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not update subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionPatch"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete subscription",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/subscriptions/{id}/run": {
+      "post": {
+        "summary": "Run subscription",
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An active run already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "responses": {
+        "202": {
+          "description": "Run reserved",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAccepted"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "A run is already active",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAccepted"
+              }
+            }
+          }
+        },
+        "500": {
+          "description": "Could not start run",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Error"
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "Favorites authentication is not configured",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Error"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscriptions/{id}/items": {
+      "get": {
+        "summary": "List cached subscription publications",
+        "responses": {
+          "200": {
+            "description": "Cached publications",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationItemPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not list cached items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "unread",
+                "hidden"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/subscriptions/{id}/items/{provider}/{gid}/{token}": {
+      "patch": {
+        "summary": "Inspect or hide a subscription item",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid item update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Item not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionItemPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscription-items": {
+      "get": {
+        "summary": "List deduplicated cached publications",
+        "responses": {
+          "200": {
+            "description": "Cached publications",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationItemPage"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not list cached items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "subscription_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "unread",
+                "hidden"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/subscription-items/{provider}/{gid}/{token}": {
+      "patch": {
+        "summary": "Update item memberships",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid membership update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Publication not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionMembershipPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/download-jobs": {
+      "get": {
+        "summary": "List durable download jobs",
+        "responses": {
+          "200": {
+            "description": "Download jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadJobList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not list download jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled",
+                "needs_review"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/download-jobs/{id}/cancel": {
+      "post": {
+        "summary": "Cancel queued download job",
+        "responses": {
+          "204": {
+            "description": "Canceled"
+          },
+          "409": {
+            "description": "Job cannot be canceled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/documents": {
+      "get": {
+        "summary": "List local readable documents",
+        "responses": {
+          "200": {
+            "description": "Local documents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentPage"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not list local documents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "linked",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "linked",
+                "unlinked"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "available",
+                "missing",
+                "invalid",
+                "all"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/documents/{id}": {
+      "get": {
+        "summary": "Get local document",
+        "responses": {
+          "200": {
+            "description": "Local document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not read document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Delete local document payload",
+        "responses": {
+          "204": {
+            "description": "File deleted"
+          },
+          "404": {
+            "description": "Document not found"
+          },
+          "409": {
+            "description": "Could not delete file"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/documents/{id}/associate": {
+      "post": {
+        "summary": "Associate local document with publication",
+        "responses": {
+          "200": {
+            "description": "Updated document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid association",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentAssociation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/record": {
+      "delete": {
+        "summary": "Purge missing document record",
+        "responses": {
+          "204": {
+            "description": "Missing record deleted"
+          },
+          "404": {
+            "description": "Document record not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not purge record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/opds/v2.0/documents/{id}/manifest": {
+      "get": {
+        "summary": "Get local document manifest",
+        "responses": {
+          "200": {
+            "description": "Divina manifest for the local document",
+            "content": {
+              "application/divina+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DivinaManifest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Readable document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/stream/documents/{id}/page/{page}": {
+      "get": {
+        "summary": "Read local document page",
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document page not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/image/documents/{id}/thumb": {
+      "get": {
+        "summary": "Get local document cover",
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document cover not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/opds/progression/documents/{id}": {
+      "get": {
+        "summary": "Get local document progression",
+        "responses": {
+          "200": {
+            "description": "Current progression; empty when no local progress exists",
+            "content": {
+              "application/opds-progression+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressionDocument"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "Update local document progression",
+        "responses": {
+          "200": {
+            "description": "Progression updated",
+            "content": {
+              "application/opds-progression+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressionDocument"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Progression created",
+            "content": {
+              "application/opds-progression+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressionDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid progression",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A newer or equal-time progression conflicts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressionDocument"
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Check local document progression",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Progression exists or is empty"
+          },
+          "404": {
+            "description": "Document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/publications/eh/{gid}/{token}/cover": {
+      "get": {
+        "summary": "Get cached or cache upstream publication cover",
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cover unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not cache cover",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/download-jobs/{id}/review": {
+      "post": {
+        "summary": "Resolve a download job requiring manual review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadJobReview"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Review applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not awaiting review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscriptions/{id}/cleanup": {
+      "post": {
+        "summary": "Purge inspected or hidden subscription items from the view",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionCleanup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cleanup completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionCleanupResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cleanup request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/download-jobs/batch": {
+      "post": {
+        "summary": "Explicitly queue up to 200 manual downloads",
+        "description": "All entries are validated before any task is queued. acknowledged must be true. Each accepted entry is queued as a manual download source; this endpoint is never used by automatic subscription dispatch.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Per-item queue results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid batch request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   },
   "components": {
     "parameters": {
-      "f_cats": {"name": "f_cats", "in": "query", "required": false, "schema": {"type": "string"}, "description": "E-Hentai gallery category mask."},
-      "advsearch": {"name": "advsearch", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Enable advanced search filters."},
-      "f_sr": {"name": "f_sr", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Enable minimum rating filtering."},
-      "f_srdd": {"name": "f_srdd", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Minimum gallery rating, used with f_sr=on."},
-      "f_sh": {"name": "f_sh", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Include expunged galleries."},
-      "f_sfl": {"name": "f_sfl", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Disable language filtering."},
-      "f_sfu": {"name": "f_sfu", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Disable uploader filtering."},
-      "f_sft": {"name": "f_sft", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Disable tag filtering."},
-      "f_sp": {"name": "f_sp", "in": "query", "required": false, "schema": {"type": "string", "enum": ["on"]}, "description": "Enable page-count filtering."},
-      "f_spf": {"name": "f_spf", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Minimum page count, used with f_sp=on."},
-      "f_spt": {"name": "f_spt", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Maximum page count, used with f_sp=on."}
+      "f_cats": {
+        "name": "f_cats",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "E-Hentai gallery category mask."
+      },
+      "advsearch": {
+        "name": "advsearch",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "1"
+          ]
+        },
+        "description": "Enable advanced search filters."
+      },
+      "f_sr": {
+        "name": "f_sr",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        "description": "Enable minimum rating filtering."
+      },
+      "f_srdd": {
+        "name": "f_srdd",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Minimum gallery rating, used with f_sr=on."
+      },
+      "f_sh": {
+        "name": "f_sh",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        "description": "Include expunged galleries."
+      },
+      "f_sfl": {
+        "name": "f_sfl",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        "description": "Disable language filtering."
+      },
+      "f_sfu": {
+        "name": "f_sfu",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        "description": "Disable uploader filtering."
+      },
+      "f_sft": {
+        "name": "f_sft",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        "description": "Disable tag filtering."
+      },
+      "f_sp": {
+        "name": "f_sp",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        "description": "Enable page-count filtering."
+      },
+      "f_spf": {
+        "name": "f_spf",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Minimum page count, used with f_sp=on."
+      },
+      "f_spt": {
+        "name": "f_spt",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Maximum page count, used with f_sp=on."
+      }
     },
     "schemas": {
       "HTTPValidationError": {
@@ -5286,9 +7153,6 @@
         "type": "object",
         "properties": {
           "detail": {
-            "type": "string"
-          },
-          "error": {
             "type": "string"
           }
         },
@@ -5372,14 +7236,41 @@
       "ArchiveScanStatus": {
         "type": "object",
         "properties": {
-          "id": {"type": "integer"},
-          "status": {"type": "string", "enum": ["idle", "running", "success", "skipped", "conflict", "error"]},
-          "imported": {"type": "integer", "description": "Number of sidecar files imported"},
-          "skipped": {"type": "integer", "description": "Number of sidecar files skipped"},
-          "conflicts": {"type": "integer", "description": "Number of sidecar files in conflict"},
-          "error": {"type": "string"},
-          "started_at": {"type": "integer"},
-          "completed_at": {"type": "integer"}
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "success",
+              "skipped",
+              "conflict",
+              "error"
+            ]
+          },
+          "imported": {
+            "type": "integer",
+            "description": "Number of sidecar files imported"
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Number of sidecar files skipped"
+          },
+          "conflicts": {
+            "type": "integer",
+            "description": "Number of sidecar files in conflict"
+          },
+          "error": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "integer"
+          },
+          "completed_at": {
+            "type": "integer"
+          }
         }
       },
       "ArchiveStatus": {
@@ -5465,20 +7356,38 @@
           "update_available": {
             "type": "object",
             "description": "Latest known gallery version when it differs from the locally readable version.",
-            "required": ["gid", "token"],
+            "required": [
+              "gid",
+              "token"
+            ],
             "properties": {
-              "gid": { "type": "integer" },
-              "token": { "type": "string" }
+              "gid": {
+                "type": "integer"
+              },
+              "token": {
+                "type": "string"
+              }
             }
           },
           "version_update": {
             "type": "object",
             "description": "Progress or failure of the latest attempted gallery version update.",
             "properties": {
-              "gid": { "type": "integer" },
-              "token": { "type": "string" },
-              "status": { "type": "string" },
-              "error": { "type": ["string", "null"] }
+              "gid": {
+                "type": "integer"
+              },
+              "token": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         }
@@ -5735,13 +7644,51 @@
       },
       "DivinaManifest": {
         "type": "object",
-        "required": ["@context", "metadata", "links", "readingOrder"],
+        "required": [
+          "@context",
+          "metadata",
+          "links",
+          "readingOrder"
+        ],
         "properties": {
-          "@context": {"type": "string", "format": "uri"},
-          "metadata": {"type": "object", "required": ["conformsTo"], "properties": {"conformsTo": {"type": "array", "items": {"type": "string", "format": "uri"}}}},
-          "links": {"type": "array", "items": {"$ref": "#/components/schemas/Link"}},
-          "images": {"type": "array", "items": {"$ref": "#/components/schemas/Link"}},
-          "readingOrder": {"type": "array", "minItems": 1, "items": {"$ref": "#/components/schemas/Link"}}
+          "@context": {
+            "type": "string",
+            "format": "uri"
+          },
+          "metadata": {
+            "type": "object",
+            "required": [
+              "conformsTo"
+            ],
+            "properties": {
+              "conformsTo": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "readingOrder": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          }
         }
       },
       "Publication": {
@@ -6014,81 +7961,1026 @@
             "type": "string"
           }
         }
-      }
-    },
-      "HomePage": {
+      },
+      "SubscriptionInput": {
         "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "favorites",
+              "search",
+              "preset"
+            ]
+          },
+          "query": {
+            "$ref": "#/components/schemas/SubscriptionQuery"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "auto_download": {
+            "type": "boolean"
+          },
+          "download_rules": {
+            "$ref": "#/components/schemas/DownloadRules"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ]
+      },
+      "SubscriptionItemPatch": {
+        "type": "object",
+        "properties": {
+          "inspected": {
+            "type": "boolean"
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SubscriptionMembershipPatch": {
+        "type": "object",
+        "properties": {
+          "subscription_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inspected": {
+            "type": "boolean"
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "subscription_ids"
+        ]
+      },
+      "DocumentAssociation": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gid",
+          "token"
+        ]
+      },
+      "DownloadJobReview": {
+        "type": "object",
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "reconcile",
+              "allow_manual_retry"
+            ]
+          },
+          "acknowledged": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resolution",
+          "acknowledged"
+        ]
+      },
+      "SubscriptionQuery": {
+        "type": "object",
+        "properties": {
+          "keywords": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9
+            },
+            "description": "EH gallery category IDs"
+          },
+          "favorite_categories": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9
+            },
+            "description": "Favorite folder IDs; empty means all"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "newest"
+            ]
+          },
+          "preset": {
+            "type": "string",
+            "enum": [
+              "latest"
+            ]
+          },
+          "max_pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        }
+      },
+      "DownloadRules": {
+        "type": "object",
+        "properties": {
+          "quality": {
+            "type": "string",
+            "enum": [
+              "original",
+              "org",
+              "res"
+            ]
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9
+            },
+            "description": "Allowed EH favorite folder IDs (0..9); applies only to favorites auto-download scope."
+          },
+          "excluded_categories": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9
+            },
+            "description": "Excluded EH favorite folder IDs (0..9); applies only to favorites auto-download scope."
+          }
+        }
+      },
+      "Subscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "favorites",
+              "search",
+              "preset"
+            ]
+          },
+          "query": {
+            "$ref": "#/components/schemas/SubscriptionQuery"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "auto_download": {
+            "type": "boolean"
+          },
+          "download_rules": {
+            "$ref": "#/components/schemas/DownloadRules"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "baseline_complete": {
+            "type": "boolean"
+          },
+          "last_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          }
+        },
         "required": [
           "id",
-          "title"
-        ],
+          "name",
+          "source",
+          "query",
+          "interval_seconds",
+          "enabled",
+          "auto_download",
+          "download_rules",
+          "revision",
+          "baseline_complete",
+          "running"
+        ]
+      },
+      "SubscriptionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subscription"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "SubscriptionRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "complete",
+              "partial",
+              "failed",
+              "interrupted"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "results": {
+            "type": "integer"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "coverage": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "full",
+              "window",
+              "partial"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "PublicationItem": {
+        "type": "object",
+        "properties": {
+          "publication_id": {
+            "type": "integer"
+          },
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "title_jpn": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "cover_url": {
+            "type": "string"
+          },
+          "page_count": {
+            "type": "integer"
+          },
+          "rating": {
+            "type": "number"
+          },
+          "publish_time": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "object"
+          },
+          "inspected": {
+            "type": "boolean"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "document_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "download_status": {
+            "type": "string"
+          },
+          "membership_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subscription_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "publication_id",
+          "gid",
+          "token",
+          "inspected",
+          "hidden",
+          "archived"
+        ]
+      },
+      "PublicationItemPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicationItem"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "per_page": {
+            "type": "integer"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page"
+        ]
+      },
+      "Document": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "missing",
+              "invalid"
+            ]
+          },
+          "size": {
+            "type": "integer"
+          },
+          "mtime_ns": {
+            "type": "integer"
+          },
+          "page_count": {
+            "type": "integer"
+          },
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "association_source": {
+            "type": "string"
+          },
+          "progression_target": {
+            "type": "string",
+            "enum": [
+              "document",
+              "eh"
+            ]
+          },
+          "progression_url": {
+            "type": "string"
+          },
+          "manifest_url": {
+            "type": "string"
+          },
+          "cover_url": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "missing_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "path",
+          "format",
+          "status",
+          "size",
+          "page_count",
+          "manifest_url",
+          "cover_url",
+          "progression_url"
+        ]
+      },
+      "DocumentPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "per_page": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page"
+        ]
+      },
+      "DownloadJob": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled",
+              "needs_review"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "version_update"
+            ]
+          },
+          "root_gid": {
+            "type": "integer"
+          },
+          "root_token": {
+            "type": "string"
+          },
+          "target_gid": {
+            "type": "integer"
+          },
+          "target_token": {
+            "type": "string"
+          },
+          "max_gp": {
+            "type": "integer"
+          }
+        }
+      },
+      "DownloadJobList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DownloadJob"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ProgressionDocument": {
+        "type": "object",
+        "properties": {
+          "modified": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device": {
+            "$ref": "#/components/schemas/ProgressionDevice"
+          },
+          "progression": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        },
+        "required": [
+          "modified",
+          "device",
+          "progression"
+        ]
+      },
+      "ProgressionDevice": {
+        "type": "object",
         "properties": {
           "id": {
             "type": "string",
-            "description": "Page slug identifier ('home' for root page)"
+            "format": "uri"
           },
-          "title": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "SubscriptionPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
             "type": "string",
-            "description": "Page display title"
+            "enum": [
+              "favorites",
+              "search",
+              "preset"
+            ]
           },
+          "query": {
+            "$ref": "#/components/schemas/SubscriptionQuery"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "auto_download": {
+            "type": "boolean"
+          },
+          "download_rules": {
+            "$ref": "#/components/schemas/DownloadRules"
+          }
+        }
+      },
+      "RunAccepted": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "running"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "SubscriptionCleanup": {
+        "type": "object",
+        "properties": {
           "mode": {
             "type": "string",
             "enum": [
-              "publications",
-              "sections",
-              "groups"
-            ],
-            "default": "publications",
-            "description": "Page layout mode"
+              "inspected",
+              "hidden"
+            ]
           },
-          "sections": {
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "mode",
+          "acknowledged"
+        ]
+      },
+      "SubscriptionCleanupResult": {
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "removed"
+        ]
+      },
+      "DownloadBatchItem": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]+$"
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "original",
+              "org",
+              "res"
+            ]
+          },
+          "force": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "gid",
+          "token"
+        ]
+      },
+      "DownloadBatchRequest": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/DownloadBatchItem"
+            }
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "items",
+          "acknowledged"
+        ]
+      },
+      "DownloadBatchResultItem": {
+        "type": "object",
+        "properties": {
+          "gid": {
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "already_active",
+              "error"
+            ]
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gid",
+          "token",
+          "status"
+        ]
+      },
+      "DownloadBatchResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/HomeSection"
+              "$ref": "#/components/schemas/DownloadBatchResultItem"
             }
           }
-        }
-      },
-      "ApiHomePage": {
-        "type": "object",
+        },
         "required": [
-          "id",
-          "title"
-        ],
+          "items"
+        ]
+      },
+      "ReviewAccepted": {
+        "type": "object",
         "properties": {
-          "id": {
+          "status": {
+            "type": "string",
+            "const": "reviewed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "QueuedDownload": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "queued"
+          },
+          "job_id": {
             "type": "string"
           },
-          "title": {
-            "type": "string"
+          "gid": {
+            "type": "integer"
           },
-          "mode": {
+          "token": {
             "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "job_id",
+          "gid",
+          "token"
+        ]
+      },
+      "ArchiveVersionUpdateResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ArchiveStatus"
           },
-          "sections": {
-            "type": "array",
-            "items": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/HomeSection"
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "href": {
-                      "type": "string"
-                    },
-                    "auth_required": {
-                      "type": "boolean"
-                    }
+          {
+            "type": "object",
+            "properties": {
+              "job_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "job_id"
+            ]
+          }
+        ]
+      }
+    },
+    "HomePage": {
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Page slug identifier ('home' for root page)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Page display title"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "publications",
+            "sections",
+            "groups"
+          ],
+          "default": "publications",
+          "description": "Page layout mode"
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/HomeSection"
+          }
+        }
+      }
+    },
+    "ApiHomePage": {
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/HomeSection"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "auth_required": {
+                    "type": "boolean"
                   }
                 }
-              ]
-            }
+              }
+            ]
           }
         }
-      },
-      "Progression": {"type":"object","required":["modified","device","progression"],"properties":{"modified":{"type":"string","format":"date-time"},"device":{"type":"object","required":["id","name"],"properties":{"id":{"type":"string","format":"uri"},"name":{"type":"string","minLength":1}}},"progression":{"type":"number","minimum":0,"maximum":1},"title":{"type":"string"},"references":{"type":"array","items":{"type":"string","format":"uri-reference"}}}},
+      }
+    },
+    "Progression": {
+      "type": "object",
+      "required": [
+        "modified",
+        "device",
+        "progression"
+      ],
+      "properties": {
+        "modified": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "device": {
+          "type": "object",
+          "required": [
+            "id",
+            "name"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uri"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "progression": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri-reference"
+          }
+        }
+      }
+    },
     "securitySchemes": {
       "basicAuth": {
         "type": "http",

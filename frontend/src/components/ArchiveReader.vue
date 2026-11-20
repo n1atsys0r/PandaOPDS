@@ -27,6 +27,11 @@ import {
   shouldRecordProgress,
 } from "@/progression-helper.js";
 import { createScrollLocker } from "@/reader-scroll-lock.js";
+import {
+  archiveProgressionURL,
+  archiveProgressionKey,
+  documentReaderPaths,
+} from "@/subscription-view.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -140,6 +145,10 @@ const isDark = computed(() => {
 
 const galleryKey = computed(() => {
   if (!props.archive) return "";
+  const progressionKey = archiveProgressionKey(props.archive);
+  if (progressionKey) return progressionKey;
+  if (props.archive.document_id || (props.archive.id && !props.archive.gid))
+    return `document:${props.archive.document_id || props.archive.id}`;
   const gid = props.archive.active_gid || props.archive.gid;
   const token = props.archive.active_token || props.archive.token;
   return `${gid}:${token}`;
@@ -205,12 +214,14 @@ function flushRemoteSync() {
   if (pendingSyncIndex !== null && props.archive && pageCount.value > 0) {
     const idx = pendingSyncIndex;
     pendingSyncIndex = null;
-    const gid = props.archive.active_gid || props.archive.gid;
-    const token = props.archive.active_token || props.archive.token;
-    s.putProgression(gid, token, {
-      pageIndex: idx,
-      pageCount: pageCount.value,
-    }).catch(() => {});
+    const path = archiveProgressionURL(props.archive);
+    const key = archiveProgressionKey(props.archive);
+    if (path)
+      s.putProgressionURL(
+        path,
+        { pageIndex: idx, pageCount: pageCount.value },
+        key,
+      ).catch(() => {});
   }
 }
 
@@ -255,10 +266,14 @@ function savePageIndex(
       // ignore storage quota errors
     }
   }
-  const gid = props.archive?.active_gid || props.archive?.gid;
-  const token = props.archive?.active_token || props.archive?.token;
-  if (gid && token && pageCount.value > 0) {
-    s.updateLocalProgress(gid, token, clamped, pageCount.value, modIso);
+  const progressionKey = archiveProgressionKey(props.archive);
+  if (progressionKey && !progressionKey.startsWith("document:")) {
+    const separator = progressionKey.indexOf(":");
+    const gid = progressionKey.slice(0, separator);
+    const token = progressionKey.slice(separator + 1);
+    if (gid && token && pageCount.value > 0) {
+      s.updateLocalProgress(gid, token, clamped, pageCount.value, modIso);
+    }
   }
   if (!skipRemote) {
     scheduleRemoteSync(clamped);
@@ -271,6 +286,8 @@ function streamUrlFor(idx) {
   if (Array.isArray(a.reading_order) && a.reading_order[idx]?.href) {
     return a.reading_order[idx].href;
   }
+  const docID = a.document_id || (!a.gid ? a.id : "");
+  if (docID) return documentReaderPaths(docID, props.psePageBase + idx).stream;
   const gid = a.active_gid || a.gid;
   const token = a.active_token || a.token;
   const pageNum = props.psePageBase + idx;
@@ -283,6 +300,8 @@ function thumbUrlFor(idx) {
   if (Array.isArray(a.reading_order) && a.reading_order[idx]?.thumbnailHref) {
     return a.reading_order[idx].thumbnailHref;
   }
+  const docID = a.document_id || (!a.gid ? a.id : "");
+  if (docID) return streamUrlFor(idx);
   const gid = a.active_gid || a.gid;
   const token = a.active_token || a.token;
   const pageNum = props.psePageBase + idx;
@@ -821,12 +840,14 @@ async function startSession() {
   }
 
   // Reconcile with server progression asynchronously if user did not provide an explicit starting page and not incognito
-  if (!hasExplicitStart && gid && token && !isIncognito.value) {
+  const progressionURL = archiveProgressionURL(props.archive);
+  const progressionKey = archiveProgressionKey(props.archive);
+  if (!hasExplicitStart && progressionURL && !isIncognito.value) {
     const sessionCapture = sessionSeq;
     const localSaved = readSavedProgress();
     const localMod = localSaved?.modified || 0;
 
-    s.getProgression(gid, token)
+    s.getProgressionURL(progressionURL, progressionKey)
       .then((remoteDoc) => {
         if (sessionCapture !== sessionSeq || !props.open || !remoteDoc) return;
         const remoteMod = remoteDoc.modified
@@ -856,10 +877,11 @@ async function startSession() {
             }
           }
         } else if (localSaved && localMod > remoteMod && userHasNavigated) {
-          s.putProgression(gid, token, {
-            pageIndex: localSaved.page,
-            pageCount: pageCount.value,
-          }).catch(() => {});
+          s.putProgressionURL(
+            progressionURL,
+            { pageIndex: localSaved.page, pageCount: pageCount.value },
+            progressionKey,
+          ).catch(() => {});
         }
       })
       .catch(() => {});

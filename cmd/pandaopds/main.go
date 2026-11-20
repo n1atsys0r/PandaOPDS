@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 	"pandaopds/internal/app"
-	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
+	"pandaopds/internal/document"
+	"pandaopds/internal/migration"
+	"pandaopds/internal/storage"
 )
 
 func main() {
@@ -24,14 +27,31 @@ func main() {
 		if len(os.Args) == 4 {
 			sidecarSource = os.Args[3]
 		}
-		report, err := archive.ImportArchive(sidecarSource, settings.ArchiveStateDir, settings.ArchiveDir)
+		databasePath := settings.DatabasePath
+		if databasePath == "" {
+			databasePath = filepath.Join(filepath.Dir(settings.ArchiveStateDir), "pandaopds.db")
+		}
+		db, err := storage.Open(databasePath)
 		if err != nil {
+			log.Fatalf("open SQLite database: %v", err)
+		}
+		defer db.Close()
+		if err = migration.ImportLegacyArchive(db, sidecarSource, settings.ArchiveStateDir); err != nil {
 			log.Fatalf("import archive sidecars: %v", err)
 		}
-		if err := archive.CheckpointArchiveIndex(settings.ArchiveDir, settings.ArchiveStateDir); err != nil {
-			log.Fatalf("save imported archive index: %v", err)
+		docs, err := document.New(db, settings.ArchiveDir)
+		if err != nil {
+			log.Fatalf("open document scanner: %v", err)
 		}
-		fmt.Printf("Archive import: imported_state=%d imported_gallery=%d imported_cover=%d migrated_payloads=%d skipped=%d conflicts=%d\n", report.State, report.Gallery, report.Cover, report.Payloads, report.Skipped, report.Conflicts)
+		report, err := docs.Scan(context.Background())
+		if err != nil {
+			log.Fatalf("scan local archive documents: %v", err)
+		}
+		linked, err := migration.LinkLegacyDocuments(db, settings.ArchiveDir)
+		if err != nil {
+			log.Fatalf("link imported legacy documents: %v", err)
+		}
+		fmt.Printf("SQLite archive migration complete: documents_found=%v legacy_documents_linked=%d source=%s database=%s\n", report["documents_found"], linked, sidecarSource, databasePath)
 		return
 	}
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC)

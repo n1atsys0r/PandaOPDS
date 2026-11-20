@@ -1,6 +1,7 @@
 package progression
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,12 +9,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	"pandaopds/internal/storage"
 )
 
-const bucket = "progression-v1"
 const MaxWorks = 10000
 
 var ErrConflict = errors.New("progression conflicts with newer or equal-time state")
@@ -30,309 +32,264 @@ type Document struct {
 	Title       *string   `json:"title,omitempty"`
 	References  []string  `json:"references,omitempty"`
 }
-
 type Snapshot struct {
-	Title       string   `json:"title"`
-	TitleJPN    string   `json:"title_jpn,omitempty"`
-	Category    string   `json:"category,omitempty"`
-	CoverURL    string   `json:"cover_url,omitempty"`
-	PageCount   *int     `json:"page_count,omitempty"`
-	Rating      float64  `json:"rating,omitempty"`
-	PublishTime string   `json:"publish_time,omitempty"`
-	Language    string   `json:"language,omitempty"`
-	Expunged    bool     `json:"expunged,omitempty"`
+	Title       string  `json:"title"`
+	TitleJPN    string  `json:"title_jpn,omitempty"`
+	Category    string  `json:"category,omitempty"`
+	CoverURL    string  `json:"cover_url,omitempty"`
+	PageCount   *int    `json:"page_count,omitempty"`
+	Rating      float64 `json:"rating,omitempty"`
+	PublishTime string  `json:"publish_time,omitempty"`
+	Language    string  `json:"language,omitempty"`
+	Expunged    bool    `json:"expunged,omitempty"`
 }
-
 type stored struct {
-	GID      int       `json:"gid"`
-	Token    string    `json:"token"`
-	Doc      Document  `json:"doc"`
-	Written  int64     `json:"written"`
-	Snapshot *Snapshot `json:"snapshot,omitempty"`
+	GID       int             `json:"gid"`
+	Token     string          `json:"token"`
+	Doc       Document        `json:"doc"`
+	Written   int64           `json:"written"`
+	Snapshot  *Snapshot       `json:"snapshot,omitempty"`
+	LegacyRaw json.RawMessage `json:"-"`
 }
-type Store struct{ db *bolt.DB }
+type Store struct {
+	db      *sql.DB
+	owner   *storage.DB
+	writeMu sync.Mutex
+}
 
+// Open is retained for callers/tests that own a standalone progression store.
+// The server instead injects its process-wide SQLite database with OpenDB.
 func Open(stateDir string) (*Store, error) {
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, err
 	}
-	db, err := bolt.Open(filepath.Join(stateDir, "opds-progression.db"), 0600, &bolt.Options{Timeout: time.Second})
+	db, err := storage.Open(filepath.Join(stateDir, "pandaopds.db"))
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db}
-	err = db.Update(func(tx *bolt.Tx) error { _, e := tx.CreateBucketIfNotExists([]byte(bucket)); return e })
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := db.Update(func(tx *bolt.Tx) error { return rebuildLRUIndex(tx.Bucket([]byte(bucket))) }); err != nil {
+	s := &Store{db: db.DB, owner: db}
+	if err = s.ImportBolt(filepath.Join(stateDir, "opds-progression.db")); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
 }
-func (s *Store) Close() error               { return s.db.Close() }
-func identity(gid int, token string) string { return strconv.Itoa(gid) + "/" + strings.ToLower(token) }
-func recKey(gid int, token string) []byte {
-	return []byte("r/" + identity(gid, token))
+func OpenDB(db *storage.DB, legacyPath string) (*Store, error) {
+	s := &Store{db: db.DB}
+	if legacyPath != "" {
+		if err := s.ImportBolt(legacyPath); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
-func lruKey(written int64, id string) []byte { return []byte(fmt.Sprintf("u/%020d/%s", written, id)) }
-func rebuildLRUIndex(b *bolt.Bucket) error {
-	keys := [][]byte{}
-	c := b.Cursor()
-	for k, _ := c.Seek([]byte("u/")); k != nil && strings.HasPrefix(string(k), "u/"); k, _ = c.Next() {
-		keys = append(keys, append([]byte(nil), k...))
-	}
-	for _, k := range keys {
-		if err := b.Delete(k); err != nil {
-			return err
-		}
-	}
-	c = b.Cursor()
-	for k, v := c.Seek([]byte("r/")); k != nil && strings.HasPrefix(string(k), "r/"); k, v = c.Next() {
-		var x stored
-		if err := json.Unmarshal(v, &x); err != nil {
-			return err
-		}
-		id := strings.TrimPrefix(string(k), "r/")
-		if err := b.Put(lruKey(x.Written, id), []byte{}); err != nil {
-			return err
-		}
+func (s *Store) Close() error {
+	if s.owner != nil {
+		return s.owner.Close()
 	}
 	return nil
 }
-func aliasKey(gid int, token string) []byte { return []byte("a/" + identity(gid, token)) }
-func readAlias(b *bolt.Bucket, gid int, token string) (int, string) {
-	v := b.Get(aliasKey(gid, token))
-	if v == nil {
-		return gid, token
+func identity(gid int, token string) string { return strconv.Itoa(gid) + "/" + strings.ToLower(token) }
+func (s *Store) canonical(gid int, token string) (int, string, error) {
+	var target string
+	err := s.db.QueryRow(`SELECT target_id FROM progression_aliases WHERE alias=? AND target_type='eh'`, identity(gid, token)).Scan(&target)
+	if err == sql.ErrNoRows {
+		return gid, strings.ToLower(token), nil
 	}
-	p := strings.SplitN(string(v), "/", 2)
+	if err != nil {
+		return 0, "", err
+	}
+	p := strings.SplitN(target, "/", 2)
 	if len(p) != 2 {
-		return gid, token
+		return gid, strings.ToLower(token), nil
 	}
-	n, e := strconv.Atoi(p[0])
+	g, e := strconv.Atoi(p[0])
 	if e != nil {
-		return gid, token
+		return gid, strings.ToLower(token), nil
 	}
-	return n, p[1]
+	return g, p[1], nil
 }
 func (s *Store) Observe(gid int, token string, activeGID int, activeToken string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if gid < 1 || token == "" || activeGID < 1 || activeToken == "" {
 		return errors.New("invalid gallery identity")
 	}
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		if err := observeBucket(b, gid, token, activeGID, activeToken); err != nil {
-			return err
-		}
-		return trimAliases(b)
-	})
-}
-func observeBucket(b *bolt.Bucket, gid int, token string, activeGID int, activeToken string) error {
-	token, activeToken = strings.ToLower(token), strings.ToLower(activeToken)
-	if gid < 1 || token == "" || activeGID < 1 || activeToken == "" {
-		return errors.New("invalid gallery identity")
-	}
-	oldG, oldT := readAlias(b, gid, token)
-	newG, newT := readAlias(b, activeGID, activeToken)
-	if oldG == newG && oldT == newT {
-		return nil
-	}
-	oldIdentity, newIdentity := identity(oldG, oldT), identity(newG, newT)
-	oldKey, newKey := recKey(oldG, oldT), recKey(newG, newT)
-	oldRaw, newRaw := b.Get(oldKey), b.Get(newKey)
-	var chosen *stored
-	if oldRaw != nil && (newRaw == nil || prefer(oldRaw, newRaw)) {
-		var x stored
-		if err := json.Unmarshal(oldRaw, &x); err != nil {
-			return err
-		}
-		chosen = &x
-	} else if newRaw != nil {
-		var x stored
-		if err := json.Unmarshal(newRaw, &x); err != nil {
-			return err
-		}
-		chosen = &x
-	}
-	for i, raw := range [][]byte{oldRaw, newRaw} {
-		if raw == nil {
-			continue
-		}
-		var x stored
-		if err := json.Unmarshal(raw, &x); err != nil {
-			return err
-		}
-		idx := oldIdentity
-		if i == 1 {
-			idx = newIdentity
-		}
-		if err := b.Delete(lruKey(x.Written, idx)); err != nil {
-			return err
-		}
-	}
-	if chosen != nil {
-		merged, err := json.Marshal(chosen)
-		if err != nil {
-			return err
-		}
-		if err = b.Put(newKey, merged); err != nil {
-			return err
-		}
-		if err = b.Put(lruKey(chosen.Written, newIdentity), []byte{}); err != nil {
-			return err
-		}
-	}
-	if err := b.Delete(oldKey); err != nil {
-		return err
-	}
-	oldProtected := b.Get([]byte("p/"+oldIdentity)) != nil
-	newProtected := b.Get([]byte("p/"+newIdentity)) != nil
-	updates := [][]byte{}
-	cur := b.Cursor()
-	for k, v := cur.Seek([]byte("a/")); k != nil && strings.HasPrefix(string(k), "a/"); k, v = cur.Next() {
-		if string(v) == oldIdentity {
-			updates = append(updates, append([]byte(nil), k...))
-		}
-	}
-	for _, k := range updates {
-		if err := b.Put(k, []byte(newIdentity)); err != nil {
-			return err
-		}
-	}
-	if oldIdentity != newIdentity {
-		if oldProtected || newProtected {
-			if err := b.Put([]byte("p/"+newIdentity), []byte{1}); err != nil {
-				return err
-			}
-		}
-		if err := b.Delete([]byte("p/" + oldIdentity)); err != nil {
-			return err
-		}
-	}
-	if err := b.Put(aliasKey(gid, token), []byte(newIdentity)); err != nil {
-		return err
-	}
-	return b.Put(aliasKey(activeGID, activeToken), []byte(newIdentity))
-}
-func prefer(a, b []byte) bool {
-	var x, y stored
-	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
-		return string(a) < string(b)
-	}
-	if x.Doc.Modified.Equal(y.Doc.Modified) {
-		return string(a) < string(b)
-	}
-	return x.Doc.Modified.After(y.Doc.Modified)
-}
-func (s *Store) Get(gid int, token string) ([]Document, error) {
 	token = strings.ToLower(token)
-	var out []Document
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		g, t := readAlias(b, gid, token)
-		key := "r/" + identity(g, t)
-		v := b.Get([]byte(key))
-		if v == nil {
-			return nil
-		}
-		var x stored
-		if e := json.Unmarshal(v, &x); e != nil {
-			return e
-		}
-		x.Doc.References = filterRefs(x.Doc.References, gid, token, x.GID, x.Token)
-		out = append(out, x.Doc)
-		return nil
-	})
-	return out, err
-}
-func filterRefs(refs []string, requestGID int, requestToken string, sourceGID int, sourceToken string) []string {
-	if requestGID == sourceGID && requestToken == sourceToken {
-		return refs
+	activeToken = strings.ToLower(activeToken)
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
 	}
-	return []string{}
-}
-func (s *Store) Put(gid int, token string, d Document) (int, Document, error) {
-	token = strings.ToLower(token)
-	status := 201
-	result := Document{}
-	err := s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		g, t := readAlias(b, gid, token)
-		archived := groupArchived(b, g, t)
-		key := recKey(g, t)
-		var old stored
-		hadOld := false
-		if v := b.Get(key); v != nil {
-			hadOld = true
-			if e := json.Unmarshal(v, &old); e != nil {
-				return e
-			}
-			if d.Modified.Before(old.Doc.Modified) {
-				return ErrConflict
-			}
-			if d.Modified.Equal(old.Doc.Modified) {
-				a, _ := json.Marshal(d)
-				c, _ := json.Marshal(old.Doc)
-				if string(a) != string(c) {
-					return ErrConflict
-				}
-				status = 200
-				result = old.Doc
-				result.References = filterRefs(result.References, gid, token, old.GID, old.Token)
-				return nil
-			}
-			status = 200
-		} else if !archived {
-			if err := makeRoom(b, 1); err != nil {
-				return err
-			}
-		}
-		x := stored{GID: gid, Token: token, Doc: d, Written: time.Now().UnixNano(), Snapshot: old.Snapshot}
-		raw, e := json.Marshal(x)
+	defer tx.Rollback()
+	og, ot, e := s.canonicalTx(tx, gid, token)
+	if e != nil {
+		return e
+	}
+	ng, nt := og, ot
+	if gid != activeGID || token != activeToken {
+		ng, nt, e = s.canonicalTx(tx, activeGID, activeToken)
 		if e != nil {
 			return e
 		}
-		if err := b.Put(key, raw); err != nil {
-			return err
+	}
+	oldID, newID := identity(og, ot), identity(ng, nt)
+	if oldID != newID {
+		if e = mergeRecords(tx, oldID, newID); e != nil {
+			return e
 		}
-		if hadOld {
-			if err := b.Delete(lruKey(old.Written, identity(g, t))); err != nil {
-				return err
+		_, e = tx.Exec(`UPDATE progression_aliases SET target_id=? WHERE target_type='eh' AND target_id=?`, newID, oldID)
+		if e != nil {
+			return e
+		}
+		var n int
+		_ = tx.QueryRow(`SELECT COUNT(*) FROM progression_protected WHERE target_type='eh' AND target_id IN (?,?)`, oldID, newID).Scan(&n)
+		if n > 0 {
+			_, e = tx.Exec(`INSERT OR IGNORE INTO progression_protected VALUES('eh',?)`, newID)
+			if e != nil {
+				return e
 			}
 		}
-		if err := b.Put(lruKey(x.Written, identity(g, t)), []byte{}); err != nil {
-			return err
+		_, e = tx.Exec(`DELETE FROM progression_protected WHERE target_type='eh' AND target_id=?`, oldID)
+		if e != nil {
+			return e
 		}
-		result = d
-		return nil
-	})
-	return status, result, err
+	}
+	for _, x := range []struct {
+		g int
+		t string
+	}{{gid, token}, {activeGID, activeToken}} {
+		_, e = tx.Exec(`INSERT INTO progression_aliases(alias,target_id,target_type) VALUES(?,?,'eh') ON CONFLICT(alias) DO UPDATE SET target_id=excluded.target_id WHERE progression_aliases.target_id<>excluded.target_id`, identity(x.g, x.t), newID)
+		if e != nil {
+			return e
+		}
+	}
+	if e = trimAliases(tx); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
-
-func (s *Store) SetSnapshot(gid int, token string, snap Snapshot) error {
-	token = strings.ToLower(token)
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		g, t := readAlias(b, gid, token)
-		key := recKey(g, t)
-		v := b.Get(key)
-		if v == nil {
-			return nil
+func (s *Store) canonicalTx(tx *sql.Tx, gid int, token string) (int, string, error) {
+	var target string
+	e := tx.QueryRow(`SELECT target_id FROM progression_aliases WHERE alias=? AND target_type='eh'`, identity(gid, token)).Scan(&target)
+	if e == sql.ErrNoRows {
+		return gid, strings.ToLower(token), nil
+	}
+	if e != nil {
+		return 0, "", e
+	}
+	p := strings.SplitN(target, "/", 2)
+	if len(p) != 2 {
+		return gid, strings.ToLower(token), nil
+	}
+	g, e := strconv.Atoi(p[0])
+	if e != nil {
+		return gid, strings.ToLower(token), nil
+	}
+	return g, p[1], nil
+}
+func (s *Store) Get(gid int, token string) ([]Document, error) {
+	g, t, e := s.canonical(gid, token)
+	if e != nil {
+		return nil, e
+	}
+	var d Document
+	var mod, dev, refs, storedToken string
+	var storedGID int
+	var title sql.NullString
+	e = s.db.QueryRow(`SELECT gid,token,modified,device_json,progression,title,references_json FROM progressions WHERE target_type='eh' AND target_id=?`, identity(g, t)).Scan(&storedGID, &storedToken, &mod, &dev, &d.Progression, &title, &refs)
+	if e == sql.ErrNoRows {
+		return nil, nil
+	}
+	if e != nil {
+		return nil, e
+	}
+	d.Modified, _ = time.Parse(time.RFC3339Nano, mod)
+	if title.Valid {
+		d.Title = &title.String
+	}
+	_ = json.Unmarshal([]byte(dev), &d.Device)
+	_ = json.Unmarshal([]byte(refs), &d.References)
+	if storedGID != gid || storedToken != strings.ToLower(token) {
+		d.References = []string{}
+	}
+	return []Document{d}, nil
+}
+func (s *Store) Put(gid int, token string, d Document) (int, Document, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, e := s.db.Begin()
+	if e != nil {
+		return 0, Document{}, e
+	}
+	defer tx.Rollback()
+	g, t, e := s.canonicalTx(tx, gid, token)
+	if e != nil {
+		return 0, Document{}, e
+	}
+	id := identity(g, t)
+	var old Document
+	var oldModified string
+	var oldGID int
+	var oldToken string
+	var dev, refs string
+	var snap sql.NullString
+	var written int64
+	e = tx.QueryRow(`SELECT gid,token,modified,device_json,progression,title,references_json,written,snapshot_json FROM progressions WHERE target_type='eh' AND target_id=?`, id).Scan(&oldGID, &oldToken, &oldModified, &dev, &old.Progression, &old.Title, &refs, &written, &snap)
+	had := e == nil
+	if e != nil && e != sql.ErrNoRows {
+		return 0, Document{}, e
+	}
+	if had {
+		old.Modified, _ = time.Parse(time.RFC3339Nano, oldModified)
+		_ = json.Unmarshal([]byte(dev), &old.Device)
+		_ = json.Unmarshal([]byte(refs), &old.References)
+		if d.Modified.Before(old.Modified) {
+			return 0, Document{}, ErrConflict
 		}
-		var x stored
-		if err := json.Unmarshal(v, &x); err != nil {
-			return err
+		if d.Modified.Equal(old.Modified) {
+			a, _ := json.Marshal(d)
+			b, _ := json.Marshal(old)
+			if string(a) != string(b) {
+				return 0, Document{}, ErrConflict
+			}
+			if oldGID != gid || oldToken != strings.ToLower(token) {
+				old.References = []string{}
+			}
+			return 200, old, nil
 		}
-		x.Snapshot = &snap
-		raw, err := json.Marshal(x)
-		if err != nil {
-			return err
+	}
+	status := 201
+	if had {
+		status = 200
+	}
+	var protected int
+	_ = tx.QueryRow(`SELECT COUNT(*) FROM progression_protected WHERE target_type='eh' AND target_id=?`, id).Scan(&protected)
+	if !had && protected == 0 {
+		if e = makeRoom(tx, 1); e != nil {
+			return 0, Document{}, e
 		}
-		return b.Put(key, raw)
-	})
+	}
+	devBytes, _ := json.Marshal(d.Device)
+	refsBytes, _ := json.Marshal(d.References)
+	if len(refsBytes) == 0 {
+		refsBytes = []byte("[]")
+	}
+	var snapValue any
+	if snap.Valid {
+		snapValue = snap.String
+	}
+	_, e = tx.Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,title,references_json,written,snapshot_json) VALUES('eh',?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_type,target_id) DO UPDATE SET gid=excluded.gid,token=excluded.token,modified=excluded.modified,device_json=excluded.device_json,progression=excluded.progression,title=excluded.title,references_json=excluded.references_json,written=excluded.written`, id, gid, strings.ToLower(token), d.Modified.UTC().Format(time.RFC3339Nano), string(devBytes), d.Progression, d.Title, string(refsBytes), time.Now().UnixNano(), snapValue)
+	if e != nil {
+		return 0, Document{}, e
+	}
+	return status, d, tx.Commit()
+}
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 type HistoryItem struct {
@@ -343,281 +300,484 @@ type HistoryItem struct {
 	Snapshot *Snapshot `json:"snapshot,omitempty"`
 }
 
-func MatchReadingStatus(hasRecord bool, progression float64, filter string) bool {
-	switch strings.ToLower(filter) {
+type HistoryQuery struct {
+	Offset, Limit           int
+	ReadingStatus, Category string
+}
+
+// ListHistory applies the production filters in SQL so pagination does not
+// decode or scan every progression record in Go.
+func (s *Store) ListHistoryQuery(q HistoryQuery) ([]HistoryItem, int, error) {
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	where := ` WHERE target_type='eh'`
+	args := []any{}
+	switch strings.ToLower(q.ReadingStatus) {
 	case "unread":
-		return !hasRecord || progression < 0.01
+		where += ` AND progression<0.01`
 	case "reading":
-		return hasRecord && progression >= 0.01 && progression < 0.95
+		where += ` AND progression>=0.01 AND progression<0.95`
 	case "completed":
-		return hasRecord && progression >= 0.95
+		where += ` AND progression>=0.95`
+	}
+	if q.Category != "" {
+		where += ` AND lower(CASE WHEN snapshot_category='' THEN 'Misc' ELSE snapshot_category END)=lower(?)`
+		args = append(args, q.Category)
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM progressions`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	args = append(args, q.Limit, q.Offset)
+	rows, err := s.db.Query(`SELECT gid,token,written,modified,device_json,progression,title,references_json,snapshot_json FROM progressions`+where+` ORDER BY written DESC LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []HistoryItem{}
+	for rows.Next() {
+		var x HistoryItem
+		var mod, dev, refs string
+		var title, snap sql.NullString
+		if err = rows.Scan(&x.GID, &x.Token, &x.Written, &mod, &dev, &x.Doc.Progression, &title, &refs, &snap); err != nil {
+			return nil, 0, err
+		}
+		x.Doc.Modified, _ = time.Parse(time.RFC3339Nano, mod)
+		_ = json.Unmarshal([]byte(dev), &x.Doc.Device)
+		_ = json.Unmarshal([]byte(refs), &x.Doc.References)
+		if title.Valid {
+			x.Doc.Title = &title.String
+		}
+		if snap.Valid {
+			var v Snapshot
+			if json.Unmarshal([]byte(snap.String), &v) == nil {
+				x.Snapshot = &v
+			}
+		}
+		out = append(out, x)
+	}
+	return out, total, rows.Err()
+}
+
+func MatchReadingStatus(has bool, p float64, f string) bool {
+	switch strings.ToLower(f) {
+	case "unread":
+		return !has || p < .01
+	case "reading":
+		return has && p >= .01 && p < .95
+	case "completed":
+		return has && p >= .95
 	default:
 		return true
 	}
 }
-
 func (s *Store) ListHistory(offset, limit int) ([]HistoryItem, int, error) {
 	return s.ListHistoryFiltered(offset, limit, nil)
 }
-
-func (s *Store) ListHistoryFiltered(offset, limit int, predicate func(item HistoryItem) bool) ([]HistoryItem, int, error) {
+func (s *Store) ListHistoryFiltered(offset, limit int, predicate func(HistoryItem) bool) ([]HistoryItem, int, error) {
 	if offset < 0 {
 		offset = 0
 	}
 	if limit <= 0 {
 		limit = 20
 	}
-	var items []HistoryItem
+	rows, e := s.db.Query(`SELECT gid,token,written,modified,device_json,progression,title,references_json,snapshot_json FROM progressions WHERE target_type='eh' ORDER BY written DESC`)
+	if e != nil {
+		return nil, 0, e
+	}
+	defer rows.Close()
+	items := []HistoryItem{}
 	total := 0
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		c := b.Cursor()
-		k, _ := c.Seek([]byte("u0"))
-		if k == nil || !strings.HasPrefix(string(k), "u/") {
-			k, _ = c.Prev()
+	for rows.Next() {
+		var x HistoryItem
+		var mod, dev, refs string
+		var title sql.NullString
+		var snap sql.NullString
+		if e = rows.Scan(&x.GID, &x.Token, &x.Written, &mod, &dev, &x.Doc.Progression, &title, &refs, &snap); e != nil {
+			return nil, 0, e
 		}
-		for ; k != nil && strings.HasPrefix(string(k), "u/"); k, _ = c.Prev() {
-			parts := strings.SplitN(string(k)[2:], "/", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			id := parts[1]
-			v := b.Get([]byte("r/" + id))
-			if v == nil {
-				continue
-			}
-			var x stored
-			if err := json.Unmarshal(v, &x); err != nil {
-				continue
-			}
-			item := HistoryItem{
-				GID:      x.GID,
-				Token:    x.Token,
-				Written:  x.Written,
-				Doc:      x.Doc,
-				Snapshot: x.Snapshot,
-			}
-			if predicate != nil && !predicate(item) {
-				continue
-			}
-			total++
-			if total <= offset {
-				continue
-			}
-			if len(items) < limit {
-				items = append(items, item)
+		x.Doc.Modified, _ = time.Parse(time.RFC3339Nano, mod)
+		_ = json.Unmarshal([]byte(dev), &x.Doc.Device)
+		_ = json.Unmarshal([]byte(refs), &x.Doc.References)
+		if title.Valid {
+			x.Doc.Title = &title.String
+		}
+		if snap.Valid {
+			var s Snapshot
+			if json.Unmarshal([]byte(snap.String), &s) == nil {
+				x.Snapshot = &s
 			}
 		}
-		return nil
-	})
-	return items, total, err
+		if predicate != nil && !predicate(x) {
+			continue
+		}
+		if total >= offset && len(items) < limit {
+			items = append(items, x)
+		}
+		total++
+	}
+	return items, total, rows.Err()
 }
-
-// GetProgressions returns a snapshot map of work identity ("{gid}/{token}") to latest progression.
 func (s *Store) GetProgressions() (map[string]float64, error) {
-	if s == nil || s.db == nil {
-		return map[string]float64{}, nil
+	m := map[string]float64{}
+	rows, e := s.db.Query(`SELECT target_id,progression FROM progressions WHERE target_type='eh'`)
+	if e != nil {
+		return nil, e
 	}
-	res := make(map[string]float64)
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		if b == nil {
-			return nil
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var p float64
+		if e = rows.Scan(&k, &p); e != nil {
+			return nil, e
 		}
-		c := b.Cursor()
-		for k, v := c.Seek([]byte("r/")); k != nil && strings.HasPrefix(string(k), "r/"); k, v = c.Next() {
-			var x stored
-			if err := json.Unmarshal(v, &x); err == nil {
-				key := fmt.Sprintf("%d/%s", x.GID, strings.ToLower(x.Token))
-				res[key] = x.Doc.Progression
-			}
+		m[k] = p
+	}
+	if e = rows.Err(); e != nil {
+		rows.Close()
+		return nil, e
+	}
+	if e = rows.Close(); e != nil {
+		return nil, e
+	}
+	rows, e = s.db.Query(`SELECT alias,target_id FROM progression_aliases WHERE target_type='eh'`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a, t string
+		if e = rows.Scan(&a, &t); e != nil {
+			return nil, e
 		}
-		for k, v := c.Seek([]byte("a/")); k != nil && strings.HasPrefix(string(k), "a/"); k, v = c.Next() {
-			fromKey := strings.TrimPrefix(string(k), "a/")
-			targetKey := string(v)
-			if p, ok := res[targetKey]; ok {
-				res[fromKey] = p
-			}
+		if p, ok := m[t]; ok {
+			m[a] = p
 		}
-		return nil
-	})
-	return res, err
+	}
+	e = rows.Err()
+	return m, errors.Join(e, rows.Close())
 }
-func makeRoom(b *bolt.Bucket, additional int) error {
-	protected := map[string]bool{}
-	_ = b.ForEach(func(k, v []byte) error {
-		if strings.HasPrefix(string(k), "p/") {
-			protected[strings.TrimPrefix(string(k), "p/")] = true
-		}
-		return nil
-	})
-	count := 0
-	c := b.Cursor()
-	for k, _ := c.Seek([]byte("u/")); k != nil && strings.HasPrefix(string(k), "u/"); k, _ = c.Next() {
-		parts := strings.SplitN(string(k)[2:], "/", 2)
-		if len(parts) == 2 && !protected[parts[1]] {
-			count++
-		}
+func makeRoom(tx *sql.Tx, additional int) error {
+	var n int
+	if e := tx.QueryRow(`SELECT COUNT(*) FROM progressions p WHERE p.target_type='eh' AND NOT EXISTS(SELECT 1 FROM progression_protected x WHERE x.target_type=p.target_type AND x.target_id=p.target_id)`).Scan(&n); e != nil {
+		return e
 	}
-	if count+additional <= MaxWorks {
+	need := n + additional - MaxWorks
+	if need <= 0 {
 		return nil
 	}
-	need := count + additional - MaxWorks
-	victims := make([][]byte, 0, need)
-	cur := b.Cursor()
-	for k, _ := cur.Seek([]byte("u/")); k != nil && strings.HasPrefix(string(k), "u/") && len(victims) < need; k, _ = cur.Next() {
-		parts := strings.SplitN(string(k)[2:], "/", 2)
-		if len(parts) == 2 && !protected[parts[1]] {
-			victims = append(victims, append([]byte(nil), k...))
-		}
+	rows, e := tx.Query(`SELECT target_id FROM progressions p WHERE p.target_type='eh' AND NOT EXISTS(SELECT 1 FROM progression_protected x WHERE x.target_type=p.target_type AND x.target_id=p.target_id) ORDER BY written LIMIT ?`, need)
+	if e != nil {
+		return e
 	}
-	if len(victims) < need {
+	keys := []string{}
+	for rows.Next() {
+		var k string
+		if e = rows.Scan(&k); e != nil {
+			rows.Close()
+			return e
+		}
+		keys = append(keys, k)
+	}
+	rows.Close()
+	if len(keys) < need {
 		return errors.New("progression storage capacity reached")
 	}
-	for _, victim := range victims {
-		parts := strings.SplitN(string(victim)[2:], "/", 2)
-		id := parts[1]
-		if err := b.Delete(victim); err != nil {
-			return err
+	for _, k := range keys {
+		if _, e = tx.Exec(`DELETE FROM progressions WHERE target_type='eh' AND target_id=?`, k); e != nil {
+			return e
 		}
-		if err := b.Delete([]byte("r/" + id)); err != nil {
-			return err
-		}
-		aliases := [][]byte{}
-		cur := b.Cursor()
-		for k, v := cur.Seek([]byte("a/")); k != nil && strings.HasPrefix(string(k), "a/"); k, v = cur.Next() {
-			if string(v) == id || string(k) == "a/"+id {
-				aliases = append(aliases, append([]byte(nil), k...))
-			}
-		}
-		for _, k := range aliases {
-			if err := b.Delete(k); err != nil {
-				return err
-			}
+		if _, e = tx.Exec(`DELETE FROM progression_aliases WHERE target_type='eh' AND (target_id=? OR alias=?)`, k, k); e != nil {
+			return e
 		}
 	}
 	return nil
 }
-func groupArchived(b *bolt.Bucket, gid int, token string) bool {
-	return b.Get([]byte("p/"+identity(gid, token))) != nil
+func (s *Store) ReconcileArchives(groups []Group) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	for _, g := range groups {
+		if g.Active.GID <= 0 || g.Active.Token == "" {
+			continue
+		}
+		for _, id := range g.Identities {
+			if e = s.observeTx(tx, id.GID, id.Token, g.Active.GID, g.Active.Token); e != nil {
+				return e
+			}
+		}
+	}
+	_, e = tx.Exec(`DELETE FROM progression_protected WHERE target_type='eh'`)
+	if e != nil {
+		return e
+	}
+	for _, g := range groups {
+		if len(g.Available) > 0 {
+			for _, id := range g.Identities {
+				_, e = tx.Exec(`INSERT OR IGNORE INTO progression_protected VALUES('eh',?)`, identity(id.GID, id.Token))
+				if e != nil {
+					return e
+				}
+			}
+		}
+		for _, id := range g.Available {
+			_, e = tx.Exec(`INSERT OR IGNORE INTO progression_aliases(alias,target_id,target_type) VALUES(?,?,'eh')`, identity(id.GID, id.Token), identity(g.Active.GID, g.Active.Token))
+			if e != nil {
+				return e
+			}
+			_, e = tx.Exec(`INSERT OR IGNORE INTO progression_protected VALUES('eh',?)`, identity(g.Active.GID, g.Active.Token))
+			if e != nil {
+				return e
+			}
+		}
+	}
+	if e = trimAliases(tx); e != nil {
+		return e
+	}
+	if e = makeRoom(tx, 0); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 
 type Identity struct {
 	GID   int
 	Token string
 }
-
 type Group struct {
 	Active     Identity
 	Identities []Identity
 	Available  []Identity
 }
 
-func (s *Store) ReconcileArchives(groups []Group) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		for _, g := range groups {
-			if g.Active.GID <= 0 || g.Active.Token == "" {
-				continue
-			}
-			for _, id := range g.Identities {
-				if err := observeBucket(b, id.GID, id.Token, g.Active.GID, g.Active.Token); err != nil {
-					return err
-				}
-			}
-		}
-		keys := [][]byte{}
-		c := b.Cursor()
-		for k, _ := c.Seek([]byte("z/")); k != nil && strings.HasPrefix(string(k), "z/"); k, _ = c.Next() {
-			keys = append(keys, append([]byte(nil), k...))
-		}
-		for _, k := range keys {
-			if err := b.Delete(k); err != nil {
-				return err
-			}
-		}
-		pkeys := [][]byte{}
-		c = b.Cursor()
-		for k, _ := c.Seek([]byte("p/")); k != nil && strings.HasPrefix(string(k), "p/"); k, _ = c.Next() {
-			pkeys = append(pkeys, append([]byte(nil), k...))
-		}
-		for _, k := range pkeys {
-			if err := b.Delete(k); err != nil {
-				return err
-			}
-		}
-		protected := map[string]bool{}
-		for _, g := range groups {
-			if len(g.Available) > 0 {
-				for _, id := range g.Identities {
-					if id.GID > 0 && id.Token != "" {
-						protected[identity(id.GID, id.Token)] = true
-					}
-				}
-			}
-			for _, id := range g.Available {
-				if id.GID > 0 && id.Token != "" {
-					canonicalG, canonicalT := readAlias(b, id.GID, id.Token)
-					canonical := identity(canonicalG, canonicalT)
-					if err := b.Put([]byte("z/"+identity(id.GID, id.Token)), []byte{1}); err != nil {
-						return err
-					}
-					protected[canonical] = true
-				}
-			}
-		}
-		for id := range protected {
-			if err := b.Put([]byte("p/"+id), []byte{1}); err != nil {
-				return err
-			}
-		}
-		if err := trimAliases(b); err != nil {
-			return err
-		}
-		return makeRoom(b, 0)
-	})
-}
-
-func trimAliases(b *bolt.Bucket) error {
-	protected := map[string]bool{}
-	_ = b.ForEach(func(k, v []byte) error {
-		if strings.HasPrefix(string(k), "p/") {
-			protected[strings.TrimPrefix(string(k), "p/")] = true
-		}
-		return nil
-	})
-	aliases := [][]byte{}
-	c := b.Cursor()
-	for k, v := c.Seek([]byte("a/")); k != nil && strings.HasPrefix(string(k), "a/"); k, v = c.Next() {
-		target := string(v)
-		if b.Get([]byte("r/"+target)) != nil {
-			continue
-		}
-		aliases = append(aliases, append([]byte(nil), k...))
+func (s *Store) observeTx(tx *sql.Tx, gid int, token string, ag int, at string) error {
+	og, ot, e := s.canonicalTx(tx, gid, token)
+	if e != nil {
+		return e
 	}
-	for len(aliases) > 20000 {
-		if err := b.Delete(aliases[0]); err != nil {
-			return err
+	ng, nt, e := s.canonicalTx(tx, ag, at)
+	if e != nil {
+		return e
+	}
+	old, new := identity(og, ot), identity(ng, nt)
+	if old != new {
+		if e = mergeRecords(tx, old, new); e != nil {
+			return e
 		}
-		aliases = aliases[1:]
+		_, e = tx.Exec(`UPDATE progression_aliases SET target_id=? WHERE target_type='eh' AND target_id=?`, new, old)
+		if e != nil {
+			return e
+		}
+	}
+	for _, x := range []struct {
+		g int
+		t string
+	}{{gid, token}, {ag, at}} {
+		_, e = tx.Exec(`INSERT INTO progression_aliases(alias,target_id,target_type) VALUES(?,?,'eh') ON CONFLICT(alias) DO UPDATE SET target_id=excluded.target_id WHERE progression_aliases.target_id<>excluded.target_id`, identity(x.g, x.t), new)
+		if e != nil {
+			return e
+		}
 	}
 	return nil
 }
 
+func trimAliases(tx *sql.Tx) error {
+	_, err := tx.Exec(`DELETE FROM progression_aliases WHERE alias IN (SELECT a.alias FROM progression_aliases a WHERE a.target_type='eh' AND NOT EXISTS(SELECT 1 FROM progressions p WHERE p.target_type=a.target_type AND p.target_id=a.target_id) ORDER BY a.rowid LIMIT MAX(0,(SELECT COUNT(*) FROM progression_aliases a WHERE a.target_type='eh' AND NOT EXISTS(SELECT 1 FROM progressions p WHERE p.target_type=a.target_type AND p.target_id=a.target_id))-20000))`)
+	return err
+}
+
+func loadStored(tx *sql.Tx, id string) (*stored, error) {
+	var x stored
+	var modified, device, refs string
+	var title, snapshot sql.NullString
+	var legacyRaw []byte
+	err := tx.QueryRow(`SELECT gid,token,modified,device_json,progression,title,references_json,written,snapshot_json,legacy_raw_json FROM progressions WHERE target_type='eh' AND target_id=?`, id).Scan(&x.GID, &x.Token, &modified, &device, &x.Doc.Progression, &title, &refs, &x.Written, &snapshot, &legacyRaw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	x.Doc.Modified, _ = time.Parse(time.RFC3339Nano, modified)
+	x.LegacyRaw = legacyRaw
+	_ = json.Unmarshal([]byte(device), &x.Doc.Device)
+	_ = json.Unmarshal([]byte(refs), &x.Doc.References)
+	if title.Valid {
+		x.Doc.Title = &title.String
+	}
+	if snapshot.Valid {
+		var snap Snapshot
+		if json.Unmarshal([]byte(snapshot.String), &snap) == nil {
+			x.Snapshot = &snap
+		}
+	}
+	return &x, nil
+}
+func mergeRecords(tx *sql.Tx, oldID, newID string) error {
+	old, e := loadStored(tx, oldID)
+	if e != nil {
+		return e
+	}
+	dest, e := loadStored(tx, newID)
+	if e != nil {
+		return e
+	}
+	chosen := dest
+	if old != nil && (dest == nil || old.Doc.Modified.After(dest.Doc.Modified)) {
+		chosen = old
+	} else if old != nil && dest != nil && old.Doc.Modified.Equal(dest.Doc.Modified) {
+		a, b := old.LegacyRaw, dest.LegacyRaw
+		if len(a) == 0 {
+			a, _ = json.Marshal(old)
+		}
+		if len(b) == 0 {
+			b, _ = json.Marshal(dest)
+		}
+		if string(a) < string(b) {
+			chosen = old
+		}
+	}
+	if _, e = tx.Exec(`DELETE FROM progressions WHERE target_type='eh' AND target_id IN (?,?)`, oldID, newID); e != nil {
+		return e
+	}
+	if chosen != nil {
+		dev, _ := json.Marshal(chosen.Doc.Device)
+		refs, _ := json.Marshal(chosen.Doc.References)
+		var title, snapshot any
+		if chosen.Doc.Title != nil {
+			title = *chosen.Doc.Title
+		}
+		if chosen.Snapshot != nil {
+			raw, _ := json.Marshal(chosen.Snapshot)
+			snapshot = string(raw)
+		}
+		if _, e = tx.Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,title,references_json,written,snapshot_json,snapshot_category,legacy_raw_json) VALUES('eh',?,?,?,?,?,?,?,?,?,?,?,?)`, newID, chosen.GID, strings.ToLower(chosen.Token), chosen.Doc.Modified.UTC().Format(time.RFC3339Nano), string(dev), chosen.Doc.Progression, title, string(refs), chosen.Written, snapshot, categoryOf(chosen.Snapshot), chosen.LegacyRaw); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+func categoryOf(s *Snapshot) string {
+	if s == nil {
+		return ""
+	}
+	return s.Category
+}
+func (s *Store) SetSnapshot(gid int, token string, snap Snapshot) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	b, e := json.Marshal(snap)
+	if e != nil {
+		return e
+	}
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	g, t, e := s.canonicalTx(tx, gid, token)
+	if e != nil {
+		return e
+	}
+	if _, e = tx.Exec(`UPDATE progressions SET snapshot_json=?,snapshot_category=? WHERE target_type='eh' AND target_id=?`, string(b), snap.Category, identity(g, t)); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
 func (s *Store) Prune() error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		return makeRoom(tx.Bucket([]byte(bucket)), 0)
-	})
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if e = makeRoom(tx, 0); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 func (s *Store) Count() (int, error) {
-	works := map[string]bool{}
-	e := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(bucket)).ForEach(func(k, v []byte) error {
-			if strings.HasPrefix(string(k), "r/") {
-				works[strings.TrimPrefix(string(k), "r/")] = true
+	var n int
+	e := s.db.QueryRow(`SELECT COUNT(*) FROM progressions`).Scan(&n)
+	return n, e
+}
+
+// ImportBolt copies every progression bucket record and its alias/protection
+// state exactly once. The old file remains untouched for rollback.
+func (s *Store) ImportBolt(path string) error {
+	var n int64
+	if e := s.db.QueryRow(`SELECT COUNT(*) FROM legacy_imports WHERE name='bbolt_progression'`).Scan(&n); e != nil {
+		return e
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, e := os.Stat(path); os.IsNotExist(e) {
+		return nil
+	}
+	b, e := bolt.Open(path, 0600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if e != nil {
+		return e
+	}
+	defer b.Close()
+	sqltx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer sqltx.Rollback()
+	var records, aliases, protected int
+	err := b.View(func(btx *bolt.Tx) error {
+		bucket := btx.Bucket([]byte("progression-v1"))
+		if bucket == nil {
+			return nil
+		}
+		return bucket.ForEach(func(k, v []byte) error {
+			key := string(k)
+			if strings.HasPrefix(key, "r/") {
+				var x stored
+				if e := json.Unmarshal(v, &x); e != nil {
+					return e
+				}
+				id := identity(x.GID, x.Token)
+				dev, _ := json.Marshal(x.Doc.Device)
+				refs, _ := json.Marshal(x.Doc.References)
+				var snap any
+				if x.Snapshot != nil {
+					z, _ := json.Marshal(x.Snapshot)
+					snap = string(z)
+				}
+				_, e := sqltx.Exec(`INSERT OR IGNORE INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,title,references_json,written,snapshot_json,snapshot_category,legacy_raw_json) VALUES('eh',?,?,?,?,?,?,?,?,?,?,?,?)`, id, x.GID, strings.ToLower(x.Token), x.Doc.Modified.UTC().Format(time.RFC3339Nano), string(dev), x.Doc.Progression, x.Doc.Title, string(refs), x.Written, snap, categoryOf(x.Snapshot), []byte(v))
+				records++
+				return e
+			}
+			if strings.HasPrefix(key, "a/") {
+				alias := strings.TrimPrefix(key, "a/")
+				_, e := sqltx.Exec(`INSERT OR IGNORE INTO progression_aliases(alias,target_id,target_type) VALUES(?,?,'eh')`, alias, string(v))
+				aliases++
+				return e
+			}
+			if strings.HasPrefix(key, "p/") {
+				_, e := sqltx.Exec(`INSERT OR IGNORE INTO progression_protected VALUES('eh',?)`, strings.TrimPrefix(key, "p/"))
+				protected++
+				return e
 			}
 			return nil
 		})
 	})
-	return len(works), e
+	if err != nil {
+		return err
+	}
+	if _, e = sqltx.Exec(`INSERT INTO legacy_imports(name,completed_at,details_json) VALUES('bbolt_progression',?,?)`, time.Now().UTC().Format(time.RFC3339Nano), fmt.Sprintf(`{"source":%q,"records":%d,"aliases":%d,"protected":%d}`, path, records, aliases, protected)); e != nil {
+		return e
+	}
+	return sqltx.Commit()
 }

@@ -31,7 +31,7 @@ Go 二进制内嵌前端资源。使用 Docker 构建时，镜像构建过程会
 - 对外提供服务时建议放在 HTTPS 反向代理后，并设置 `PUBLIC_BASE_URL` 为外部 HTTPS 地址；示例见 [`deploy/`](deploy/)。
 - Basic Auth 由 `AUTH_USERNAME` 与 `AUTH_PASSWORD` 同时设置启用。凭据只经 HTTPS 传输；默认仅将服务绑定到本机回环地址。
 - 服务集中使用单一出口 IP 访问上游。请保守设置并发、保留缓存，避免触发 E-Hentai 限流或封禁。
-- 归档操作可能消耗 E-Hentai GP；仅由用户显式发起。收藏自动归档默认关闭。
+- 归档下载可能消耗 E-Hentai GP；必须显式确认。订阅自动下载默认关闭。
 
 ## 文档
 
@@ -41,6 +41,7 @@ Go 二进制内嵌前端资源。使用 Docker 构建时，镜像构建过程会
 - [OPDS 与 OPDS-PSE](docs/opds.md)
 - [归档行为](docs/archive.md)
 - [收藏夹行为](docs/favorites.md)
+- [订阅与下载任务](docs/subscriptions.md)
 - [客户端元数据格式](docs/client-metadata.md)
 - [Go 迁移验收指南](docs/go-acceptance.md)
 

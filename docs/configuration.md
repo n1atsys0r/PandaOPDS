@@ -51,15 +51,16 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `HOME_CONFIG` | `./config/home.toml` | v2.0 编排布局文件（支持多页面）。 |
 | `FACETS` | 内置 10 分类 | 分类筛选配置，`名称:掩码` 逗号分隔。 |
 | `ARCHIVE_DIR` | `./archives` | 长期归档存储目录。 |
-| `ARCHIVE_STATE_DIR` | `./config/archive`（容器内 `/config/archive`） | 本地归档状态与图库元数据目录；应与归档 ZIP 卷分开持久化。 |
+| `ARCHIVE_STATE_DIR` | `./config/archive`（容器内 `/config/archive`） | 仅用于首次导入旧归档 JSON/Bolt sidecar；升级后作为只读备份保留。 |
+| `DATABASE_PATH` | `./config/pandaopds.db`（容器内 `/config/pandaopds.db`） | SQLite 统一业务数据库。旧 `ARCHIVE_STATE_DIR` 与 `FAVORITES_SYNC_STATE` 仅作为迁移输入。 |
 | `ARCHIVE_QUALITY` | `original` | 默认归档画质选择。 |
 | `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载和转换并发上限。 |
-| `FAVORITES_SYNC_INTERVAL_SECONDS` | `3600` | 收藏增量扫描周期；`0` 关闭周期扫描。 |
-| `FAVORITES_SYNC_ARCHIVE` | `false` | 是否自动归档新收藏；可能消耗 GP。 |
-| `FAVORITES_SYNC_CATEGORIES` | 空 | 自动归档作用域 favcat ID；可用 `-ID` 排除分区。 |
-| `FAVORITES_SYNC_STATE` | `./favorites_sync.json`* | 收藏同步状态快照路径。 |
-| `FAVORITES_SYNC_MATCH_THRESHOLD` | `5` | 连续命中已知收藏后停止增量扫描。 |
-| `FAVORITES_SYNC_MAX_PAGES` | `50` | 单轮扫描页数上限。 |
+| `FAVORITES_SYNC_INTERVAL_SECONDS` | `3600` | 内置收藏订阅的初始扫描周期；改动已创建订阅后，应在订阅管理中更新。`0` 关闭周期运行。 |
+| `FAVORITES_SYNC_ARCHIVE` | `false` | 内置收藏订阅的初始自动下载开关；可能消耗 GP。新装默认关闭。 |
+| `FAVORITES_SYNC_CATEGORIES` | 空 | 内置收藏订阅的初始自动下载规则 favcat ID；可用 `-ID` 排除分类。它不限制订阅抓取范围。 |
+| `FAVORITES_SYNC_STATE` | `./favorites_sync.json`* | 旧收藏同步 JSON 的只读首次迁移输入；运行期状态保存在 SQLite。 |
+| `FAVORITES_SYNC_MATCH_THRESHOLD` | `5` | 旧兼容配置；新订阅会使用持久化分页与扫描覆盖状态。 |
+| `FAVORITES_SYNC_MAX_PAGES` | `50` | 内置订阅首次创建时的单轮最大抓取页数。 |
 | `MYTAGS_TTL_SECONDS`, `MYTAGS_STATE` | `21600`, `./mytags.json`* | My Tags 样式缓存有效期及状态文件路径。 |
 | `TAG_TRANSLATION_ENABLED` | `false` | 启用中文标签翻译和搜索反查。 |
 
@@ -79,7 +80,7 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 
 归档版本检查周期和自动更新是仅存于该 TOML 文件的 `ARCHIVE_UPDATE_INTERVAL_DAYS` 与 `ARCHIVE_AUTO_UPDATE` 设置：周期默认 7 天，填 `0` 可关闭；自动更新默认关闭，启用后可能消耗 GP。请在网页的归档配置项中明确启用，同名环境变量会被忽略。
 
-收藏自动归档开关 `FAVORITES_SYNC_ARCHIVE` 与归档范围 `FAVORITES_SYNC_CATEGORIES` 也可在网页的收藏夹配置项中设置。自动归档默认关闭，启用后可能消耗 GP，首次扫描只建立增量基线。范围使用逗号分隔的收藏夹 ID（0–9）；留空表示全部，`-ID` 表示排除该收藏夹。范围只限制自动归档，不影响同步扫描。环境变量优先于 `settings.toml`，因此由环境变量设置时网页显示只读；保存的文件设置在重启后生效。
+内置收藏订阅的周期与初始自动下载规则由 `FAVORITES_SYNC_*` 配置提供；现有订阅配置保存在 SQLite，之后在「订阅」页面调整。自动下载默认关闭，启用后可能消耗 GP。抓取范围与下载分类规则分开设置，完整行为见[订阅与下载任务](subscriptions.md)。`FAVORITES_SYNC_STATE` 和 `ARCHIVE_STATE_DIR` 只作为迁移输入，不应通过删除它们来重置运行状态。
 
 未配置 Basic Auth 时，任何能访问服务的用户都可匿名读取和保存配置及首页布局；配置 Basic Auth 后，编辑接口要求有效凭据，即使路径匹配认证豁免规则也不例外。编辑接口的写请求仅接受同源 JSON，并要求使用读取时返回的 `ETag` 作为 `If-Match`。编排布局写入 `HOME_CONFIG` 指定的文件，旧文件备份为 `.bak`，下一次 OPDS 2.0 页面请求读取新布局；网页「编排」页面支持直接导入与导出 `home.toml` 配置文件（对应接口 `/api/home/file`），便于备份或跨环境迁移。
 

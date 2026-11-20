@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -375,7 +376,11 @@ func TestCleanupRetriesAfterCommitAndPreservesSourceWhenTargetZIPIsMissing(t *te
 	}
 	store.mu.Lock()
 	rec := store.rootLocked(120, "root")
-	rec.meta["cleanup_previous_zip"] = map[string]any{"gid": 120, "token": "root", "target_gid": 121, "target_token": "next"}
+	size, mtime, hash, missing, err := archivePayloadFingerprint(root, "120/archive.zip")
+	if err != nil || missing {
+		t.Fatalf("fingerprint source ZIP size=%d hash=%q missing=%v err=%v", size, hash, missing, err)
+	}
+	rec.meta["cleanup_previous_zip"] = map[string]any{"gid": 120, "token": "root", "target_gid": 121, "target_token": "next", "archive_path": "120/archive.zip", "source_size": size, "source_mtime_ns": strconv.FormatInt(mtime, 10), "source_sha256": hash}
 	if err := store.persistLocked(rec); err != nil {
 		t.Fatal(err)
 	}

@@ -6,14 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"pandaopds/internal/archive"
-	"pandaopds/internal/config"
-	"pandaopds/internal/eh"
 	"pandaopds/internal/home"
 	"pandaopds/internal/progression"
 )
@@ -194,43 +190,14 @@ func TestHistoryEndpoints(t *testing.T) {
 // TestArchiveEndpoints verifies archives feed does not emit facets.
 func TestArchiveEndpoints(t *testing.T) {
 	temp := t.TempDir()
-	archiveDir := filepath.Join(temp, "archives")
-	stateDir := filepath.Join(temp, "state")
-	cacheDir := filepath.Join(temp, "cache")
-	_ = os.MkdirAll(archiveDir, 0755)
-	_ = os.MkdirAll(stateDir, 0755)
-	_ = os.MkdirAll(cacheDir, 0755)
-
-	store, err := archive.NewStoreWithState(archiveDir, stateDir)
+	settings := loadTestSettings(temp)
+	s, err := New(settings, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-
-	progStore, err := progression.Open(stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer progStore.Close()
-
-	settings := config.Settings{
-		EHSite:          "e-hentai",
-		ArchiveDir:      archiveDir,
-		ArchiveStateDir: stateDir,
-		CacheDir:        cacheDir,
-	}
-	service := eh.NewService(settings, nil)
-	defer service.Close()
-	service.AttachArchive(store)
-
-	s := &Server{
-		Settings:    settings,
-		Service:     service,
-		Store:       store,
-		Progression: progStore,
-		mux:         http.NewServeMux(),
-	}
-	s.register()
+	defer s.Close()
+	store := s.Store
+	archiveDir := settings.ArchiveDir
 
 	// Seed 2 archives: 1001 (Manga), 1002 (Doujinshi)
 	for _, gid := range []int{1001, 1002} {
@@ -252,6 +219,12 @@ func TestArchiveEndpoints(t *testing.T) {
 			"filecount": 10,
 			"posted":    1700000000,
 		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Documents.RegisterPublished(t.Context(), fmt.Sprintf("%d.zip", gid), gid, token, "download_job"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Database.Exec(`UPDATE publications SET category=? WHERE provider='eh' AND gid=? AND token=?`, cat, gid, token); err != nil {
 			t.Fatal(err)
 		}
 	}

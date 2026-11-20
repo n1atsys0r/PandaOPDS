@@ -40,6 +40,7 @@ ENV SETTINGS_CONFIG=/config/settings.toml \
     CACHE_DIR=/data/cache \
     ARCHIVE_DIR=/data/archives \
     ARCHIVE_STATE_DIR=/config/archive \
+    DATABASE_PATH=/config/pandaopds.db \
     PORT=8000
 
 EXPOSE 8000

@@ -24,29 +24,38 @@ import (
 	"pandaopds/app/webui"
 	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
+	"pandaopds/internal/document"
 	"pandaopds/internal/eh"
 	"pandaopds/internal/favorites"
+	"pandaopds/internal/migration"
 	"pandaopds/internal/progression"
 	"pandaopds/internal/recorder"
+	"pandaopds/internal/storage"
+	"pandaopds/internal/subscription"
 
 	"golang.org/x/sync/singleflight"
 )
 
 type Server struct {
-	Settings     config.Settings
-	Service      *eh.Service
-	Store        *archive.Store
-	Archives     *archive.Manager
-	Favorites    *favorites.Syncer
-	Progression  *progression.Store
-	Tracker      *recorder.Tracker
-	Logger       *log.Logger
-	mux          *http.ServeMux
-	configOK     bool
-	configError  any
-	settingsPath string
-	editMu       sync.Mutex
-	editKey      []byte
+	Settings               config.Settings
+	Service                *eh.Service
+	Store                  *archive.Store
+	Archives               *archive.Manager
+	Favorites              *favorites.Syncer
+	Progression            *progression.Store
+	Database               *storage.DB
+	Documents              *document.Store
+	Subscriptions          *subscription.Worker
+	FavoriteSubscriptionID string
+	ArchiveScanReady       bool
+	Tracker                *recorder.Tracker
+	Logger                 *log.Logger
+	mux                    *http.ServeMux
+	configOK               bool
+	configError            any
+	settingsPath           string
+	editMu                 sync.Mutex
+	editKey                []byte
 
 	stopArchiveUpdates   context.CancelFunc
 	archiveUpdatesDone   chan struct{}
@@ -106,14 +115,70 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 			}
 		},
 	})
-	store, err := archive.NewStoreWithState(settings.ArchiveDir, settings.ArchiveStateDir)
+	databasePath := settings.DatabasePath
+	if databasePath == "" {
+		databasePath = filepath.Join(filepath.Dir(settings.ArchiveStateDir), "pandaopds.db")
+	}
+	database, err := storage.Open(databasePath)
 	if err != nil {
+		_ = service.Close()
+		return nil, fmt.Errorf("open SQLite database: %w", err)
+	}
+	s.Database = database
+	if err := migration.ImportLegacyArchive(database, settings.ArchiveDir, settings.ArchiveStateDir); err != nil {
+		database.Close()
+		_ = service.Close()
+		return nil, fmt.Errorf("import legacy archive metadata: %w", err)
+	}
+	documents, err := document.New(database, settings.ArchiveDir)
+	if err != nil {
+		database.Close()
+		_ = service.Close()
+		return nil, fmt.Errorf("open document store: %w", err)
+	}
+	s.Documents = documents
+	var suppressionMu sync.Mutex
+	suppressionCreated := map[string]string{}
+	documents.SetDeleteHooks(func(d document.Document) error {
+		if d.GID == nil {
+			return nil
+		}
+		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+		res, err := database.Exec(`INSERT INTO download_suppressions(provider,gid,token,created_at) VALUES('eh',?,?,?) ON CONFLICT(provider,gid,token) DO NOTHING`, *d.GID, strings.ToLower(d.Token), createdAt)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n > 0 {
+				suppressionMu.Lock()
+				suppressionCreated[d.ID] = createdAt
+				suppressionMu.Unlock()
+			}
+		}
+		return err
+	}, func(d document.Document) error {
+		if d.GID == nil {
+			return nil
+		}
+		suppressionMu.Lock()
+		createdAt, ok := suppressionCreated[d.ID]
+		delete(suppressionCreated, d.ID)
+		suppressionMu.Unlock()
+		if !ok {
+			return nil
+		}
+		_, err := database.Exec(`DELETE FROM download_suppressions WHERE provider='eh' AND gid=? AND token=? AND created_at=?`, *d.GID, strings.ToLower(d.Token), createdAt)
+		return err
+	})
+	store, err := archive.NewStoreWithSQLite(settings.ArchiveDir, settings.ArchiveStateDir, database.DB)
+	if err != nil {
+		database.Close()
+		_ = service.Close()
 		return nil, fmt.Errorf("open archive store: %w", err)
 	}
 	s.Store = store
-	progressStore, err := progression.Open(settings.ArchiveStateDir)
+	progressStore, err := progression.OpenDB(database, filepath.Join(settings.ArchiveStateDir, "opds-progression.db"))
 	if err != nil {
 		store.Close()
+		database.Close()
+		_ = service.Close()
 		return nil, fmt.Errorf("open progression store: %w", err)
 	}
 	s.Progression = progressStore
@@ -125,9 +190,76 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 		logger.Printf("archive startup: rolled back %d interrupted tier upgrade(s)", rolled)
 	}
 	s.refreshProgressionArchiveIndex()
-	state := favorites.NewState(settings.FavoritesSyncState)
+	scanCtx, scanCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	scanResult, scanErr := documents.Scan(scanCtx)
+	scanCancel()
+	if scanErr == nil {
+		_, scanErr = migration.LinkLegacyDocuments(database, settings.ArchiveDir)
+	}
+	if scanErr == nil {
+		s.ArchiveScanReady = true
+		s.archiveScan = ArchiveScanJob{Status: "success", CompletedAt: time.Now().Unix()}
+		if m, ok := scanResult["documents_found"].(int); ok {
+			s.archiveScan.Imported = m
+		}
+	} else {
+		s.archiveScan = ArchiveScanJob{Status: "error", Error: scanErr.Error(), CompletedAt: time.Now().Unix()}
+	}
+	state, err := favorites.NewDBState(database.DB, settings.FavoritesSyncState)
+	if err != nil {
+		s.Archives.Close()
+		store.Close()
+		progressStore.Close()
+		database.Close()
+		_ = service.Close()
+		return nil, fmt.Errorf("import favorites sync state: %w", err)
+	}
 	s.Favorites = favorites.NewSyncer(settings, service, s.Archives, state)
-	s.Favorites.Start()
+	subStore := subscription.New(database.DB)
+	favoriteInterval := int(settings.FavoritesSyncIntervalSeconds)
+	favoriteAuto := settings.FavoritesSyncArchive
+	favoriteSub, err := subStore.EnsureFavorites(context.Background(), favoriteInterval, favoriteAuto, settings.FavoritesSyncCategories, settings.FavoritesSyncExcludes, settings.ArchiveQuality)
+	if err != nil {
+		s.Archives.Close()
+		store.Close()
+		progressStore.Close()
+		database.Close()
+		_ = service.Close()
+		return nil, fmt.Errorf("initialize favorites subscription: %w", err)
+	}
+	s.FavoriteSubscriptionID = favoriteSub.ID
+	if err := subStore.SeedKnownFavorites(context.Background(), favoriteSub.ID, state.Known(), state.Favcats()); err != nil {
+		s.Archives.Close()
+		store.Close()
+		progressStore.Close()
+		database.Close()
+		_ = service.Close()
+		return nil, fmt.Errorf("migrate known favorites into subscription: %w", err)
+	}
+	if favoriteSub.ID != "" {
+		baseline, lastRun, lastOK, pages, legacyErrors := state.LegacyDiagnostics()
+		if err := subStore.ImportLegacyFavoriteDiagnostics(context.Background(), favoriteSub.ID, baseline, lastRun, lastOK, pages, legacyErrors); err != nil {
+			s.Archives.Close()
+			store.Close()
+			progressStore.Close()
+			database.Close()
+			_ = service.Close()
+			return nil, fmt.Errorf("migrate favorite sync diagnostics: %w", err)
+		}
+	}
+	s.Subscriptions = subscription.NewWorker(database.DB, service, s.Archives, documents, settings)
+	if err := s.Subscriptions.Start(); err != nil {
+		s.Subscriptions.Stop()
+		s.Archives.Close()
+		store.Close()
+		progressStore.Close()
+		database.Close()
+		_ = service.Close()
+		return nil, fmt.Errorf("start subscription worker: %w", err)
+	}
+	if s.ArchiveScanReady {
+		s.Subscriptions.EnableDispatch()
+	}
 	s.startArchiveVersionChecks()
 	s.register()
 	return s, nil
@@ -135,7 +267,11 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	return s.loggingMiddleware(s.recoverMiddleware(s.basicAuth(s.mux)))
 }
+
 func (s *Server) Close() error {
+	if s.Subscriptions != nil {
+		s.Subscriptions.Stop()
+	}
 	if s.stopArchiveUpdates != nil {
 		s.stopArchiveUpdates()
 		<-s.archiveUpdatesDone
@@ -162,6 +298,9 @@ func (s *Server) Close() error {
 	}
 	if s.Progression != nil {
 		closeErr = errors.Join(closeErr, s.Progression.Close())
+	}
+	if s.Database != nil {
+		closeErr = errors.Join(closeErr, s.Database.Close())
 	}
 	if s.Service != nil {
 		closeErr = errors.Join(closeErr, s.Service.Close())
@@ -203,6 +342,8 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/archive", s.archiveList)
 	m.HandleFunc("GET /api/archive/import/scan", s.archiveScanStatus)
 	m.HandleFunc("POST /api/archive/import/scan", s.startArchiveScan)
+	RegisterDocumentRoutes(m, s.Documents, s.Settings)
+	RegisterSubscriptionRoutes(m, s.Subscriptions)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/quote", s.archiveQuote)
 	m.HandleFunc("POST /api/archive/{gid}/{token}/start", s.archiveStart)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/metadata", s.archiveMetadata)

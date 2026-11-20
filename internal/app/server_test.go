@@ -2,7 +2,12 @@ package app
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,13 +24,10 @@ func TestArchiveScanAPIImportsAndExposesStatus(t *testing.T) {
 	base := t.TempDir()
 	settings := loadTestSettings(base)
 	settings.ArchiveStateDir = filepath.Join(base, "archive-state")
-	if err := os.MkdirAll(filepath.Join(settings.ArchiveDir, "601"), 0o755); err != nil {
+	if err := os.MkdirAll(settings.ArchiveDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(settings.ArchiveDir, "601", "state.json"), []byte(`{"gid":601,"token":"api-scan","status":"ready"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Create(filepath.Join(settings.ArchiveDir, "601", "archive.zip"))
+	f, err := os.Create(filepath.Join(settings.ArchiveDir, "601.cbz"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +36,13 @@ func TestArchiveScanAPIImportsAndExposesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Write([]byte("page")); err != nil {
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.Black)
+	var page bytes.Buffer
+	if err := jpeg.Encode(&page, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(page.Bytes()); err != nil {
 		t.Fatal(err)
 	}
 	if err := zw.Close(); err != nil {
@@ -76,8 +84,9 @@ func TestArchiveScanAPIImportsAndExposesStatus(t *testing.T) {
 	if result.Status != "success" || result.Imported != 1 {
 		t.Fatalf("completed status=%+v", result)
 	}
-	if server.Store.Get(601, "api-scan") == nil {
-		t.Fatal("scan result was not visible to live archive index")
+	items, total, err := server.Documents.List(context.Background(), 1, 10, "available", "")
+	if err != nil || total != 1 || len(items) != 1 || items[0].Format != "cbz" {
+		t.Fatalf("scan result not visible as a local document: items=%+v total=%d err=%v", items, total, err)
 	}
 }
 

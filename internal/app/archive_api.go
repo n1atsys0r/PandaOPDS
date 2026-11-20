@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,52 +16,74 @@ import (
 )
 
 func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
-	entries := s.Archives.ListEntries()
-	known := s.Favorites.State.Known()
-	favcats := s.Favorites.State.Favcats()
+	if s.Documents == nil {
+		writeJSON(w, 200, map[string]any{"entries": []any{}, "stats": map[string]any{}})
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	per, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if per < 1 {
+		per = 200
+	}
+	if per > 500 {
+		per = 500
+	}
+	docs, total, err := s.Documents.List(r.Context(), page, per, "available", "")
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	known := map[string]bool{}
+	favcats := map[string]int{}
+	if s.Subscriptions != nil && s.FavoriteSubscriptionID != "" {
+		if members, e := s.Subscriptions.Store.FavoriteMemberships(r.Context(), s.FavoriteSubscriptionID); e == nil {
+			for key, cat := range members {
+				known[key] = true
+				if cat >= 0 {
+					favcats[key] = cat
+				}
+			}
+		}
+	}
 	names := map[string]string{}
 	for id, name := range s.Favorites.State.FavcatMap() {
 		names[fmt.Sprint(id)] = name
 	}
-	enriched := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		gid := gidInt(entry["gid"])
+	enriched := make([]map[string]any, 0, len(docs))
+	for _, d := range docs {
+		entry := map[string]any{"id": d.ID, "title": d.Title, "path": d.Path, "format": d.Format, "status": d.Status, "size": d.Size, "page_count": d.PageCount, "association_source": d.AssociationSource, "manifest_url": "/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest", "cover_url": "/image/documents/" + url.PathEscape(d.ID) + "/thumb", "progression_url": documentProgressionURL(d)}
+		gid := 0
+		token := ""
+		if d.GID != nil {
+			gid = *d.GID
+			token = d.Token
+			entry["gid"] = gid
+			entry["token"] = token
+			var cached int
+			if e := s.Database.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM covers c JOIN publications p ON p.id=c.publication_id WHERE p.provider='eh' AND p.gid=? AND p.token=?)`, gid, strings.ToLower(token)).Scan(&cached); e == nil && cached != 0 {
+				entry["cover_url"] = fmt.Sprintf("/api/publications/eh/%d/%s/cover", gid, url.PathEscape(token))
+			}
+		}
 		gidText := fmt.Sprint(gid)
-		token := fmt.Sprint(entry["token"])
-		key := gidText + ":" + token
-		activeGID := gidInt(entry["active_gid"])
-		activeToken, _ := entry["active_token"].(string)
-		if activeGID == 0 || activeToken == "" {
-			activeGID, activeToken = gid, token
-		}
-		snapshot, _ := s.Store.ReadMetadata(activeGID, activeToken)
-		var meta any
-		if snapshot != nil {
-			meta = map[string]any{"title": snapshot["title"], "title_jpn": snapshot["title_jpn"], "category": snapshot["category"], "rating": snapshot["rating"], "filecount": snapshot["filecount"], "filesize": snapshot["filesize"], "posted": snapshot["posted"], "uploader": snapshot["uploader"], "expunged": snapshot["expunged"], "torrentcount": snapshot["torrentcount"], "tags": snapshot["tags"], "thumb": snapshot["thumb"]}
-		}
-		var cover any
-		if _, ok := s.Store.Cover(activeGID, activeToken); ok || hasAllowedCoverThumb(snapshot, s.Settings.ImageProxyHosts) {
-			cover = fmt.Sprintf("/api/archive/%d/%s/cover", activeGID, activeToken)
-		}
+		key := gidText + ":" + strings.ToLower(token)
 		var favcat any
 		var favcatName any
 		if n, ok := favcats[key]; ok {
 			favcat = n
 			favcatName = names[fmt.Sprint(n)]
 		}
-		card := map[string]any{}
-		for k, v := range entry {
-			card[k] = v
+		entry["is_favorited"] = gid > 0 && known[key]
+		entry["favcat"] = favcat
+		entry["favcat_name"] = favcatName
+		if gid > 0 {
+			s.addArchiveUpdate(entry, gid, token)
 		}
-		card["metadata"] = meta
-		card["cover_url"] = cover
-		card["is_favorited"] = known[key]
-		card["favcat"] = favcat
-		card["favcat_name"] = favcatName
-		s.addArchiveUpdate(card, gid, token)
-		enriched = append(enriched, card)
+		enriched = append(enriched, entry)
 	}
-	writeJSON(w, 200, map[string]any{"entries": enriched, "stats": s.Archives.Stats()})
+	writeJSON(w, 200, map[string]any{"entries": enriched, "items": enriched, "total": total, "page": page, "per_page": per, "stats": map[string]any{"ready": total}})
 }
 
 func (s *Server) addArchiveUpdate(entry map[string]any, gid int, token string) {
@@ -109,12 +132,16 @@ func (s *Server) archiveStart(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&p)
 	}
-	v, e := s.Archives.Start(r.Context(), gid, token, p.Quality, p.Force)
+	if s.Subscriptions == nil {
+		writeJSON(w, 503, map[string]any{"detail": "download job service unavailable"})
+		return
+	}
+	id, e := s.Subscriptions.QueueManualForce(r.Context(), gid, token, p.Quality, p.Force)
 	if e != nil {
 		s.writeError(w, r, e)
 		return
 	}
-	writeJSON(w, 200, v)
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "queued", "job_id": id, "gid": gid, "token": token})
 }
 func (s *Server) archiveStatus(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
@@ -199,7 +226,11 @@ func (s *Server) archiveUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"detail": "the confirmed update is no longer available"})
 		return
 	}
-	v, err := s.Archives.StartVersionUpdate(r.Context(), gid, token, target.GID, target.Token, confirmed.MaxGP)
+	if s.Subscriptions == nil {
+		writeJSON(w, 503, map[string]any{"detail": "durable download worker is unavailable"})
+		return
+	}
+	jobID, v, err := s.Subscriptions.SubmitManualVersionUpdate(r.Context(), gid, token, target.GID, target.Token, confirmed.MaxGP)
 	if err != nil {
 		var conflict *archive.VersionUpdateConflictError
 		if errors.As(err, &conflict) {
@@ -209,6 +240,10 @@ func (s *Server) archiveUpdate(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
+	if v == nil {
+		v = map[string]any{}
+	}
+	v["job_id"] = jobID
 	writeJSON(w, 200, v)
 }
 func (s *Server) archiveDelete(w http.ResponseWriter, r *http.Request) {
@@ -217,45 +252,33 @@ func (s *Server) archiveDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	entry := s.Store.Get(gid, token)
-	if entry == nil {
-		s.logArchiveDeleteFailure(gid, "lookup", "state_record", errors.New("archive state record not found"))
-		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
+	if s.Documents == nil {
+		writeJSON(w, 404, map[string]any{"detail": "no local document for this gallery"})
 		return
 	}
-	shelfKeys := map[string]bool{fmt.Sprintf("%d:%s", gid, token): true}
-	if rootGID, rootToken, ok := s.Store.RootIdentity(gid, token); ok {
-		shelfKeys[fmt.Sprintf("%d:%s", rootGID, rootToken)] = true
-		for _, id := range s.Store.Identities(rootGID, rootToken) {
-			shelfKeys[id[0]+":"+id[1]] = true
+	all, total, e := s.Documents.List(r.Context(), 1, 500, "available", "")
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	_ = total
+	removed := 0
+	for _, d := range all {
+		if d.GID == nil || *d.GID != gid || !strings.EqualFold(d.Token, token) {
+			continue
 		}
-	}
-	known := s.Favorites.State.Known()
-	isFavorited := false
-	for k := range shelfKeys {
-		if known[k] {
-			isFavorited = true
-			break
-		}
-	}
-	if err := s.Favorites.State.ClearArchiveTracking(shelfKeys); err != nil {
-		s.logArchiveDeleteFailure(gid, "tracking", "clear_archive_tracking (continuing)", err)
-	}
-	if isFavorited {
-		if err := s.Archives.DemoteToUnarchivedWithError(gid, token); err != nil {
-			s.logArchiveDeleteFailure(gid, "favorite_demote", "reset_to_unarchived", err)
-			writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
+		if err := s.Documents.Delete(r.Context(), d.ID); err != nil {
+			s.logArchiveDeleteFailure(gid, "document_delete", "delete local ZIP", err)
+			writeJSON(w, 409, map[string]any{"detail": "could not remove local document"})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"removed": true, "retained_catalog": true})
+		removed++
+	}
+	if removed == 0 {
+		writeJSON(w, 404, map[string]any{"detail": "no local document for this gallery"})
 		return
 	}
-	if err := s.Archives.RemoveWithError(gid, token); err != nil {
-		s.logArchiveDeleteFailure(gid, "remove", "remove_archive", err)
-		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"removed": true, "retained_catalog": false})
+	writeJSON(w, 200, map[string]any{"removed": true, "documents_removed": removed, "retained_catalog": true})
 }
 
 func (s *Server) logArchiveDeleteFailure(gid int, branch, stage string, err error) {
