@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -62,12 +63,8 @@ func documentList(w http.ResponseWriter, r *http.Request, store *document.Store)
 }
 func documentGet(w http.ResponseWriter, r *http.Request, store *document.Store, settings config.Settings) {
 	d, err := store.Get(r.Context(), r.PathValue("id"))
-	if errors.Is(err, document.ErrNotFound) {
-		writeJSON(w, 404, map[string]any{"detail": "document not found"})
-		return
-	}
 	if err != nil {
-		writeJSON(w, 500, map[string]any{"detail": "could not read document"})
+		writeDocumentError(w, r.PathValue("id"), err)
 		return
 	}
 	writeJSON(w, 200, decorateDocument(r, d, store))
@@ -138,20 +135,13 @@ func documentProgressionURL(d document.Document) string {
 }
 func documentManifest(w http.ResponseWriter, r *http.Request, store *document.Store, settings config.Settings) {
 	d, err := store.Get(r.Context(), r.PathValue("id"))
-	if err != nil || d.Status != "available" {
-		writeJSON(w, 404, map[string]any{"detail": "document not found"})
+	if err != nil {
+		writeDocumentError(w, r.PathValue("id"), err)
 		return
 	}
 	d, _, err = store.EnsurePageIndex(r.Context(), d.ID)
 	if err != nil {
-		status := http.StatusConflict
-		if errors.Is(err, document.ErrNotFound) {
-			status = http.StatusNotFound
-		}
-		if errors.Is(err, document.ErrInvalidArchive) {
-			status = http.StatusUnprocessableEntity
-		}
-		writeJSON(w, status, map[string]any{"detail": "document could not be indexed for reading"})
+		writeDocumentError(w, d.ID, err)
 		return
 	}
 	pub := LocalDocumentPublication(r.Context(), d, store, settings)
@@ -340,14 +330,61 @@ func documentPage(w http.ResponseWriter, r *http.Request, store *document.Store,
 	}
 	body, mime, err := store.OpenPage(r.Context(), r.PathValue("id"), page-settings.PSEPageBase)
 	if err != nil {
-		if errors.Is(err, document.ErrNotFound) {
-			writeJSON(w, 404, map[string]any{"detail": "page not found"})
-		} else {
-			writeJSON(w, 409, map[string]any{"detail": "document changed or cannot be read"})
-		}
+		writeDocumentError(w, r.PathValue("id"), err)
 		return
 	}
 	writeBytes(w, 200, mime, map[string]string{"Cache-Control": "no-cache"}, body)
+}
+
+func writeDocumentError(w http.ResponseWriter, id string, err error) {
+	status := http.StatusServiceUnavailable
+	detail := "本地归档读取失败，请稍后重试。"
+	body := map[string]any{"detail": detail, "reason": document.ValidationReason(err)}
+	var ve *document.ValidationError
+	if errors.As(err, &ve) {
+		body["reason"] = ve.Reason
+		body["phase"] = ve.Phase
+		if ve.Path != "" {
+			body["path"] = ve.Path
+			body["stored_signature"] = map[string]any{"size": ve.StoredSize, "mtime_ns": strconv.FormatInt(ve.StoredMTime, 10)}
+			if ve.CurrentSize != nil && ve.CurrentMTime != nil {
+				body["current_signature"] = map[string]any{"size": *ve.CurrentSize, "mtime_ns": strconv.FormatInt(*ve.CurrentMTime, 10)}
+			}
+		}
+		var currentSize any
+		var currentMTime any
+		if ve.CurrentSize != nil {
+			currentSize = *ve.CurrentSize
+		}
+		if ve.CurrentMTime != nil {
+			currentMTime = strconv.FormatInt(*ve.CurrentMTime, 10)
+		}
+		log.Printf("document access failed id=%s path=%q phase=%s reason=%s cause=%s stored_size=%d stored_mtime_ns=%s current_size=%v current_mtime_ns=%v", id, ve.Path, ve.Phase, ve.Reason, document.ValidationCauseCode(ve.Cause), ve.StoredSize, strconv.FormatInt(ve.StoredMTime, 10), currentSize, currentMTime)
+		switch ve.Reason {
+		case "missing_record", "file_missing", "page_out_of_range":
+			status = http.StatusNotFound
+			detail = "本地文档记录、文件或请求页码不存在。"
+		case "stale_signature":
+			status = http.StatusConflict
+			detail = "文件属性已变化，请执行普通扫描后重试。"
+		case "invalid_archive":
+			status = http.StatusUnprocessableEntity
+			detail = "归档结构无效或不包含可读取图片；可再次点击阅读重试。"
+		case "unsafe_path":
+			status = http.StatusConflict
+			detail = "归档路径不安全，已拒绝读取。"
+		case "record_unavailable":
+			status = http.StatusConflict
+			detail = "文档登记状态不可阅读，请重新扫描目录以核验文件。"
+		case "io_error":
+			status = http.StatusServiceUnavailable
+			detail = "归档读取未能完成；请重试阅读。"
+		}
+	} else if errors.Is(err, document.ErrNotFound) {
+		status, detail = http.StatusNotFound, "本地文档记录不存在。"
+	}
+	body["detail"] = detail
+	writeJSON(w, status, body)
 }
 
 func documentCover(w http.ResponseWriter, r *http.Request, store *document.Store) {
@@ -357,7 +394,7 @@ func documentCover(w http.ResponseWriter, r *http.Request, store *document.Store
 	}
 	body, mime, err := store.OpenPage(r.Context(), r.PathValue("id"), 0)
 	if err != nil {
-		writeJSON(w, 404, map[string]any{"detail": "document cover not found"})
+		writeDocumentError(w, r.PathValue("id"), err)
 		return
 	}
 	writeBytes(w, 200, mime, map[string]string{"Cache-Control": "no-cache"}, body)
@@ -366,7 +403,7 @@ func documentCover(w http.ResponseWriter, r *http.Request, store *document.Store
 func documentProgression(w http.ResponseWriter, r *http.Request, store *document.Store) {
 	id := r.PathValue("id")
 	if _, err := store.Get(r.Context(), id); err != nil {
-		writeJSON(w, 404, map[string]any{"detail": "document not found"})
+		writeDocumentError(w, id, err)
 		return
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {

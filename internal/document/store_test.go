@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"pandaopds/internal/storage"
@@ -112,6 +115,105 @@ func TestScanRegistersCandidateAndFirstReadBuildsPageIndex(t *testing.T) {
 	before := opens
 	if _, err = s.PageMIMEs(context.Background(), indexed.ID); err != nil || opens != before {
 		t.Fatalf("cached page index was reread: opens=%d before=%d err=%v", opens, before, err)
+	}
+}
+
+type failRangeReaderAt struct {
+	raw       []byte
+	failStart int64
+	failEnd   int64
+}
+
+func (r failRangeReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	end := off + int64(len(p))
+	if off < r.failEnd && end > r.failStart {
+		return 0, syscall.EIO
+	}
+	if off >= int64(len(r.raw)) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.raw[off:])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestLazyIndexReadFailureDoesNotPersistPartialIndexAndCanRetry(t *testing.T) {
+	s, root := newTestStore(t)
+	path := filepath.Join(root, "network.cbz")
+	var raw bytes.Buffer
+	zw := zip.NewWriter(&raw)
+	for _, name := range []string{"1.png", "2.png"} {
+		header := &zip.FileHeader{Name: name, Method: zip.Store}
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = w.Write(onePixelPNG); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Locate the second member's stored bytes using its central-directory
+	// record (the streaming writer uses data descriptors in local headers).
+	var failStart, failEnd int64
+	for off := 0; off+46 <= raw.Len(); off++ {
+		b := raw.Bytes()[off:]
+		if binary.LittleEndian.Uint32(b[:4]) != 0x02014b50 {
+			continue
+		}
+		nameLen := int(binary.LittleEndian.Uint16(b[28:30]))
+		extraLen := int(binary.LittleEndian.Uint16(b[30:32]))
+		commentLen := int(binary.LittleEndian.Uint16(b[32:34]))
+		if off+46+nameLen+extraLen+commentLen > raw.Len() {
+			continue
+		}
+		name := string(raw.Bytes()[off+46 : off+46+nameLen])
+		if name != "2.png" {
+			continue
+		}
+		localOffset := int(binary.LittleEndian.Uint32(b[42:46]))
+		local := raw.Bytes()[localOffset:]
+		localNameLen := int(binary.LittleEndian.Uint16(local[26:28]))
+		localExtraLen := int(binary.LittleEndian.Uint16(local[28:30]))
+		failStart = int64(localOffset + 30 + localNameLen + localExtraLen)
+		failEnd = failStart + int64(binary.LittleEndian.Uint32(b[20:24]))
+		break
+	}
+	if failEnd <= failStart {
+		t.Fatal("could not locate second ZIP member")
+	}
+	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id := mustFirstID(t, s)
+	s.zipReaderHook = func(_ *os.File, size int64) (*zip.Reader, error) {
+		return zip.NewReader(failRangeReaderAt{raw: raw.Bytes(), failStart: failStart, failEnd: failEnd}, size)
+	}
+	if _, _, err := s.EnsurePageIndex(context.Background(), id); ValidationReason(err) != "io_error" || !errors.Is(err, syscall.EIO) || ValidationCauseCode(err) != "io_error" {
+		t.Fatalf("expected retryable I/O error preserving EIO, got %v cause=%s", err, ValidationCauseCode(err))
+	}
+	var status string
+	var pageCount, indexed int
+	if err := s.db.QueryRow(`SELECT status,page_count FROM documents WHERE id=?`, id).Scan(&status, &pageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM document_pages WHERE document_id=?`, id).Scan(&indexed); err != nil {
+		t.Fatal(err)
+	}
+	if status != "available" || pageCount != 0 || indexed != 0 {
+		t.Fatalf("partial read changed candidate status=%s page_count=%d indexed=%d", status, pageCount, indexed)
+	}
+	s.zipReaderHook = nil
+	indexedDoc, pages, err := s.EnsurePageIndex(context.Background(), id)
+	if err != nil || indexedDoc.PageCount != 2 || len(pages) != 2 {
+		t.Fatalf("explicit retry failed doc=%+v pages=%d err=%v", indexedDoc, len(pages), err)
 	}
 }
 
@@ -521,8 +623,14 @@ func TestCachedPageIndexStillVerifiesCurrentSafePathSignature(t *testing.T) {
 					t.Skipf("symlink unavailable: %v", err)
 				}
 			}
-			if _, _, err := s.EnsurePageIndex(context.Background(), id); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("stale cached index accepted: %v", err)
+			_, _, err := s.EnsurePageIndex(context.Background(), id)
+			var validation *ValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("expected typed validation error, got %v", err)
+			}
+			want := map[string]string{"changed": "stale_signature", "missing": "file_missing", "symlink": "unsafe_path"}[mode]
+			if validation.Reason != want {
+				t.Fatalf("reason=%q want %q err=%v", validation.Reason, want, err)
 			}
 		})
 	}

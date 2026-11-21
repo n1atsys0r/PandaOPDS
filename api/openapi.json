@@ -6326,6 +6326,26 @@
               }
             }
           },
+          "409": {
+            "description": "The stored file signature is stale or the path is unsafe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The archive stat operation did not complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Could not read document",
             "content": {
@@ -6485,7 +6505,7 @@
             }
           },
           "404": {
-            "description": "Readable document not found",
+            "description": "Document record or archive file not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -6503,7 +6523,15 @@
             }
           },
           "422": {
-            "description": "The archive contains no readable image pages",
+            "description": "The archive is structurally invalid or contains no readable image pages; explicit reading can be retried",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "503": {
+            "description": "Archive I/O did not complete; no partial page index was committed",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/Error" }
@@ -6557,6 +6585,30 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          },
+          "409": {
+            "description": "Unsafe path or stale file signature; run a regular scan when the signature changed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "422": {
+            "description": "The archive or selected page is structurally invalid",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "503": {
+            "description": "Archive I/O did not complete; retry reading",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
           }
@@ -7187,6 +7239,24 @@
         "properties": {
           "detail": {
             "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "For local-document routes: missing_record, record_unavailable, file_missing, unsafe_path, stale_signature, invalid_archive, io_error, or page_out_of_range."
+          },
+          "path": {
+            "type": "string",
+            "description": "Archive-root-relative path; emitted only when a document record exists."
+          },
+          "phase": {
+            "type": "string",
+            "description": "The document validation stage that failed."
+          },
+          "stored_signature": {
+            "$ref": "#/components/schemas/DocumentFileSignature"
+          },
+          "current_signature": {
+            "$ref": "#/components/schemas/DocumentFileSignature"
           }
         },
         "required": [
@@ -7305,8 +7375,32 @@
           "deep": {
             "type": "boolean",
             "description": "Whether this run performed explicit deep archive inspection."
+          },
+          "link_diagnostics": {
+            "type": "object",
+            "description": "Counts from the latest safe legacy-sidecar reconciliation; contains no source metadata.",
+            "additionalProperties": {
+              "type": "integer"
+            }
           }
         }
+      },
+      "DocumentFileSignature": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mtime_ns": {
+            "type": "string",
+            "description": "Decimal Unix nanoseconds, encoded as text to avoid JavaScript integer precision loss."
+          }
+        },
+        "required": [
+          "size",
+          "mtime_ns"
+        ]
       },
       "ArchiveStatus": {
         "type": "object",

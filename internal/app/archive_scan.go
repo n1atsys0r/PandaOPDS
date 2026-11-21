@@ -11,15 +11,16 @@ import (
 )
 
 type ArchiveScanJob struct {
-	ID          uint64 `json:"id"`
-	Status      string `json:"status"`
-	Imported    int    `json:"imported"`
-	Skipped     int    `json:"skipped"`
-	Conflicts   int    `json:"conflicts"`
-	Error       string `json:"error,omitempty"`
-	Deep        bool   `json:"deep,omitempty"`
-	StartedAt   int64  `json:"started_at,omitempty"`
-	CompletedAt int64  `json:"completed_at,omitempty"`
+	ID              uint64         `json:"id"`
+	Status          string         `json:"status"`
+	Imported        int            `json:"imported"`
+	Skipped         int            `json:"skipped"`
+	Conflicts       int            `json:"conflicts"`
+	LinkDiagnostics map[string]int `json:"link_diagnostics,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	Deep            bool           `json:"deep,omitempty"`
+	StartedAt       int64          `json:"started_at,omitempty"`
+	CompletedAt     int64          `json:"completed_at,omitempty"`
 }
 
 func (s *Server) archiveScanStatus(w http.ResponseWriter, _ *http.Request) {
@@ -68,11 +69,15 @@ func (s *Server) startArchiveScan(w http.ResponseWriter, r *http.Request) {
 		} else {
 			report, err = s.Documents.Scan(ctx)
 		}
+		var linkDiagnostics map[string]int
 		if err == nil && s.Database != nil {
 			_, err = migration.LinkLegacyDocuments(s.Database, s.Settings.ArchiveDir)
+			if err == nil {
+				linkDiagnostics, err = migration.LegacyDocumentLinkDiagnostics(s.Database)
+			}
 		}
 		completed := time.Now().Unix()
-		result := ArchiveScanJob{ID: job.ID, StartedAt: job.StartedAt, CompletedAt: completed, Deep: job.Deep}
+		result := ArchiveScanJob{ID: job.ID, StartedAt: job.StartedAt, CompletedAt: completed, Deep: job.Deep, LinkDiagnostics: linkDiagnostics}
 		if err != nil {
 			result.Status, result.Error = "error", err.Error()
 		} else if found, ok := report["documents_found"].(int); ok {

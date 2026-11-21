@@ -3,6 +3,7 @@ package migration
 import (
 	"archive/zip"
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"pandaopds/internal/archive"
 	"pandaopds/internal/document"
@@ -604,6 +606,120 @@ func TestLinkLegacyDocumentsSkipsReadyPayloadMissingAtImport(t *testing.T) {
 	}
 	if retry, err := LinkLegacyDocuments(db, files); err != nil || retry != 0 {
 		t.Fatalf("retry linked=%d err=%v", retry, err)
+	}
+}
+
+func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t *testing.T) {
+	base := t.TempDir()
+	files, states := filepath.Join(base, "archive"), filepath.Join(base, "state")
+	const gid = 1726517
+	const token = "abc123"
+	if err := os.MkdirAll(filepath.Join(states, strconv.Itoa(gid)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLayoutZIP(t, filepath.Join(files, fmt.Sprintf("%d.zip", gid)), "001.png")
+	state := fmt.Sprintf(`{"gid":%d,"token":"%s","root_gid":%d,"root_token":"%s","payload_layout":"flat-gid","status":"ready","archive_size":14243223,"page_count":24,"or":"res"}`, gid, token, gid, token)
+	if err := os.WriteFile(filepath.Join(states, strconv.Itoa(gid), "state.json"), []byte(state), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gallery := fmt.Sprintf(`{"gid":%d,"token":"%s","title":"Flat legacy","page_count":24}`, gid, token)
+	if err := os.WriteFile(filepath.Join(states, strconv.Itoa(gid), "gallery.json"), []byte(gallery), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(states, strconv.Itoa(gid), "cover.jpg"), fixturePNG, 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(filepath.Join(base, "config", "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = ImportLegacyArchive(db, files, states); err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	var sourceSize, sourceMTime int64
+	if err = db.QueryRow(`SELECT archive_path,source_size,source_mtime_ns FROM archive_versions av JOIN publications p ON p.id=av.publication_id WHERE p.gid=? AND p.token=?`, gid, token).Scan(&path, &sourceSize, &sourceMTime); err != nil {
+		t.Fatal(err)
+	}
+	if path != fmt.Sprintf("%d.zip", gid) || sourceSize <= 0 || sourceMTime <= 0 {
+		t.Fatalf("legacy flat path/evidence path=%q size=%d mtime=%d", path, sourceSize, sourceMTime)
+	}
+	// An early reconciliation must remain retryable after the explicit scan.
+	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
+		t.Fatalf("pre-scan reconciliation linked=%d err=%v", linked, err)
+	}
+	if diagnostics, err := LegacyDocumentLinkDiagnostics(db); err != nil || diagnostics["no_document"] != 1 {
+		t.Fatalf("pre-scan diagnostics=%v err=%v", diagnostics, err)
+	}
+	docs, err := document.New(db, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 1 {
+		t.Fatalf("post-scan reconciliation linked=%d err=%v", linked, err)
+	}
+	var oldID string
+	if err = db.QueryRow(`SELECT id FROM documents WHERE archive_path=? AND status='available'`, path).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	var source, progressionTarget string
+	if err = db.QueryRow(`SELECT association_source,progression_target FROM documents WHERE id=?`, oldID).Scan(&source, &progressionTarget); err != nil || source != "legacy_sidecar" || progressionTarget != "eh" {
+		t.Fatalf("legacy link source=%q target=%q err=%v", source, progressionTarget, err)
+	}
+	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
+		t.Fatalf("idempotent reconciliation linked=%d err=%v", linked, err)
+	}
+	if err = docs.Associate(t.Context(), oldID, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
+		t.Fatalf("reconciliation restored a manually removed association: linked=%d err=%v", linked, err)
+	}
+	var associationSource, currentTarget string
+	var currentPub sql.NullInt64
+	if err = db.QueryRow(`SELECT publication_id,association_source,progression_target FROM documents WHERE id=?`, oldID).Scan(&currentPub, &associationSource, &currentTarget); err != nil {
+		t.Fatal(err)
+	}
+	if currentPub.Valid || associationSource != "manual" || currentTarget != "eh" {
+		t.Fatalf("manual unlink/frozen progression changed pub=%v source=%q target=%q", currentPub, associationSource, currentTarget)
+	}
+	if err = os.Chtimes(filepath.Join(files, path), time.Now(), time.Now().Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
+		t.Fatalf("replacement reconciliation linked=%d err=%v", linked, err)
+	}
+	var newID string
+	if err = db.QueryRow(`SELECT id FROM documents WHERE archive_path=? AND status='available'`, path).Scan(&newID); err != nil {
+		t.Fatal(err)
+	}
+	if newID == oldID {
+		t.Fatal("changed signature reused the previous document UUID")
+	}
+	var newSource sql.NullString
+	var oldStatus string
+	if err = db.QueryRow(`SELECT association_source FROM documents WHERE id=?`, newID).Scan(&newSource); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT status FROM documents WHERE id=?`, oldID).Scan(&oldStatus); err != nil {
+		t.Fatal(err)
+	}
+	if newSource.Valid || oldStatus != "missing" {
+		t.Fatalf("replacement inherited association source=%q old status=%q", newSource.String, oldStatus)
+	}
+	diagnostics, err := LegacyDocumentLinkDiagnostics(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics["stale_mtime"] != 1 || diagnostics["linked"] != 0 {
+		t.Fatalf("replacement link diagnostics=%v", diagnostics)
 	}
 }
 

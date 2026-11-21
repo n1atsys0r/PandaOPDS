@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CoverImage from "@/components/CoverImage.vue";
 import DownloadJobsPanel from "@/components/DownloadJobsPanel.vue";
-import { prepareDocumentForReading } from "@/document-reader.js";
+import {
+  documentReadErrorMessage,
+  prepareDocumentForReading,
+} from "@/document-reader.js";
 import {
   BookOpenIcon as BookOpen,
   LinkIcon as Link,
@@ -154,7 +157,7 @@ async function readDocument(doc) {
     const ready = await prepareDocumentForReading(doc, s.api);
     emit("read-document", ready);
   } catch (e) {
-    error.value = e.message;
+    error.value = documentReadErrorMessage(e, t);
   }
 }
 </script>
@@ -205,6 +208,15 @@ async function readDocument(doc) {
         · {{ scan.invalid }} {{ t("documents.invalid") }}</span
       ><span v-if="scan.error" class="text-destructive">
         · {{ scan.error }}</span
+      ><span v-if="Object.keys(scan.link_diagnostics || {}).length">
+        · links
+        <span
+          v-for="([reason, count], index) in Object.entries(
+            scan.link_diagnostics,
+          )"
+          :key="reason"
+          >{{ index ? ", " : " " }}{{ reason }}={{ count }}</span
+        ></span
       >
     </div>
     <div class="flex flex-wrap items-center justify-between gap-2">
@@ -333,7 +345,7 @@ async function readDocument(doc) {
         <div class="mt-4 flex flex-wrap gap-2">
           <Button
             size="sm"
-            :disabled="doc.status !== 'available'"
+            :disabled="doc.status !== 'available' && doc.status !== 'invalid'"
             @click="readDocument(doc)"
             ><BookOpen class="size-3.5" />{{ t("documents.read") }}</Button
           ><Button size="sm" variant="outline" @click="editLink(doc)"

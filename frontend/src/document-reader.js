@@ -10,6 +10,19 @@ export async function prepareDocumentForReading(doc, api) {
   }
   // Lazy indexing can discover trusted archive identity and change the frozen
   // progression URL. Fetch the document again after manifest construction.
-  const { data: latest } = await api(`/api/documents/${encodeURIComponent(id)}`);
+  const { data: latest } = await api(
+    `/api/documents/${encodeURIComponent(id)}`,
+  );
   return { ...doc, ...latest, page_count: pageCount, document_id: id };
+}
+
+export function documentReadErrorMessage(error, t) {
+  const reason = error?.data?.reason;
+  const message = reason
+    ? t(`documents.read_error_${reason}`)
+    : error?.message || String(error);
+  const diagnostic = error?.data?.path
+    ? ` (${error.data.path}; ${JSON.stringify(error.data.stored_signature || {})}${error.data.current_signature ? ` → ${JSON.stringify(error.data.current_signature)}` : ""})`
+    : "";
+  return `${message}${diagnostic}`;
 }

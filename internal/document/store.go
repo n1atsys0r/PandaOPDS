@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "golang.org/x/image/webp"
@@ -38,6 +39,7 @@ const (
 
 var ErrNotFound = errors.New("document not found")
 var ErrInvalidArchive = errors.New("archive contains no supported readable image pages")
+var ErrTransientRead = errors.New("archive could not be read completely; retry reading")
 var ErrAssociationConflict = errors.New("document EH association conflicts with trusted download identity")
 var ehGalleryURL = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:e-hentai\.org|exhentai\.org)/g/([0-9]+)/([0-9a-f]+)`)
 
@@ -46,9 +48,81 @@ type Store struct {
 	db              *sql.DB
 	mu              sync.Mutex
 	payloadOpenHook func(string)
+	zipReaderHook   func(*os.File, int64) (*zip.Reader, error)
 	beforeDelete    func(Document) error
 	rollbackDelete  func(Document) error
 }
+
+func (s *Store) newZipReader(file *os.File, size int64) (*zip.Reader, error) {
+	if s.zipReaderHook != nil {
+		return s.zipReaderHook(file, size)
+	}
+	return zip.NewReader(file, size)
+}
+
+// ValidationError keeps the stage and underlying cause of a failed document
+// access while exposing only a relative archive path and stat signatures to
+// callers. Cause is intentionally not serialized by the HTTP layer.
+type ValidationError struct {
+	Reason       string
+	Phase        string
+	Path         string
+	StoredSize   int64
+	StoredMTime  int64
+	CurrentSize  *int64
+	CurrentMTime *int64
+	Cause        error
+}
+
+func (e *ValidationError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("document %s during %s: %v", e.Reason, e.Phase, e.Cause)
+	}
+	return fmt.Sprintf("document %s during %s", e.Reason, e.Phase)
+}
+
+func (e *ValidationError) Unwrap() error { return e.Cause }
+
+func ValidationReason(err error) string {
+	var ve *ValidationError
+	if errors.As(err, &ve) {
+		return ve.Reason
+	}
+	if errors.Is(err, ErrInvalidArchive) {
+		return "invalid_archive"
+	}
+	if errors.Is(err, ErrNotFound) {
+		return "missing_record"
+	}
+	return "io_error"
+}
+
+func validationCauseCode(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return "unexpected_eof"
+	case errors.Is(err, io.EOF):
+		return "eof"
+	case errors.Is(err, syscall.EIO):
+		return "io_error"
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return "permission_denied"
+	case errors.Is(err, syscall.ETIMEDOUT):
+		return "timeout"
+	case errors.Is(err, syscall.ESTALE):
+		return "stale_mount"
+	default:
+		return fmt.Sprintf("%T", err)
+	}
+}
+
+func ValidationCauseCode(err error) string { return validationCauseCode(err) }
 
 type Document struct {
 	ID                string     `json:"id"`
@@ -165,6 +239,9 @@ func (s *Store) RegisterPublished(ctx context.Context, relativePath string, gid 
 	}
 	priorFound := err == nil
 	existingIdentity := priorFound && (priorStatus == "available" || priorStatus == "missing") && priorSize == d.Size && priorMTime == d.MTimeNS
+	if existingIdentity && priorSource == "manual" && !priorPub.Valid {
+		return Document{}, ErrAssociationConflict
+	}
 	if existingIdentity && priorSource == "manual" && priorPub.Valid {
 		var oldGID int
 		var oldToken string
@@ -237,7 +314,7 @@ func (s *Store) bindPublishedIdentity(ctx context.Context, id string, gid int, t
 		return ErrAssociationConflict
 	}
 	if freezeEH {
-		_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source=?,association_evidence='trusted_download_job',progression_target='eh',progression_gid=?,progression_token=?,updated_at=? WHERE id=? AND status='available'`, pubID, source, gid, token, now, id)
+		_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source=?,association_evidence='trusted_download_job',progression_target='eh',progression_gid=?,progression_token=?,updated_at=? WHERE id=? AND status='available' AND association_source IS NULL`, pubID, source, gid, token, now, id)
 	} else {
 		_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source=CASE WHEN association_source='manual' THEN association_source ELSE ? END,association_evidence=CASE WHEN association_source='manual' THEN association_evidence ELSE 'trusted_download_job' END,updated_at=? WHERE id=? AND status='available'`, pubID, source, now, id)
 	}
@@ -619,7 +696,7 @@ func (s *Store) applyArchiveClaim(ctx context.Context, id string, d Document) er
 	if e = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, d.ClaimGID, d.ClaimToken).Scan(&pubID); e != nil {
 		return e
 	}
-	if _, e = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source='archive_metadata',association_evidence=? WHERE id=? AND publication_id IS NULL`, pubID, d.ClaimEvidence, id); e != nil {
+	if _, e = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source='archive_metadata',association_evidence=? WHERE id=? AND publication_id IS NULL AND association_source IS NULL`, pubID, d.ClaimEvidence, id); e != nil {
 		return e
 	}
 	return tx.Commit()
@@ -832,11 +909,15 @@ func (s *Store) List(ctx context.Context, page, perPage int, status, linked stri
 func (s *Store) Get(ctx context.Context, id string) (Document, error) {
 	d, e := s.ListByID(ctx, id)
 	if e != nil {
-		return d, e
+		reason := "io_error"
+		if errors.Is(e, ErrNotFound) {
+			reason = "missing_record"
+		}
+		return d, &ValidationError{Reason: reason, Phase: "load", Cause: e}
 	}
 	if d.Status == "available" {
 		if e = s.verify(ctx, d); e != nil {
-			return Document{}, ErrNotFound
+			return d, e
 		}
 	}
 	return d, nil
@@ -844,14 +925,22 @@ func (s *Store) Get(ctx context.Context, id string) (Document, error) {
 
 func (s *Store) verify(ctx context.Context, d Document) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return &ValidationError{Reason: "io_error", Phase: "stat", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
 	}
 	st, e := secureStat(s.root, d.Path)
 	if e != nil {
-		return e
+		reason := "io_error"
+		switch {
+		case errors.Is(e, os.ErrNotExist):
+			reason = "file_missing"
+		case strings.Contains(e.Error(), "symlink") || strings.Contains(e.Error(), "invalid archive path") || strings.Contains(e.Error(), "not a real directory"):
+			reason = "unsafe_path"
+		}
+		return &ValidationError{Reason: reason, Phase: "stat", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
 	}
 	if st.Size() != d.Size || st.ModTime().UnixNano() != d.MTimeNS {
-		return errors.New("document changed; rescan required")
+		size, mtime := st.Size(), st.ModTime().UnixNano()
+		return &ValidationError{Reason: "stale_signature", Phase: "stat", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime, Cause: errors.New("stored file attributes no longer match the file")}
 	}
 	return nil
 }
@@ -864,53 +953,62 @@ func (s *Store) EnsurePageIndex(ctx context.Context, id string) (Document, []Pag
 	defer s.mu.Unlock()
 	d, err := s.ListByID(ctx, id)
 	if err != nil {
-		return Document{}, nil, err
+		reason := "io_error"
+		if errors.Is(err, ErrNotFound) {
+			reason = "missing_record"
+		}
+		return Document{}, nil, &ValidationError{Reason: reason, Phase: "load", Cause: err}
 	}
-	if d.Status != "available" {
-		return Document{}, nil, ErrNotFound
+	if d.Status != "available" && d.Status != "invalid" {
+		return Document{}, nil, &ValidationError{Reason: "record_unavailable", Phase: "record", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
 	}
 	if err = s.verify(ctx, d); err != nil {
-		return Document{}, nil, ErrNotFound
+		return Document{}, nil, err
 	}
 	pages, err := s.pageIndex(ctx, id)
 	if err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "page_index_cache", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
 	}
 	if d.PageCount > 0 && len(pages) == d.PageCount {
 		return d, pages, nil
 	}
 	f, err := s.openPayload(d.Path)
 	if err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, &ValidationError{Reason: validationReasonForPathError(err), Phase: "open", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
 	}
 	defer f.Close()
 	before, err := f.Stat()
 	if err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "stat_open_file", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
 	}
 	if before.Size() != d.Size || before.ModTime().UnixNano() != d.MTimeNS {
-		return Document{}, nil, errors.New("document changed; rescan required")
+		size, mtime := before.Size(), before.ModTime().UnixNano()
+		return Document{}, nil, &ValidationError{Reason: "stale_signature", Phase: "open", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime}
 	}
-	zr, err := zip.NewReader(f, before.Size())
+	zr, err := s.newZipReader(f, before.Size())
 	if err != nil {
-		return s.invalidateUnreadable(ctx, d, err)
+		if errors.Is(err, zip.ErrFormat) {
+			return s.invalidateUnreadable(ctx, d, "invalid_archive", err)
+		}
+		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, err)}
 	}
 	pages, err = readablePages(ctx, zr)
 	if err != nil {
 		if ctx.Err() != nil {
-			return Document{}, nil, ctx.Err()
+			return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "page_index", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: ctx.Err()}
 		}
-		return s.invalidateUnreadable(ctx, d, err)
+		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "page_index", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, err)}
 	}
 	if len(pages) == 0 {
-		return s.invalidateUnreadable(ctx, d, ErrInvalidArchive)
+		return s.invalidateUnreadable(ctx, d, "invalid_archive", ErrInvalidArchive)
 	}
 	after, err := f.Stat()
 	if err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "stat_after_index", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
 	}
 	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return Document{}, nil, errors.New("document changed during page indexing")
+		size, mtime := after.Size(), after.ModTime().UnixNano()
+		return Document{}, nil, &ValidationError{Reason: "stale_signature", Phase: "page_index", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime}
 	}
 	claimGID, claimToken := archiveIdentity(ctx, zr)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -944,14 +1042,32 @@ func (s *Store) EnsurePageIndex(ctx context.Context, id string) (Document, []Pag
 	return d, pages, nil
 }
 
-func (s *Store) invalidateUnreadable(ctx context.Context, d Document, cause error) (Document, []PageInfo, error) {
-	if _, err := s.db.ExecContext(ctx, `UPDATE documents SET status='invalid',page_count=0,updated_at=? WHERE id=? AND size=? AND mtime_ns=?`, time.Now().UTC().Format(time.RFC3339Nano), d.ID, d.Size, d.MTimeNS); err != nil {
+func (s *Store) invalidateUnreadable(ctx context.Context, d Document, reason string, cause error) (Document, []PageInfo, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return Document{}, nil, err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, d.ID); err != nil {
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='invalid',page_count=0,updated_at=? WHERE id=? AND size=? AND mtime_ns=?`, time.Now().UTC().Format(time.RFC3339Nano), d.ID, d.Size, d.MTimeNS); err != nil {
 		return Document{}, nil, err
 	}
-	return Document{}, nil, fmt.Errorf("%w: %v", ErrInvalidArchive, cause)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, d.ID); err != nil {
+		return Document{}, nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Document{}, nil, err
+	}
+	return Document{}, nil, &ValidationError{Reason: reason, Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: cause}
+}
+
+func validationReasonForPathError(err error) string {
+	if errors.Is(err, os.ErrNotExist) {
+		return "file_missing"
+	}
+	if strings.Contains(err.Error(), "symlink") || strings.Contains(err.Error(), "invalid archive path") || strings.Contains(err.Error(), "not a real directory") {
+		return "unsafe_path"
+	}
+	return "io_error"
 }
 
 func (s *Store) SetDeleteHooks(before, rollback func(Document) error) {
@@ -961,7 +1077,7 @@ func (s *Store) SetDeleteHooks(before, rollback func(Document) error) {
 
 func (s *Store) Associate(ctx context.Context, id string, gid int, token string) error {
 	if gid == 0 && token == "" {
-		res, err := s.db.ExecContext(ctx, `UPDATE documents SET publication_id=NULL,association_source=NULL,association_evidence=NULL,updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), id)
+		res, err := s.db.ExecContext(ctx, `UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence='user_unlinked',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), id)
 		if err != nil {
 			return err
 		}
@@ -1036,27 +1152,31 @@ func (s *Store) OpenPage(ctx context.Context, id string, page int) ([]byte, stri
 		return nil, "", ErrNotFound
 	}
 	if page < 0 || page >= d.PageCount {
-		return nil, "", ErrNotFound
+		return nil, "", &ValidationError{Reason: "page_out_of_range", Phase: "page_lookup", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
 	}
 	f, e := s.openPayload(d.Path)
 	if e != nil {
-		return nil, "", e
+		return nil, "", &ValidationError{Reason: validationReasonForPathError(e), Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
 	}
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil {
-		return nil, "", e
+		return nil, "", &ValidationError{Reason: "io_error", Phase: "stat_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
 	}
 	if st.Size() != d.Size || st.ModTime().UnixNano() != d.MTimeNS {
-		return nil, "", errors.New("document changed; rescan required")
+		size, mtime := st.Size(), st.ModTime().UnixNano()
+		return nil, "", &ValidationError{Reason: "stale_signature", Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime}
 	}
 	if page >= len(pages) {
-		return nil, "", ErrNotFound
+		return nil, "", &ValidationError{Reason: "page_out_of_range", Phase: "page_lookup", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
 	}
 	info := pages[page]
-	zr, e := zip.NewReader(f, st.Size())
+	zr, e := s.newZipReader(f, st.Size())
 	if e != nil {
-		return nil, "", e
+		if errors.Is(e, zip.ErrFormat) {
+			return nil, "", &ValidationError{Reason: "invalid_archive", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
+		}
+		return nil, "", &ValidationError{Reason: "io_error", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
 	}
 	var zf *zip.File
 	if info.CentralIndex >= 0 && info.CentralIndex < len(zr.File) {
@@ -1067,12 +1187,12 @@ func (s *Store) OpenPage(ctx context.Context, id string, page int) ([]byte, stri
 	}
 	rc, e := zf.Open()
 	if e != nil {
-		return nil, "", e
+		return nil, "", &ValidationError{Reason: "io_error", Phase: "open_page_member", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
 	}
 	defer rc.Close()
 	b, e := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, r: rc}, int64(maxImageBytes)+1))
 	if e != nil {
-		return nil, "", e
+		return nil, "", &ValidationError{Reason: "io_error", Phase: "read_page_member", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
 	}
 	if len(b) > int(maxImageBytes) {
 		return nil, "", errors.New("image page exceeds size limit")
@@ -1133,12 +1253,23 @@ func readablePages(ctx context.Context, zr *zip.Reader) ([]PageInfo, error) {
 		}
 		rc, err := zf.Open()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("open image member %q: %w", zf.Name, err)
 		}
 		cfg, format, err := image.DecodeConfig(io.LimitReader(contextReader{ctx: ctx, r: rc}, int64(maxImageBytes)))
 		_ = rc.Close()
-		if err == nil && cfg.Width > 0 && cfg.Height > 0 {
+		if err != nil {
+			// Decode failures other than a format mismatch can be caused by a
+			// transient read from a mounted archive. Do not publish a partial
+			// index or persist invalid status in that case.
+			if errors.Is(err, image.ErrFormat) {
+				continue
+			}
+			return nil, fmt.Errorf("decode image member %q: %w", zf.Name, err)
+		}
+		if cfg.Width > 0 && cfg.Height > 0 {
 			valid = append(valid, PageInfo{Index: len(valid), CentralIndex: indexed.index, EntryName: zf.Name, MIME: mimeForFormat(format), Size: zf.UncompressedSize64})
+		} else {
+			return nil, fmt.Errorf("decode image member %q: invalid dimensions", zf.Name)
 		}
 	}
 	return valid, nil

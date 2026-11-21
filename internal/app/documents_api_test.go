@@ -171,6 +171,115 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	}
 }
 
+func TestManifestReportsStaleSignatureAndAllowsExplicitInvalidRetry(t *testing.T) {
+	base := t.TempDir()
+	archiveRoot := filepath.Join(base, "archive")
+	if err := os.MkdirAll(archiveRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := os.Create(filepath.Join(archiveRoot, "stale.cbz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(valid)
+	entry, err := zw.Create("page.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = entry.Write([]byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}); err != nil {
+		t.Fatal(err)
+	}
+	if err = zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = valid.Close(); err != nil {
+		t.Fatal(err)
+	}
+	badPath := filepath.Join(archiveRoot, "bad.zip")
+	if err = os.WriteFile(badPath, []byte("not a zip"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(filepath.Join(base, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	docs, err := document.New(db, archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterDocumentRoutes(mux, docs, config.Settings{PSEPageBase: 1})
+	var stale string
+	if err = db.QueryRow(`SELECT id FROM documents WHERE archive_path='stale.cbz'`).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	oldInfo, err := os.Stat(filepath.Join(archiveRoot, "stale.cbz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(filepath.Join(archiveRoot, "stale.cbz"), oldInfo.ModTime().Add(time.Second), oldInfo.ModTime().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/documents/"+stale+"/manifest", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale manifest status=%d body=%s", response.Code, response.Body)
+	}
+	var staleBody map[string]any
+	if err = json.Unmarshal(response.Body.Bytes(), &staleBody); err != nil {
+		t.Fatal(err)
+	}
+	if staleBody["reason"] != "stale_signature" || staleBody["path"] != "stale.cbz" || staleBody["phase"] != "stat" {
+		t.Fatalf("stale diagnostic=%v", staleBody)
+	}
+	stored, ok := staleBody["stored_signature"].(map[string]any)
+	current, currentOK := staleBody["current_signature"].(map[string]any)
+	if !ok || stored["mtime_ns"] == nil || !currentOK || current["mtime_ns"] == nil {
+		t.Fatalf("stale signature details missing: %v", staleBody)
+	}
+	for _, path := range []string{"/api/documents/" + stale, "/stream/documents/" + stale + "/page/1"} {
+		response = httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		var body map[string]any
+		if err = json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusConflict || body["reason"] != "stale_signature" || body["path"] != "stale.cbz" {
+			t.Fatalf("stale endpoint %s status=%d body=%s err=%v", path, response.Code, response.Body, err)
+		}
+	}
+
+	var badID string
+	if err = db.QueryRow(`SELECT id FROM documents WHERE archive_path='bad.zip'`).Scan(&badID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			if _, err = db.Exec(`UPDATE documents SET updated_at='2000-01-01T00:00:00Z' WHERE id=?`, badID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		response = httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/documents/"+badID+"/manifest", nil))
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("invalid retry %d status=%d body=%s", i, response.Code, response.Body)
+		}
+		var body map[string]any
+		if err = json.Unmarshal(response.Body.Bytes(), &body); err != nil || body["reason"] != "invalid_archive" {
+			t.Fatalf("invalid retry body=%v err=%v", body, err)
+		}
+	}
+	var updated string
+	if err = db.QueryRow(`SELECT updated_at FROM documents WHERE id=?`, badID).Scan(&updated); err != nil || updated == "2000-01-01T00:00:00Z" {
+		t.Fatalf("invalid archive retry did not revisit the payload: updated=%q err=%v", updated, err)
+	}
+	var status string
+	if err = db.QueryRow(`SELECT status FROM documents WHERE id=?`, badID).Scan(&status); err != nil || status != "invalid" {
+		t.Fatalf("invalid status=%q err=%v", status, err)
+	}
+}
+
 func TestLegacyArchiveLinkKeepsEHProgressAndSQLiteCoverOnDocumentHTTP(t *testing.T) {
 	base := t.TempDir()
 	files, state := filepath.Join(base, "archive"), filepath.Join(base, "state")
