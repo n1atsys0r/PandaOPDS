@@ -431,3 +431,22 @@ test("createDefaultSearchFacets returns 10 editable categories", () => {
     assert.equal(item.expunged, false);
   }
 });
+
+test("subscription sources round-trip for publication and navigation layouts", () => {
+  const layout = {
+    navigation: [{ title: "Cached top", type: "subscription", query: "sub-id" }],
+    publication: { kind: "publication", title: "Cached list", type: "subscription", query: "sub-id", count: 20 },
+    facets: [],
+    groups: [{ kind: "navigation", group: true, title: "Other", items: [{ title: "Cached", type: "subscription", query: "sub-id" }] }],
+  };
+  const serialized = serializeHomeLayout(layout, "groups");
+  assert.equal(serialized[0].type, "subscription");
+  assert.equal(serialized[0].query, "sub-id");
+  assert.equal(serialized[1].items[0].type, "subscription");
+  const split = splitHomeSections(serialized);
+  assert.equal(split.groups[0].items[0].type, "subscription");
+
+  const publications = serializeHomeLayout(layout, "publications");
+  assert.equal(publications[1].type, "subscription");
+  assert.equal(publications[1].query, "sub-id");
+});

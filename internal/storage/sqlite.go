@@ -115,10 +115,16 @@ func migrate(db *sql.DB) error {
 	if err = tx.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version > 8 {
+	if version > 9 {
 		return fmt.Errorf("database schema version %d is newer than this application supports", version)
 	}
+	if version == 9 {
+		return tx.Commit()
+	}
 	if version == 8 {
+		if err := migrateArchiveAssociationIdentity(tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	if version == 1 {
@@ -223,6 +229,9 @@ CREATE TABLE IF NOT EXISTS archive_delete_payloads(intent_id TEXT NOT NULL REFER
 		if _, err := tx.Exec(`INSERT INTO schema_migrations(version,applied_at)VALUES(8,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
+		if err := migrateArchiveAssociationIdentity(tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -262,7 +271,31 @@ PRAGMA user_version=8;`)
 	if err != nil {
 		return err
 	}
+	if err := migrateArchiveAssociationIdentity(tx); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func migrateArchiveAssociationIdentity(tx *sql.Tx) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// Keep the unique trusted candidate matching the ready archive path first,
+	// otherwise newest trusted record then ID. If none is trusted, unlink all.
+	_, err := tx.Exec(`WITH ranked AS (
+ SELECT d.id, ROW_NUMBER() OVER (PARTITION BY d.publication_id ORDER BY
+ CASE WHEN d.association_source='download_job' AND EXISTS(SELECT 1 FROM archive_versions av WHERE av.publication_id=d.publication_id AND av.status='ready' AND av.archive_path=d.archive_path) THEN 0 WHEN d.association_source='download_job' THEN 1 ELSE 2 END,
+ CASE WHEN d.association_source='download_job' THEN d.updated_at END DESC,d.id) rn,
+ SUM(CASE WHEN d.association_source='download_job' THEN 1 ELSE 0 END) OVER (PARTITION BY d.publication_id) trusted
+ FROM documents d WHERE d.publication_id IS NOT NULL
+), losers AS (SELECT id FROM ranked WHERE rn>1 AND trusted>0)
+UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence='duplicate_association_migration',updated_at=? WHERE id IN (SELECT id FROM losers);
+WITH untrusted AS (SELECT publication_id,id,SUM(CASE WHEN association_source='download_job' THEN 1 ELSE 0 END) OVER(PARTITION BY publication_id) trusted,COUNT(*) OVER(PARTITION BY publication_id) n FROM documents WHERE publication_id IS NOT NULL)
+UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence='duplicate_association_migration',updated_at=? WHERE id IN (SELECT id FROM untrusted WHERE n>1 AND trusted=0);`, now, now)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS documents_publication_unique ON documents(publication_id) WHERE publication_id IS NOT NULL; PRAGMA user_version=9; INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(9,?);`, now)
+	return err
 }
 
 func addColumnIfMissing(tx *sql.Tx, table, column, statement string) error {

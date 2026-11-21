@@ -28,6 +28,15 @@ func (s *Server) streamPage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": fmt.Sprintf("page must be >= %d (PSE page base)", s.Settings.PSEPageBase)})
 		return
 	}
+	if s.Documents != nil {
+		if d, lookup := s.Documents.AssociatedDocument(r.Context(), gid, token); lookup == nil {
+			data, typ, e := s.Documents.OpenPage(r.Context(), d.ID, page-s.Settings.PSEPageBase)
+			if e == nil {
+				writeBytes(w, 200, typ, map[string]string{"Cache-Control": "no-cache"}, data)
+				return
+			}
+		}
+	}
 	data, mime, e := s.Service.GetImage(r.Context(), gid, token, page)
 	if e != nil {
 		if s.writeImageQuotaError(w, r, e, s.Settings.ExceedCooldownSeconds, false) {
@@ -43,6 +52,15 @@ func (s *Server) thumb(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
+	}
+	if s.Documents != nil {
+		if d, lookup := s.Documents.AssociatedDocument(r.Context(), gid, token); lookup == nil {
+			data, typ, e := s.Documents.OpenPage(r.Context(), d.ID, 0)
+			if e == nil {
+				writeBytes(w, 200, typ, map[string]string{"Cache-Control": "no-cache"}, data)
+				return
+			}
+		}
 	}
 	data, mime, e := s.Service.GetThumb(r.Context(), gid, token)
 	if e != nil {

@@ -229,7 +229,7 @@ func ValidateSection(s Section) error {
 	if s.Kind == "navigation" {
 		if s.Group && len(s.Items) > 0 {
 			for _, it := range s.Items {
-				if it.Type != "preset" && it.Type != "search" && it.Type != "page" {
+				if it.Type != "preset" && it.Type != "search" && it.Type != "page" && it.Type != "subscription" {
 					return fmt.Errorf("invalid navigation item type %q", it.Type)
 				}
 				if it.Type == "preset" {
@@ -240,12 +240,16 @@ func ValidateSection(s Section) error {
 					if it.Query == "" || !slugRE.MatchString(it.Query) {
 						return fmt.Errorf("invalid target page id %q", it.Query)
 					}
+				} else if it.Type == "subscription" {
+					if it.Query == "" {
+						return fmt.Errorf("navigation subscription id cannot be empty")
+					}
 				} else if it.Query == "" {
 					return fmt.Errorf("navigation item search query cannot be empty")
 				}
 			}
 		} else {
-			if s.Type != "preset" && s.Type != "search" && s.Type != "page" {
+			if s.Type != "preset" && s.Type != "search" && s.Type != "page" && s.Type != "subscription" {
 				return fmt.Errorf("invalid section type %q", s.Type)
 			}
 			if s.Type == "preset" {
@@ -255,6 +259,10 @@ func ValidateSection(s Section) error {
 			} else if s.Type == "page" {
 				if s.Query == "" || !slugRE.MatchString(s.Query) {
 					return fmt.Errorf("invalid target page id %q", s.Query)
+				}
+			} else if s.Type == "subscription" {
+				if s.Query == "" {
+					return fmt.Errorf("navigation subscription id cannot be empty")
 				}
 			} else if s.Query == "" {
 				return fmt.Errorf("search query cannot be empty")
@@ -287,7 +295,7 @@ func ValidateSection(s Section) error {
 		}
 	} else {
 		// publication
-		if s.Type != "preset" && s.Type != "search" {
+		if s.Type != "preset" && s.Type != "search" && s.Type != "subscription" {
 			return fmt.Errorf("invalid section type %q for kind %s", s.Type, s.Kind)
 		}
 		if s.Type == "preset" {
@@ -829,6 +837,9 @@ func ResolvePreset(q string) (kind, arg string, err error) {
 
 func BuildHref(typ, query string) string {
 	base := "/opds/v2.0"
+	if typ == "subscription" {
+		return base + "/subscription/" + url.PathEscape(query)
+	}
 	if typ == "page" {
 		if query == "home" || query == "" {
 			return base

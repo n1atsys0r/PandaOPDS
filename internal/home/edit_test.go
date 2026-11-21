@@ -594,3 +594,18 @@ count = 20
 		t.Errorf("migrated config should pass Validate(): %v", err)
 	}
 }
+
+func TestSubscriptionHomeSources(t *testing.T) {
+	if err := ValidateSection(Section{Kind: "publication", Type: "subscription", Query: "abc123"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSection(Section{Kind: "navigation", Type: "subscription", Query: "abc123"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSection(Section{Kind: "publication", Type: "subscription"}); err == nil {
+		t.Fatal("expected empty subscription ID to fail")
+	}
+	if got := BuildHref("subscription", "abc 123"); got != "/opds/v2.0/subscription/abc%20123" {
+		t.Fatalf("href=%q", got)
+	}
+}

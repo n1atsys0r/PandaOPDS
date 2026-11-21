@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogClose,
 } from "@/components/ui/dialog";
+import { AlertDialog,AlertDialogAction,AlertDialogCancel,AlertDialogContent,AlertDialogDescription,AlertDialogFooter,AlertDialogHeader,AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -41,6 +42,8 @@ import {
   Send,
 } from "@lucide/vue";
 import { useApp } from "@/state.js";
+import { archiveActionFor } from "@/archive-flow.js";
+import { captureGalleryMetadata, ensureGalleryMetadata, restoreGalleryMetadata } from "@/gallery-metadata.js";
 import { t } from "@/i18n.js";
 import { EH_CATEGORIES, getCategoryColor } from "@/subscription-view.js";
 
@@ -55,6 +58,9 @@ const emit = defineEmits([
   "update:publication",
   "read-gallery",
   "archive-gallery",
+  "archive-unlink",
+  "archive-delete",
+  "archive-manage",
   "favorite-gallery",
   "tag-click",
   "category-click",
@@ -177,6 +183,7 @@ function normalizePublicationItem(p) {
     reviews,
     subjects,
     detailLoaded: Boolean(p.detailLoaded || readingOrder.length > 0),
+    galleryDetailsLoaded: Boolean(p.galleryDetailsLoaded),
   };
 }
 
@@ -205,15 +212,14 @@ const currentRating = computed(() => {
 const currentArchiveBadge = computed(() => {
   const pub = selectedPub.value;
   if (!pub) return null;
-  if (pub.archived || pub.status === "archived") {
-    return { label: t("subscription.local_archive"), variant: "outline" };
-  }
-  if (pub.download_status) {
-    return { label: pub.download_status, variant: "secondary" };
-  }
-  if (pub.archiveBadge) return pub.archiveBadge;
+  const item=currentArchiveItem.value;
+  const localStatus=item?.archive_status || item?.status;
+  if (localStatus) return {label:localStatus==="ready"?t("explore.status_archived"):localStatus==="unavailable"?t("archive.unavailable"):localStatus,isReady:localStatus==="ready",isUnavailable:localStatus==="unavailable",isFailed:localStatus==="failed",isDownloading:["pending","submitting","staging","downloading","zipping"].includes(localStatus)};
   return null;
 });
+
+const currentArchiveItem = computed(()=>{ const pub=selectedPub.value;if(!pub?.gid||!pub?.token)return null;return (s.archives.value||[]).find(item=>Number(item.gid)===Number(pub.gid)&&String(item.token||"").toLowerCase()===String(pub.token).toLowerCase())||null; });
+const archiveAction = ref(null);
 
 const isArchiveQuoteBusy = computed(() => {
   return s.busy.value;
@@ -274,7 +280,13 @@ function handleFavcatClick() {
 const currentFileSize = computed(() => {
   const pub = selectedPub.value;
   if (!pub) return "";
-  return pub.fileSize || pub.file_size || "";
+  const label = pub.fileSize || pub.file_size;
+  if (label) return label;
+  const bytes = Number(pub.sizeBytes || 0);
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** unit).toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 });
 
 function formatDisplayDate(dateStr) {
@@ -332,8 +344,12 @@ function handleIncognitoRead() {
 }
 
 function handleArchive(pub) {
+  const item=currentArchiveItem.value;
+  if (archiveActionFor(item?.archive_status || item?.status)!=="quote") return;
   emit("archive-gallery", pub);
 }
+function requestArchiveAction(action,item){ archiveAction.value={action,item}; }
+function confirmArchiveAction(){ const pending=archiveAction.value;archiveAction.value=null;if(!pending)return;emit(pending.action==="unlink"?"archive-unlink":"archive-delete",pending.item); }
 
 function handleSelectFavcat(catId) {
   if (!selectedPub.value) return;
@@ -374,6 +390,7 @@ function handleTagClick(tag) {
 const isPreparingReader = ref(false);
 async function handleRead(pub, startPage = null, options = {}) {
   if (!pub?.gid || !pub?.token) return;
+  ensureSupplementalGalleryMetadata(pub);
   const pageCount = Number(pub.pageCount || pub.page_count || 0);
 
   if (pub.detailLoaded && pageCount > 0) {
@@ -458,6 +475,7 @@ function prevGallery() {
     const target = props.list[currentIndex.value - 1];
     pubData.value = normalizePublicationItem(target);
     emit("update:publication", pubData.value);
+    ensureSupplementalGalleryMetadata(pubData.value);
     ensurePublicationDetails(pubData.value);
     detailSubView.value = "main";
     scrollModalToTop();
@@ -469,6 +487,7 @@ function nextGallery() {
     const target = props.list[currentIndex.value + 1];
     pubData.value = normalizePublicationItem(target);
     emit("update:publication", pubData.value);
+    ensureSupplementalGalleryMetadata(pubData.value);
     ensurePublicationDetails(pubData.value);
     detailSubView.value = "main";
     scrollModalToTop();
@@ -767,6 +786,16 @@ function handleQuickJump() {
   });
 }
 
+function ensureSupplementalGalleryMetadata(pub) {
+  if (!pub?.gid || !pub?.token || pub.galleryDetailsLoaded) return Promise.resolve(pub);
+  return ensureGalleryMetadata(s.api, pub).then((updated) => {
+    if (pubData.value && pubData.value.gid === pub.gid && pubData.value.token === pub.token) {
+      restoreGalleryMetadata(pubData.value, captureGalleryMetadata(updated));
+    }
+    return updated;
+  }).catch(() => pub);
+}
+
 const detailRequests = new Map();
 function ensurePublicationDetails(pub) {
   if (!pub?.gid || !pub?.token) return Promise.resolve(null);
@@ -825,6 +854,7 @@ function ensurePublicationDetails(pub) {
       const reviews = Array.isArray(metadata["x:reviews"])
         ? metadata["x:reviews"]
         : pub.reviews || [];
+      const supplemental = captureGalleryMetadata(pub);
 
       let upstreamUrl = pub.upstreamUrl;
       for (const link of data.links || []) {
@@ -866,15 +896,14 @@ function ensurePublicationDetails(pub) {
         detailLoaded: true,
         readingOrder: validPages ? pages : pub.readingOrder || [],
         pageCount: pageCountVal,
-        rating: ratingVal > 0 ? ratingVal : pub.rating || 0,
-        uploader: metadata["x:uploader"] || pub.uploader || "",
-        publishTime:
-          metadata.published || pub.publishTime || pub.publish_time || "",
-        fileSize:
-          metadata["x:fileSize"] || pub.fileSize || pub.file_size || "",
+        rating: supplemental ? pub.rating : ratingVal > 0 ? ratingVal : pub.rating || 0,
+        uploader: supplemental ? pub.uploader : metadata["x:uploader"] || pub.uploader || "",
+        publishTime: supplemental ? pub.publishTime : metadata.published || pub.publishTime || pub.publish_time || "",
+        fileSize: supplemental ? pub.fileSize : metadata["x:fileSize"] || pub.fileSize || pub.file_size || "",
         upstreamUrl,
         favcat: favcat != null ? favcat : pub.favcat,
       });
+      if (supplemental) restoreGalleryMetadata(pub, supplemental);
 
       if (
         pubData.value &&
@@ -893,6 +922,7 @@ watch(
   ([raw, open]) => {
     if (raw && open) {
       pubData.value = normalizePublicationItem(raw);
+      ensureSupplementalGalleryMetadata(pubData.value);
       ensurePublicationDetails(pubData.value);
       s.loadArchives();
       if (pubData.value.gid && pubData.value.token) {
@@ -1143,6 +1173,11 @@ onUnmounted(() => {
                     />
                     <span>{{ primaryReadButtonLabel }}</span>
                   </Button>
+                    <template v-if="currentArchiveItem?.document_id || currentArchiveItem?.id">
+                    <Button v-if="currentArchiveBadge?.isUnavailable" size="sm" variant="secondary" @click="emit('archive-manage',currentArchiveItem)">{{ t('archive.manage') }}</Button>
+                    <Button size="sm" variant="outline" :disabled="isArchiveQuoteBusy || currentArchiveBadge?.isDownloading" @click="requestArchiveAction('unlink',currentArchiveItem)">{{ t('archive.unlink') }}</Button>
+                    <Button size="sm" variant="destructive" :disabled="isArchiveQuoteBusy || currentArchiveBadge?.isDownloading" @click="requestArchiveAction('delete',currentArchiveItem)">{{ t('archive.delete') }}</Button>
+                  </template>
 
                   <!-- Secondary Icon Button: Incognito Read -->
                   <Button
@@ -1246,6 +1281,7 @@ onUnmounted(() => {
 
                   <!-- Secondary Icon Button: Archive (State-aware icon variant) -->
                   <Button
+                    v-if="!currentArchiveItem?.document_id && !currentArchiveItem?.id"
                     variant="ghost"
                     size="icon"
                     class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
@@ -1827,4 +1863,16 @@ onUnmounted(() => {
       </Transition>
     </DialogContent>
   </Dialog>
+  <AlertDialog :open="Boolean(archiveAction)" @update:open="(open)=>{if(!open)archiveAction=null}">
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{{ archiveAction?.action==="unlink"?t('archive.unlink'):t('archive.delete') }}</AlertDialogTitle>
+        <AlertDialogDescription>{{ archiveAction?.action==="unlink"?t('archive.confirm_unlink'):t('archive.confirm_delete',{filename:archiveAction?.item?.path||archiveAction?.item?.title||archiveAction?.item?.document_id||''}) }}</AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>{{ t('common.cancel') }}</AlertDialogCancel>
+        <AlertDialogAction @click="confirmArchiveAction">{{ archiveAction?.action==="unlink"?t('archive.unlink'):t('archive.delete') }}</AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
 </template>

@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,11 +20,31 @@ import (
 
 	"pandaopds/internal/config"
 	"pandaopds/internal/document"
+	"pandaopds/internal/eh"
 	"pandaopds/internal/feed"
 	"pandaopds/internal/migration"
 	"pandaopds/internal/progression"
 	"pandaopds/internal/storage"
 )
+
+type unavailableGalleryTransport struct{}
+
+func (unavailableGalleryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusBadGateway, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("upstream unavailable")), Request: r}, nil
+}
+
+type managedOnlyArchive struct{}
+
+func (managedOnlyArchive) GetPage(int, string, int) ([]byte, bool, error) {
+	return []byte("managed-only-payload"), true, nil
+}
+func (managedOnlyArchive) ReadyCount() int                     { return 1 }
+func (managedOnlyArchive) ListReady(int, int) []eh.ArchiveInfo { return nil }
+func (managedOnlyArchive) GetCover(int, string) ([]byte, bool) {
+	return []byte("managed-only-cover"), true
+}
+func (managedOnlyArchive) GetMetadataSnapshot(int, string) (map[string]any, bool) { return nil, false }
+func (managedOnlyArchive) PageCount(int, string) int                              { return 1 }
 
 func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	root := t.TempDir()
@@ -126,7 +148,94 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if _, err = docs.DB().Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,references_json,written)VALUES('eh','456/frozen',456,'frozen',?,? ,0.8,'[]',?)`, now, `{"id":"urn:uuid:other","name":"other"}`, time.Now().UnixNano()); err != nil {
 		t.Fatal(err)
 	}
-	if err = docs.Associate(context.Background(), id, 999, "relinked"); err != nil {
+	if err = docs.Associate(context.Background(), id, 999, "abcdef1234"); err != nil {
+		t.Fatal(err)
+	}
+	settings := config.Settings{PSEPageBase: 1, EHSite: "e-hentai", CacheDir: filepath.Join(t.TempDir(), "eh-cache"), ImageSourceRetries: 0, Retries: 0}
+	service := eh.NewService(settings, unavailableGalleryTransport{})
+	defer service.Close()
+	service.AttachArchive(managedOnlyArchive{})
+	service.SetArchiveEligibility(func(ctx context.Context, gid int, token string) bool {
+		return docs.ManagedArchiveAllowed(ctx, "local.cbz", gid, token)
+	})
+	server := &Server{Documents: docs, Settings: settings, Service: service}
+	mux.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}/manifest", server.manifest20)
+	mux.HandleFunc("GET /stream/{gid}/{token}/page/{page}", server.streamPage)
+	mux.HandleFunc("GET /image/{gid}/{token}/thumb", server.thumb)
+	mux.HandleFunc("DELETE /api/archive/{gid}/{token}/association", server.archiveUnlink)
+	galleryManifest := httptest.NewRecorder()
+	mux.ServeHTTP(galleryManifest, httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery/999/abcdef1234/manifest", nil))
+	if galleryManifest.Code != 200 || !strings.Contains(galleryManifest.Body.String(), "urn:ehentai:gallery:999:abcdef1234") || !strings.Contains(galleryManifest.Body.String(), "/stream/999/abcdef1234/page/1") {
+		t.Fatalf("gallery manifest status=%d body=%s", galleryManifest.Code, galleryManifest.Body)
+	}
+	galleryPage := httptest.NewRecorder()
+	mux.ServeHTTP(galleryPage, httptest.NewRequest(http.MethodGet, "/stream/999/abcdef1234/page/1", nil))
+	if galleryPage.Code != 200 || galleryPage.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("gallery page status=%d type=%s", galleryPage.Code, galleryPage.Header().Get("Content-Type"))
+	}
+	galleryCover := httptest.NewRecorder()
+	mux.ServeHTTP(galleryCover, httptest.NewRequest(http.MethodGet, "/image/999/abcdef1234/thumb", nil))
+	if galleryCover.Code != 200 || galleryCover.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("gallery cover status=%d type=%s", galleryCover.Code, galleryCover.Header().Get("Content-Type"))
+	}
+	linkedDoc, err := docs.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedPub := BuildDocumentPublication(linkedDoc, config.Settings{PSEPageBase: 1})
+	if linkedPub["metadata"].(map[string]any)["identifier"] != "urn:ehentai:gallery:999:abcdef1234" {
+		t.Fatalf("linked identifier=%v", linkedPub["metadata"].(map[string]any)["identifier"])
+	}
+	for _, base := range []int{0, 1} {
+		manifest := BuildDocumentPublication(linkedDoc, config.Settings{PSEPageBase: base})
+		reading := manifest["readingOrder"].([]map[string]any)
+		want := fmt.Sprintf("/stream/999/abcdef1234/page/%d", base)
+		if reading[0]["href"] != want {
+			t.Fatalf("PSE base %d reading href=%v want=%s", base, reading[0]["href"], want)
+		}
+	}
+	linkedFeed, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedEntries := linkedFeed["publications"].([]map[string]any)
+	if len(linkedEntries) != 1 || linkedEntries[0]["metadata"].(map[string]any)["identifier"] != "urn:ehentai:gallery:999:abcdef1234" || !strings.Contains(linkedEntries[0]["links"].([]map[string]any)[0]["href"].(string), "/gallery/999/abcdef1234/manifest") {
+		t.Fatalf("linked archive feed=%v", linkedEntries)
+	}
+	linkedAtom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	if err != nil || !strings.Contains(string(linkedAtom), "urn:ehentai:gallery:999:abcdef1234") || !strings.Contains(string(linkedAtom), "/stream/999/abcdef1234/page/{pageNumber}") {
+		t.Fatalf("linked Atom feed err=%v body=%s", err, linkedAtom)
+	}
+	unlinkResponse := httptest.NewRecorder()
+	mux.ServeHTTP(unlinkResponse, httptest.NewRequest(http.MethodDelete, "/api/archive/999/abcdef1234/association", nil))
+	if unlinkResponse.Code != 200 {
+		t.Fatalf("unlink status=%d body=%s", unlinkResponse.Code, unlinkResponse.Body)
+	}
+	unlinkedDoc, err := docs.Get(context.Background(), id)
+	if err != nil || unlinkedDoc.ID != id {
+		t.Fatalf("unlinked document=%+v err=%v", unlinkedDoc, err)
+	}
+	if docs.ManagedArchiveAllowed(context.Background(), unlinkedDoc.Path, 999, "abcdef1234") {
+		t.Fatal("unlinked path remained eligible as a managed gallery archive")
+	}
+	afterUnlink := httptest.NewRecorder()
+	mux.ServeHTTP(afterUnlink, httptest.NewRequest(http.MethodGet, "/stream/999/abcdef1234/page/1", nil))
+	if afterUnlink.Code == 200 || strings.Contains(afterUnlink.Body.String(), "managed-only-payload") {
+		t.Fatalf("gallery served unlinked managed payload: status=%d body=%s", afterUnlink.Code, afterUnlink.Body.String())
+	}
+	unlinkedPub := BuildDocumentPublication(unlinkedDoc, config.Settings{PSEPageBase: 1})
+	if unlinkedPub["metadata"].(map[string]any)["identifier"] != "urn:pandaopds:document:"+id {
+		t.Fatalf("unlinked identifier=%v", unlinkedPub["metadata"].(map[string]any)["identifier"])
+	}
+	unlinkedFeed, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlinkedEntries := unlinkedFeed["publications"].([]map[string]any)
+	if unlinkedEntries[0]["metadata"].(map[string]any)["identifier"] != "urn:pandaopds:document:"+id {
+		t.Fatalf("unlinked feed identity=%v", unlinkedEntries[0]["metadata"].(map[string]any)["identifier"])
+	}
+	if err = docs.Associate(context.Background(), id, 999, "abcdef1234"); err != nil {
 		t.Fatal(err)
 	}
 	get := httptest.NewRecorder()

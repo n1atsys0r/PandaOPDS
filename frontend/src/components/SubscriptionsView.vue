@@ -69,6 +69,9 @@ const s = useApp();
 const emit = defineEmits([
   "read-gallery",
   "archive-gallery",
+  "archive-unlink",
+  "archive-delete",
+  "archive-manage",
   "favorite-gallery",
 ]);
 
@@ -1061,6 +1064,9 @@ function onDetailCategory(cat) {
       :list="items"
       @read-gallery="readItem"
       @archive-gallery="downloadItem"
+      @archive-unlink="emit('archive-unlink', $event)"
+      @archive-delete="emit('archive-delete', $event)"
+      @archive-manage="emit('archive-manage', $event)"
       @favorite-gallery="favoriteItem"
       @tag-click="onDetailSearch"
       @category-click="onDetailCategory"

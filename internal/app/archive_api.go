@@ -8,11 +8,13 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"pandaopds/internal/archive"
+	"pandaopds/internal/document"
 )
 
 func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
@@ -28,10 +30,10 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 	if per < 1 {
 		per = 200
 	}
-	if per > 500 {
-		per = 500
+	if per > 200 {
+		per = 200
 	}
-	docs, total, err := s.Documents.List(r.Context(), page, per, "available", "")
+	docs, total, err := s.Documents.List(r.Context(), page, per, "all", "")
 	if err != nil {
 		s.writeError(w, r, err)
 		return
@@ -54,7 +56,11 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 	}
 	enriched := make([]map[string]any, 0, len(docs))
 	for _, d := range docs {
-		entry := map[string]any{"id": d.ID, "title": d.Title, "path": d.Path, "format": d.Format, "status": d.Status, "size": d.Size, "page_count": d.PageCount, "association_source": d.AssociationSource, "manifest_url": "/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest", "cover_url": "/image/documents/" + url.PathEscape(d.ID) + "/thumb", "progression_url": documentProgressionURL(d)}
+		archiveStatus := "unavailable"
+		if d.Status == "available" {
+			archiveStatus = "ready"
+		}
+		entry := map[string]any{"id": d.ID, "document_id": d.ID, "title": d.Title, "path": d.Path, "format": d.Format, "status": archiveStatus, "archive_status": archiveStatus, "document_status": d.Status, "size": d.Size, "page_count": d.PageCount, "association_source": d.AssociationSource, "manifest_url": "/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest", "cover_url": "/image/documents/" + url.PathEscape(d.ID) + "/thumb", "progression_url": documentProgressionURL(d)}
 		gid := 0
 		token := ""
 		if d.GID != nil {
@@ -62,6 +68,7 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 			token = d.Token
 			entry["gid"] = gid
 			entry["token"] = token
+			entry["archive_status"] = map[bool]string{true: "ready", false: "unavailable"}[d.Status == "available"]
 			var cached int
 			if e := s.Database.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM covers c JOIN publications p ON p.id=c.publication_id WHERE p.provider='eh' AND p.gid=? AND p.token=?)`, gid, strings.ToLower(token)).Scan(&cached); e == nil && cached != 0 {
 				entry["cover_url"] = fmt.Sprintf("/api/publications/eh/%d/%s/cover", gid, url.PathEscape(token))
@@ -83,7 +90,8 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 		}
 		enriched = append(enriched, entry)
 	}
-	writeJSON(w, 200, map[string]any{"entries": enriched, "items": enriched, "total": total, "page": page, "per_page": per, "stats": map[string]any{"ready": total}})
+	_, readyTotal, _ := s.Documents.List(r.Context(), 1, 1, "available", "")
+	writeJSON(w, 200, map[string]any{"entries": enriched, "items": enriched, "total": total, "page": page, "per_page": per, "stats": map[string]any{"ready": readyTotal}})
 }
 
 func (s *Server) addArchiveUpdate(entry map[string]any, gid int, token string) {
@@ -150,12 +158,54 @@ func (s *Server) archiveStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.Archives.Status(gid, token)
-	if v["status"] == "absent" {
+	if s.Documents != nil {
+		d, err := s.Documents.AssociatedDocument(r.Context(), gid, token)
+		if err == nil {
+			status := "unavailable"
+			if d.Status == "available" {
+				status = "ready"
+			}
+			v["status"] = status
+			v["archive_status"] = status
+			v["document_status"] = d.Status
+			v["document_id"] = d.ID
+			v["association_source"] = d.AssociationSource
+			v["title"] = d.Title
+			v["page_count"] = d.PageCount
+			v["path"] = d.Path
+		} else if !errors.Is(err, document.ErrNotFound) {
+			s.writeError(w, r, err)
+			return
+		} else if !s.managedArchiveAllowed(r.Context(), gid, token) {
+			v["status"] = "unarchived"
+			v["archive_status"] = "unarchived"
+		}
+	}
+	if v["status"] == "absent" || v["status"] == nil {
 		writeJSON(w, 404, map[string]any{"detail": "no archive entry for this gallery"})
 		return
 	}
 	s.addArchiveUpdate(v, gid, token)
 	writeJSON(w, 200, v)
+}
+
+func (s *Server) managedArchiveAllowed(ctx context.Context, gid int, token string) bool {
+	if s.Documents == nil || s.Store == nil {
+		return true
+	}
+	path, _, e := s.Store.ArchivePublishPath(gid, token)
+	if e != nil {
+		return true
+	}
+	root, e := filepath.Abs(s.Settings.ArchiveDir)
+	if e != nil {
+		return false
+	}
+	rel, e := filepath.Rel(root, path)
+	if e != nil {
+		return false
+	}
+	return s.Documents.ManagedArchiveAllowed(ctx, filepath.ToSlash(rel), gid, token)
 }
 func (s *Server) archiveMetadata(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
@@ -256,29 +306,35 @@ func (s *Server) archiveDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"detail": "no local document for this gallery"})
 		return
 	}
-	all, total, e := s.Documents.List(r.Context(), 1, 500, "available", "")
+	d, e := s.Documents.AssociatedDocument(r.Context(), gid, token)
 	if e != nil {
-		s.writeError(w, r, e)
-		return
-	}
-	_ = total
-	removed := 0
-	for _, d := range all {
-		if d.GID == nil || *d.GID != gid || !strings.EqualFold(d.Token, token) {
-			continue
-		}
-		if err := s.Documents.Delete(r.Context(), d.ID); err != nil {
-			s.logArchiveDeleteFailure(gid, "document_delete", "delete local ZIP", err)
-			writeJSON(w, 409, map[string]any{"detail": "could not remove local document"})
-			return
-		}
-		removed++
-	}
-	if removed == 0 {
 		writeJSON(w, 404, map[string]any{"detail": "no local document for this gallery"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"removed": true, "documents_removed": removed, "retained_catalog": true})
+	if err := s.Documents.Delete(r.Context(), d.ID); err != nil {
+		s.logArchiveDeleteFailure(gid, "document_delete", "delete local ZIP", err)
+		writeJSON(w, 409, map[string]any{"detail": "could not remove local document"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"removed": true, "documents_removed": 1, "retained_catalog": true})
+}
+
+func (s *Server) archiveUnlink(w http.ResponseWriter, r *http.Request) {
+	gid, token, e := pathID(r)
+	if e != nil {
+		writeJSON(w, 422, map[string]any{"detail": e.Error()})
+		return
+	}
+	if s.Documents == nil {
+		writeJSON(w, 404, map[string]any{"detail": "no associated document"})
+		return
+	}
+	id, e := s.Documents.UnlinkGallery(r.Context(), gid, token)
+	if e != nil {
+		writeJSON(w, 404, map[string]any{"detail": "no associated document"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"unlinked": true, "document_id": id, "file_preserved": true})
 }
 
 func (s *Server) logArchiveDeleteFailure(gid int, branch, stage string, err error) {

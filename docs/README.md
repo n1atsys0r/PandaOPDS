@@ -11,5 +11,6 @@
 - [Go 迁移验收](go-acceptance.md)：Go 与既有实现的迁移验收步骤。
 - [历史实施计划](plans/PLAN-2026-08-11-archived.md)：已归档的早期计划，仅作历史记录。
 - [SQLite 与订阅／归档解耦方案](plans/PLAN-2026-11-19-sqlite-subscriptions-archives.md)：本次重构的设计记录。
+- [OPDS 归档关联身份与操作流程](plans/PLAN-2026-11-21-opds-archive-association-identity.md)：关联身份切换、详情页解除/删除归档和画廊载荷路由计划。
 
 精确 HTTP 路径、参数、请求体与响应 schema 以 [`api/openapi.json`](../api/openapi.json) 为准；运行时亦提供 `/docs` 与 `/openapi.json`。

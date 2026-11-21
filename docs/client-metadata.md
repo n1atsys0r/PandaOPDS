@@ -263,3 +263,7 @@ publication 保留 `/image/{activeGid}/{activeToken}/thumb` 的 `images[]` 封�
 8. 失效兜底：单个出版物栏目上游故障时省略其预览；首页布局由 `home.toml` 配置驱动，客户端无需感知。
 9. **分享**：取 publication / entry 的 `rel="alternate"` link（`type="text/html"`）作为分享 URL——即上游 E-Hentai 页面（e-hentai.org 或 exhentai.org，服务端已按 `EH_SITE` 拼好），客户端无需感知 `EH_SITE`。作品链接不再提供 acquisition/stream；用 `alternate` 分享上游页面。
 10. **模板链接**：href 含 `{...}`（stream 的 `{pageNumber}`、search 的 `{searchTerms}`，标 `templated: true`）一律**替换占位符后使用，永不按字面请求**；作品详情入口由 `self` 指向 Divina manifest；不要把 acquisition MIME 当作详情入口。
+
+## 本地文档与画廊身份
+
+本地文档关联画廊时，对外 identifier 为 `urn:ehentai:gallery:{gid}:{token}`；内部 `document_id` 与文档 manifest URL 保持稳定。解除关联后 identifier 恢复为 `urn:pandaopds:document:{document_id}`。关联归档 feed 的 manifest 与图片流使用画廊路由；progression 路由仍遵循文档上已保存的进度目标，不因身份变更迁移进度。保留的文档 ID 路由继续可直接阅读本地文件。

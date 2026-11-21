@@ -18,6 +18,7 @@ import (
 	"pandaopds/internal/feed"
 	"pandaopds/internal/home"
 	"pandaopds/internal/progression"
+	"pandaopds/internal/subscription"
 )
 
 var cursorRE = regexp.MustCompile(`^\d+(?:-\d+)*$`)
@@ -404,7 +405,7 @@ func (s *Server) archives12(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "public, max-age=300"}, body)
+	writeBytes(w, 200, feed.MIMEAtomAcq, map[string]string{"Cache-Control": "no-cache"}, body)
 }
 
 func (s *Server) history12(w http.ResponseWriter, r *http.Request) {
@@ -694,7 +695,7 @@ func (s *Server) archives20(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
+	writeBytes(w, 200, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "no-cache"}, s.builder().JSON(doc))
 }
 
 func (s *Server) archiveOPDSFeed(ctx context.Context, page, perPage int, category string) (map[string]any, int, error) {
@@ -910,6 +911,9 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 		if sec.Kind != "publication" {
 			continue
 		}
+		if !sec.Group {
+			rootSource = homePreviewKey{sec.Type, sec.Query}
+		}
 		count := previewCount(sec)
 		if count <= 0 {
 			continue
@@ -925,12 +929,19 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 			}
 			continue
 		}
+		if sec.Kind == "publication" && !sec.Group {
+			rootSource = homePreviewKey{sec.Type, sec.Query}
+		}
 		if count > len(result.info.Galleries) {
 			count = len(result.info.Galleries)
 		}
 		pubs := []map[string]any{}
 		for _, item := range result.info.Galleries[:count] {
-			pubs = append(pubs, s.builder().Publication(item, false))
+			if sec.Type == "subscription" {
+				pubs = append(pubs, subscriptionPublication(s.builder(), item))
+			} else {
+				pubs = append(pubs, s.builder().Publication(item, false))
+			}
 		}
 		if len(pubs) == 0 {
 			continue
@@ -946,6 +957,9 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 
 	rootFacetGroups := []map[string]any{}
 	for _, sec := range sections {
+		if rootSource.typeName == "subscription" {
+			break
+		}
 		if sec.Kind != "facets" {
 			continue
 		}
@@ -986,7 +1000,7 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 			}
 		}
 	}
-	if len(rootFacetGroups) == 0 && len(rootPubs) > 0 {
+	if rootSource.typeName != "subscription" && len(rootFacetGroups) == 0 && len(rootPubs) > 0 {
 		kind, _, _ := home.ResolvePreset(rootSource.query)
 		if rootSource.typeName == "preset" && kind == "favorites" {
 			virtualSec := home.Section{Type: rootSource.typeName, Query: rootSource.query}
@@ -1011,7 +1025,18 @@ func (s *Server) renderPageV20(w http.ResponseWriter, r *http.Request, cfg home.
 		}
 	}
 
-	if isRoot && len(rootNav) == 0 && len(outGroups) == 0 && len(rootPubs) == 0 {
+	hasSubscriptionSource := false
+	for _, sec := range sections {
+		if sec.Type == "subscription" {
+			hasSubscriptionSource = true
+		}
+	}
+	for _, sec := range cfg.GlobalNavigation() {
+		if sec.Type == "subscription" {
+			hasSubscriptionSource = true
+		}
+	}
+	if isRoot && !hasSubscriptionSource && len(rootNav) == 0 && len(outGroups) == 0 && len(rootPubs) == 0 {
 		rootNav = append(rootNav, map[string]any{"title": "Latest", "href": s.builder().Href(home.BuildHref("preset", "latest")), "rel": "subsection", "type": feed.MIMEOPDSAcq})
 	}
 
@@ -1238,11 +1263,15 @@ func previewCount(sec home.Section) int {
 func (s *Server) fetchHomePreviews(parent context.Context, sections []home.Section) (map[homePreviewKey]homePreviewResult, bool) {
 	keys := make([]homePreviewKey, 0, len(sections))
 	seen := make(map[homePreviewKey]bool)
+	counts := make(map[homePreviewKey]int)
 	for _, sec := range sections {
 		if sec.Kind != "publication" || previewCount(sec) <= 0 {
 			continue
 		}
 		key := homePreviewKey{sec.Type, sec.Query}
+		if previewCount(sec) > counts[key] {
+			counts[key] = previewCount(sec)
+		}
 		if !seen[key] {
 			seen[key] = true
 			keys = append(keys, key)
@@ -1283,7 +1312,8 @@ func (s *Server) fetchHomePreviews(parent context.Context, sections []home.Secti
 				result.err = ctx.Err()
 				return
 			}
-			sec := home.Section{Type: key.typeName, Query: key.query}
+			count := counts[key]
+			sec := home.Section{Type: key.typeName, Query: key.query, Count: &count}
 			result.info, result.err = s.fetchHomeSection(ctx, sec)
 		}()
 	}
@@ -1307,12 +1337,23 @@ func (s *Server) fetchHomePreviews(parent context.Context, sections []home.Secti
 	return results, ctx.Err() == context.DeadlineExceeded
 }
 
+func subscriptionPublication(builder feed.Builder, item eh.GalleryListItem) map[string]any {
+	pub := builder.Publication(item, false)
+	if item.CoverURL != "" {
+		pub["images"] = []map[string]string{{"href": builder.Href(item.CoverURL), "type": "image/jpeg"}}
+	}
+	return pub
+}
+
 func (s *Server) fetchHomeSection(ctx context.Context, sec home.Section) (eh.GalleryPageInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return eh.GalleryPageInfo{}, err
 	}
 	if sec.Type == "search" {
 		return s.Service.Search(ctx, sec.Query, "", nil)
+	}
+	if sec.Type == "subscription" {
+		return s.subscriptionPreview(ctx, sec.Query, previewCount(sec))
 	}
 	kind, arg, e := home.ResolvePreset(sec.Query)
 	if e != nil {
@@ -1335,6 +1376,78 @@ func (s *Server) fetchHomeSection(ctx context.Context, sec home.Section) (eh.Gal
 		return s.Service.Toplist(ctx, arg, 1)
 	}
 	return eh.GalleryPageInfo{}, fmt.Errorf("unknown section")
+}
+
+// subscriptionPreview reads only locally cached subscription items. It must
+// never run a subscription or call the upstream service while rendering a page.
+func (s *Server) subscriptionPreview(ctx context.Context, id string, limit int) (eh.GalleryPageInfo, error) {
+	if s.Subscriptions == nil || id == "" {
+		return eh.GalleryPageInfo{}, nil
+	}
+	if _, err := s.Subscriptions.Store.Get(ctx, id); err != nil {
+		return eh.GalleryPageInfo{}, nil
+	}
+	if limit < 1 {
+		return eh.GalleryPageInfo{}, nil
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	items, _, err := s.Subscriptions.Store.ListItems(ctx, subscription.ItemQuery{SubscriptionIDs: []string{id}, Page: 1, PerPage: limit})
+	if err != nil {
+		return eh.GalleryPageInfo{}, err
+	}
+	info := eh.GalleryPageInfo{Galleries: make([]eh.GalleryListItem, 0, len(items))}
+	for _, item := range items {
+		raw, _ := json.Marshal(item)
+		var pub eh.GalleryListItem
+		if json.Unmarshal(raw, &pub) == nil {
+			info.Galleries = append(info.Galleries, pub)
+		}
+	}
+	return info, nil
+}
+
+func (s *Server) subscriptionFeed20(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.Subscriptions == nil || id == "" {
+		writeJSON(w, http.StatusNotFound, map[string]any{"detail": "subscription not found"})
+		return
+	}
+	cfg, err := s.Subscriptions.Store.Get(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"detail": "subscription not found"})
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	if page > 100000 {
+		page = 100000
+	}
+	items, total, err := s.Subscriptions.Store.ListItems(r.Context(), subscription.ItemQuery{SubscriptionIDs: []string{id}, Page: page, PerPage: 50})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "could not list subscription items"})
+		return
+	}
+	pubs := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		raw, _ := json.Marshal(item)
+		var pub eh.GalleryListItem
+		if json.Unmarshal(raw, &pub) == nil {
+			pubs = append(pubs, subscriptionPublication(s.builder(), pub))
+		}
+	}
+	path := "/opds/v2.0/subscription/" + url.PathEscape(id)
+	self := path + "?page=" + strconv.Itoa(page)
+	next := ""
+	if page*50 < total {
+		next = s.builder().Href(path + "?page=" + strconv.Itoa(page+1))
+	}
+	title := firstNonEmpty(cfg.Name, "Subscription")
+	doc := s.builder().Acquisition(title, "urn:pandaopds:subscription:"+id, self, pubs, next, nil)
+	writeBytes(w, http.StatusOK, feed.MIMEOPDSAcq, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(doc))
 }
 func (s *Server) detail20(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
@@ -1372,6 +1485,27 @@ func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
+	if s.Documents != nil {
+		if d, lookup := s.Documents.AssociatedDocument(r.Context(), gid, token); lookup == nil {
+			d, _, lookup = s.Documents.EnsurePageIndex(r.Context(), d.ID)
+			if lookup == nil {
+				pub := LocalDocumentPublication(r.Context(), d, s.Documents, s.Settings)
+				pub["@context"] = feed.RWPMContext
+				pub["metadata"].(map[string]any)["conformsTo"] = []string{feed.DivinaProfile}
+				for i := range pub["readingOrder"].([]map[string]any) {
+					pub["readingOrder"].([]map[string]any)[i]["href"] = s.builder().Href(fmt.Sprintf("/stream/%d/%s/page/%d", gid, url.PathEscape(token), i+s.Settings.PSEPageBase))
+				}
+				for _, link := range pub["links"].([]map[string]any) {
+					if link["rel"] == feed.RelThumb {
+						link["href"] = s.builder().Href(fmt.Sprintf("/image/%d/%s/thumb", gid, url.PathEscape(token)))
+					}
+				}
+				pub["images"].([]map[string]string)[0]["href"] = s.builder().Href(fmt.Sprintf("/image/%d/%s/thumb", gid, url.PathEscape(token)))
+				writeBytes(w, http.StatusOK, feed.MIMEDivina, map[string]string{"Cache-Control": "no-cache"}, s.builder().JSON(pub))
+				return
+			}
+		}
+	}
 	pub, detail, e := s.detailPublication(r, gid, token)
 	if e != nil {
 		s.writeError(w, r, e)
@@ -1401,7 +1535,7 @@ func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 	}
-	writeBytes(w, http.StatusOK, feed.MIMEDivina, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
+	writeBytes(w, http.StatusOK, feed.MIMEDivina, map[string]string{"Cache-Control": "no-cache"}, s.builder().JSON(pub))
 }
 
 func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[string]any, eh.DetailPageInfo, error) {

@@ -81,6 +81,8 @@ func documentAssociate(w http.ResponseWriter, r *http.Request, store *document.S
 	if err := store.Associate(r.Context(), r.PathValue("id"), body.GID, body.Token); err != nil {
 		if errors.Is(err, document.ErrNotFound) {
 			writeJSON(w, 404, map[string]any{"detail": "document not found"})
+		} else if errors.Is(err, document.ErrAssociationConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"detail": "gallery already has an associated document"})
 		} else {
 			writeJSON(w, 400, map[string]any{"detail": err.Error()})
 		}
@@ -145,6 +147,19 @@ func documentManifest(w http.ResponseWriter, r *http.Request, store *document.St
 		return
 	}
 	pub := LocalDocumentPublication(r.Context(), d, store, settings)
+	// Saved document-ID manifests remain a direct local reading entry even
+	// while the publication identity follows the gallery association.
+	for _, link := range pub["links"].([]map[string]any) {
+		if link["rel"] == "self" {
+			link["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/opds/v2.0/documents/%s/manifest", url.PathEscape(d.ID)))
+		}
+		if link["rel"] == feed.RelStream {
+			link["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/stream/documents/%s/page/{pageNumber}", url.PathEscape(d.ID)))
+		}
+	}
+	for i := range pub["readingOrder"].([]map[string]any) {
+		pub["readingOrder"].([]map[string]any)[i]["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/stream/documents/%s/page/%d", url.PathEscape(d.ID), i+settings.PSEPageBase))
+	}
 	pub["@context"] = feed.RWPMContext
 	meta := pub["metadata"].(map[string]any)
 	meta["conformsTo"] = []string{feed.DivinaProfile}
@@ -155,17 +170,28 @@ func BuildDocumentPublication(d document.Document, settings config.Settings) map
 	href := builder.Href
 	manifest := fmt.Sprintf("/opds/v2.0/documents/%s/manifest", url.PathEscape(d.ID))
 	thumb := fmt.Sprintf("/image/documents/%s/thumb", url.PathEscape(d.ID))
+	identifier := "urn:pandaopds:document:" + d.ID
 	links := []map[string]any{{"rel": "self", "href": href(manifest), "type": feed.MIMEDivina, "title": d.Title}, {"rel": feed.RelThumb, "href": href(thumb), "type": "application/octet-stream", "title": d.Title}, {"rel": feed.RelProgression, "href": href(documentProgressionURL(d)), "type": feed.MIMEProgression}, {"rel": feed.RelStream, "href": href(fmt.Sprintf("/stream/documents/%s/page/{pageNumber}", url.PathEscape(d.ID))), "type": "image/*", "templated": true, "properties": map[string]any{"numberOfPages": d.PageCount}}}
 	if d.GID != nil {
-		links = append(links, map[string]any{"rel": "alternate", "href": href(fmt.Sprintf("/opds/v2.0/gallery/%d/%s/manifest", *d.GID, url.PathEscape(d.Token))), "type": feed.MIMEDivina})
+		identifier = fmt.Sprintf("urn:ehentai:gallery:%d:%s", *d.GID, strings.ToLower(d.Token))
+		gallery := fmt.Sprintf("/opds/v2.0/gallery/%d/%s/manifest", *d.GID, url.PathEscape(d.Token))
+		links[0]["href"] = href(gallery)
+		thumb = fmt.Sprintf("/image/%d/%s/thumb", *d.GID, url.PathEscape(d.Token))
+		links[1]["href"] = href(thumb)
+		links[3]["href"] = href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", *d.GID, url.PathEscape(d.Token)))
+		links[3]["href"] = href(fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", *d.GID, url.PathEscape(d.Token)))
+		links = append(links, map[string]any{"rel": "alternate", "href": href(manifest), "type": feed.MIMEDivina})
 	}
 	reading := make([]map[string]any, 0, d.PageCount)
 	for p := 0; p < d.PageCount; p++ {
 		number := p + settings.PSEPageBase
 		pageURL := fmt.Sprintf("/stream/documents/%s/page/%d", url.PathEscape(d.ID), number)
+		if d.GID != nil {
+			pageURL = fmt.Sprintf("/stream/%d/%s/page/%d", *d.GID, url.PathEscape(d.Token), number)
+		}
 		reading = append(reading, map[string]any{"href": href(pageURL), "type": "image/*"})
 	}
-	return map[string]any{"metadata": map[string]any{"title": d.Title, "identifier": "urn:pandaopds:document:" + d.ID, "numberOfPages": d.PageCount, "modified": d.UpdatedAt.UTC().Format(time.RFC3339)}, "links": links, "images": []map[string]string{{"href": href(thumb), "type": "application/octet-stream"}}, "readingOrder": reading}
+	return map[string]any{"metadata": map[string]any{"title": d.Title, "identifier": identifier, "numberOfPages": d.PageCount, "modified": d.UpdatedAt.UTC().Format(time.RFC3339)}, "links": links, "images": []map[string]string{{"href": href(thumb), "type": "application/octet-stream"}}, "readingOrder": reading}
 }
 
 func LocalDocumentPublication(ctx context.Context, d document.Document, store *document.Store, settings config.Settings) map[string]any {
@@ -186,6 +212,9 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 				link["type"] = mime
 			}
 		}
+	}
+	for i := range pub["images"].([]map[string]string) {
+		pub["images"].([]map[string]string)[i]["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/image/documents/%s/thumb", url.PathEscape(d.ID)))
 	}
 	if mime, ok, err := store.CoverMIME(ctx, d.ID); err == nil && ok {
 		for _, link := range pub["links"].([]map[string]any) {
@@ -303,11 +332,19 @@ func DocumentArchiveAtomFeed(ctx context.Context, store *document.Store, setting
 			}
 		}
 		count := d.PageCount
-		links := []feed.AtomLink{{Rel: feed.RelAcquisition, Href: b.Href("/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest"), Type: feed.MIMEDivina}, {Rel: feed.RelStream, Href: b.Href("/stream/documents/" + url.PathEscape(d.ID) + "/page/{pageNumber}"), Type: streamMime, Count: &count}, {Rel: feed.RelProgression, Href: b.Href(documentProgressionURL(d)), Type: feed.MIMEProgression}}
+		id := "urn:pandaopds:document:" + d.ID
+		acquire := "/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest"
+		stream := "/stream/documents/" + url.PathEscape(d.ID) + "/page/{pageNumber}"
+		if d.GID != nil {
+			id = fmt.Sprintf("urn:ehentai:gallery:%d:%s", *d.GID, strings.ToLower(d.Token))
+			acquire = fmt.Sprintf("/opds/v2.0/gallery/%d/%s/manifest", *d.GID, url.PathEscape(d.Token))
+			stream = fmt.Sprintf("/stream/%d/%s/page/{pageNumber}", *d.GID, url.PathEscape(d.Token))
+		}
+		links := []feed.AtomLink{{Rel: feed.RelAcquisition, Href: b.Href(acquire), Type: feed.MIMEDivina}, {Rel: feed.RelStream, Href: b.Href(stream), Type: streamMime, Count: &count}, {Rel: feed.RelProgression, Href: b.Href(documentProgressionURL(d)), Type: feed.MIMEProgression}}
 		if hasCover {
 			links = append([]feed.AtomLink{{Rel: feed.RelThumb, Href: b.Href("/image/documents/" + url.PathEscape(d.ID) + "/thumb"), Type: coverMime, Title: d.Title}}, links...)
 		}
-		entries = append(entries, feed.AtomEntry{ID: "urn:pandaopds:document:" + d.ID, Title: "Chapter 1: " + d.Title, Updated: d.UpdatedAt.UTC().Format(time.RFC3339), Links: links})
+		entries = append(entries, feed.AtomEntry{ID: id, Title: "Chapter 1: " + d.Title, Updated: d.UpdatedAt.UTC().Format(time.RFC3339), Links: links})
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	self := "/opds/v1.2/archives"

@@ -256,22 +256,19 @@ func (s *Store) bindPublishedIdentity(ctx context.Context, id string, gid int, t
 	if err = tx.QueryRowContext(ctx, `SELECT publication_id,association_source,progression_target,EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=documents.id) FROM documents WHERE id=? AND status='available'`, id).Scan(&currentPub, &currentSource, &target, &hasProgress); err != nil {
 		return err
 	}
-	if currentSource.Valid && currentSource.String == "manual" && !currentPub.Valid {
-		return ErrAssociationConflict
+	// A trusted completed download is authoritative for its own document and
+	// may override a prior manual unlink. If another record already owns this
+	// gallery, keep the completed file but leave it unlinked for user handling.
+	var occupied int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM documents d JOIN publications p ON p.id=d.publication_id WHERE d.id<>? AND p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?))`, id, gid, token).Scan(&occupied); err != nil {
+		return err
 	}
-	if currentSource.Valid && currentSource.String == "manual" {
-		if !currentPub.Valid {
-			return ErrAssociationConflict
-		}
-		var oldGID int
-		var oldToken string
-		if err = tx.QueryRowContext(ctx, `SELECT gid,token FROM publications WHERE id=?`, currentPub.Int64).Scan(&oldGID, &oldToken); err != nil {
+	if occupied != 0 {
+		_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence='trusted_download_conflict',updated_at=? WHERE id=?`, now, id)
+		if err != nil {
 			return err
 		}
-		if oldGID != gid || !strings.EqualFold(oldToken, token) {
-			return ErrAssociationConflict
-		}
-		return nil
+		return tx.Commit()
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',?,?,'{}',?,?) ON CONFLICT(provider,gid,token) DO UPDATE SET updated_at=excluded.updated_at`, gid, token, now, now); err != nil {
 		return err
@@ -778,6 +775,17 @@ func (s *Store) applyArchiveClaim(ctx context.Context, id string, d Document) er
 	if e = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, d.ClaimGID, d.ClaimToken).Scan(&pubID); e != nil {
 		return e
 	}
+	var occupied int
+	if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM documents WHERE publication_id=? AND id<>?)`, pubID, id).Scan(&occupied); e != nil {
+		return e
+	}
+	if occupied != 0 {
+		_, e = tx.ExecContext(ctx, `UPDATE documents SET association_source='manual',association_evidence='archive_metadata_conflict' WHERE id=? AND publication_id IS NULL AND association_source IS NULL`, id)
+		if e != nil {
+			return e
+		}
+		return tx.Commit()
+	}
 	if _, e = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source='archive_metadata',association_evidence=? WHERE id=? AND publication_id IS NULL AND association_source IS NULL`, pubID, d.ClaimEvidence, id); e != nil {
 		return e
 	}
@@ -1151,15 +1159,38 @@ func (s *Store) SetDeleteHooks(before, rollback func(Document) error) {
 
 func (s *Store) Associate(ctx context.Context, id string, gid int, token string) error {
 	if gid == 0 && token == "" {
-		res, err := s.db.ExecContext(ctx, `UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence='user_unlinked',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), id)
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var pub sql.NullInt64
+		var gidv sql.NullInt64
+		var tok sql.NullString
+		if err = tx.QueryRowContext(ctx, `SELECT d.publication_id,p.gid,p.token FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE d.id=?`, id).Scan(&pub, &gidv, &tok); err == sql.ErrNoRows {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		evidence := "user_unlinked"
+		if gidv.Valid {
+			evidence = fmt.Sprintf("user_unlinked:%d:%s", gidv.Int64, strings.ToLower(tok.String))
+		}
+		query := `UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence=?,updated_at=? WHERE id=? AND publication_id IS NULL`
+		args := []any{evidence, time.Now().UTC().Format(time.RFC3339Nano), id}
+		if pub.Valid {
+			query = `UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence=?,updated_at=? WHERE id=? AND publication_id=?`
+			args = append(args, pub.Int64)
+		}
+		res, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			return ErrNotFound
+			return ErrAssociationConflict
 		}
-		return nil
+		return tx.Commit()
 	}
 	if gid <= 0 || token == "" {
 		return errors.New("complete EH identity required")
@@ -1171,12 +1202,26 @@ func (s *Store) Associate(ctx context.Context, id string, gid int, token string)
 		return err
 	}
 	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM documents WHERE id=?)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',?,?,'{}',?,?) ON CONFLICT(provider,gid,token) DO UPDATE SET updated_at=excluded.updated_at`, gid, token, now, now); err != nil {
 		return err
 	}
 	var pubID int64
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, token).Scan(&pubID); err != nil {
 		return err
+	}
+	var occupied int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM documents WHERE publication_id=? AND id<>?)`, pubID, id).Scan(&occupied); err != nil {
+		return err
+	}
+	if occupied != 0 {
+		return ErrAssociationConflict
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source='manual',association_evidence='user',updated_at=? WHERE id=?`, pubID, now, id)
 	if err != nil {
@@ -1187,6 +1232,32 @@ func (s *Store) Associate(ctx context.Context, id string, gid int, token string)
 		return ErrNotFound
 	}
 	return tx.Commit()
+}
+
+func (s *Store) UnlinkGallery(ctx context.Context, gid int, token string) (string, error) {
+	token = strings.ToLower(token)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var pub int64
+	var id string
+	if err = tx.QueryRowContext(ctx, `SELECT p.id,d.id FROM publications p JOIN documents d ON d.publication_id=p.id WHERE p.provider='eh' AND p.gid=? AND lower(p.token)=?`, gid, token).Scan(&pub, &id); err == sql.ErrNoRows {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
+	evidence := fmt.Sprintf("user_unlinked:%d:%s", gid, token)
+	res, err := tx.ExecContext(ctx, `UPDATE documents SET publication_id=NULL,association_source='manual',association_evidence=?,updated_at=? WHERE id=? AND publication_id=?`, evidence, time.Now().UTC().Format(time.RFC3339Nano), id, pub)
+	if err != nil {
+		return "", err
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return "", ErrAssociationConflict
+	}
+	return id, tx.Commit()
 }
 
 func (s *Store) ListByID(ctx context.Context, id string) (Document, error) {
@@ -1215,6 +1286,28 @@ func (s *Store) ListByID(ctx context.Context, id string) (Document, error) {
 		d.Token = token.String
 	}
 	return d, nil
+}
+
+// AssociatedDocument returns the unique document associated with this exact EH identity.
+func (s *Store) AssociatedDocument(ctx context.Context, gid int, token string) (Document, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT d.id FROM documents d JOIN publications p ON p.id=d.publication_id WHERE p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?)`, gid, token).Scan(&id)
+	if err == sql.ErrNoRows {
+		return Document{}, ErrNotFound
+	}
+	if err != nil {
+		return Document{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+func (s *Store) ManagedArchiveAllowed(ctx context.Context, rel string, gid int, token string) bool {
+	var linked int
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE d.archive_path=? AND (d.status<>'available' OR p.id IS NULL OR p.provider<>'eh' OR p.gid<>? OR lower(p.token)<>lower(?)))`, filepath.ToSlash(rel), gid, token).Scan(&linked)
+	if err != nil {
+		return false
+	}
+	return linked == 0
 }
 
 func (s *Store) OpenPage(ctx context.Context, id string, page int) ([]byte, string, error) {
@@ -1558,7 +1651,10 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if e != nil {
 		return e
 	}
-	if d.Status != "available" {
+	if d.Status == "missing" {
+		return s.PurgeMissing(ctx, id)
+	}
+	if d.Status != "available" && d.Status != "invalid" {
 		return ErrNotFound
 	}
 	id = d.ID

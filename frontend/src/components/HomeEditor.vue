@@ -51,6 +51,26 @@ import {
 import { t } from "@/i18n.js";
 
 const s = useApp();
+const availableSubscriptions = ref([]);
+const subscriptionsLoaded = ref(false);
+async function loadSubscriptions() {
+  try {
+    const response = await fetch("/api/subscriptions", {
+      credentials: "same-origin",
+    });
+    if (response.ok)
+      availableSubscriptions.value = (await response.json()).items || [];
+  } catch {
+    availableSubscriptions.value = [];
+  } finally {
+    subscriptionsLoaded.value = true;
+  }
+}
+function subscriptionLabel(id) {
+  return (
+    availableSubscriptions.value.find((item) => item.id === id)?.name || id
+  );
+}
 
 // Active page computed
 const activePage = computed(() => {
@@ -402,6 +422,7 @@ watch(
 
 onMounted(() => {
   s.loadHome();
+  loadSubscriptions();
 });
 
 function countLabel(section) {
@@ -446,6 +467,11 @@ function handleNavTypeChange(item) {
     if (item.query && isKnownPreset(item.query)) {
       item.query = "";
     }
+  } else if (
+    item.type === "subscription" &&
+    !availableSubscriptions.value.some((sub) => sub.id === item.query)
+  ) {
+    item.query = availableSubscriptions.value[0]?.id || "";
   }
   s.homeDirty.value = true;
 }
@@ -549,6 +575,11 @@ function handleTypeChange(item) {
   if (item.type === "preset" && !isKnownPreset(item.query)) {
     item.query = "latest";
   }
+  if (
+    item.type === "subscription" &&
+    !availableSubscriptions.value.some((sub) => sub.id === item.query)
+  )
+    item.query = availableSubscriptions.value[0]?.id || "";
   s.homeDirty.value = true;
 }
 
@@ -1108,6 +1139,9 @@ async function handleImportFileChange(event) {
                             <option value="search">
                               {{ t("home_editor.type_search") }}
                             </option>
+                            <option value="subscription">
+                              {{ t("home_editor.type_subscription") }}
+                            </option>
                           </select>
                         </div>
 
@@ -1118,7 +1152,9 @@ async function handleImportFileChange(event) {
                                 ? t("home_editor.target_page")
                                 : nav.type === "preset"
                                   ? t("home_editor.preset_name")
-                                  : t("home_editor.search_query")
+                                  : nav.type === "subscription"
+                                    ? t("home_editor.subscription_name")
+                                    : t("home_editor.search_query")
                             }}
                           </label>
                           <!-- Target: Page -->
@@ -1174,6 +1210,44 @@ async function handleImportFileChange(event) {
                             </optgroup>
                           </select>
 
+                          <select
+                            v-else-if="nav.type === 'subscription'"
+                            v-model="nav.query"
+                            class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background px-2.5"
+                            @change="s.homeDirty.value = true"
+                          >
+                            <option
+                              v-if="availableSubscriptions.length === 0"
+                              value=""
+                              disabled
+                            >
+                              {{
+                                t(
+                                  subscriptionsLoaded
+                                    ? "home_editor.no_subscriptions"
+                                    : "home_editor.loading_subscriptions",
+                                )
+                              }}
+                            </option>
+                            <option
+                              v-for="sub in availableSubscriptions"
+                              :key="sub.id"
+                              :value="sub.id"
+                            >
+                              {{ sub.name }}
+                            </option>
+                            <option
+                              v-if="
+                                nav.query &&
+                                !availableSubscriptions.some(
+                                  (x) => x.id === nav.query,
+                                )
+                              "
+                              :value="nav.query"
+                            >
+                              {{ subscriptionLabel(nav.query) }}
+                            </option>
+                          </select>
                           <!-- Target: Search -->
                           <Input
                             v-else
@@ -1925,6 +1999,9 @@ async function handleImportFileChange(event) {
                               <option value="search">
                                 {{ t("home_editor.type_search") }}
                               </option>
+                              <option value="subscription">
+                                {{ t("home_editor.type_subscription") }}
+                              </option>
                             </select>
                           </div>
                           <div class="sm:col-span-4 flex flex-col gap-1.5">
@@ -1967,6 +2044,44 @@ async function handleImportFileChange(event) {
                                   {{ opt.label }}
                                 </option>
                               </optgroup>
+                            </select>
+                            <select
+                              v-else-if="item.type === 'subscription'"
+                              v-model="item.query"
+                              class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background px-2.5"
+                              @change="s.homeDirty.value = true"
+                            >
+                              <option
+                                v-if="availableSubscriptions.length === 0"
+                                value=""
+                                disabled
+                              >
+                                {{
+                                  t(
+                                    subscriptionsLoaded
+                                      ? "home_editor.no_subscriptions"
+                                      : "home_editor.loading_subscriptions",
+                                  )
+                                }}
+                              </option>
+                              <option
+                                v-for="sub in availableSubscriptions"
+                                :key="sub.id"
+                                :value="sub.id"
+                              >
+                                {{ sub.name }}
+                              </option>
+                              <option
+                                v-if="
+                                  item.query &&
+                                  !availableSubscriptions.some(
+                                    (x) => x.id === item.query,
+                                  )
+                                "
+                                :value="item.query"
+                              >
+                                {{ subscriptionLabel(item.query) }}
+                              </option>
                             </select>
                             <Input
                               v-else
@@ -2095,6 +2210,9 @@ async function handleImportFileChange(event) {
                                     <option value="search">
                                       {{ t("home_editor.type_search") }}
                                     </option>
+                                    <option value="subscription">
+                                      {{ t("home_editor.type_subscription") }}
+                                    </option>
                                   </select>
                                 </div>
 
@@ -2163,6 +2281,44 @@ async function handleImportFileChange(event) {
                                     </optgroup>
                                   </select>
 
+                                  <select
+                                    v-else-if="subItem.type === 'subscription'"
+                                    v-model="subItem.query"
+                                    class="home-select w-full h-7 text-xs rounded-xl border border-input bg-background px-2"
+                                    @change="s.homeDirty.value = true"
+                                  >
+                                    <option
+                                      v-if="availableSubscriptions.length === 0"
+                                      value=""
+                                      disabled
+                                    >
+                                      {{
+                                        t(
+                                          subscriptionsLoaded
+                                            ? "home_editor.no_subscriptions"
+                                            : "home_editor.loading_subscriptions",
+                                        )
+                                      }}
+                                    </option>
+                                    <option
+                                      v-for="sub in availableSubscriptions"
+                                      :key="sub.id"
+                                      :value="sub.id"
+                                    >
+                                      {{ sub.name }}
+                                    </option>
+                                    <option
+                                      v-if="
+                                        subItem.query &&
+                                        !availableSubscriptions.some(
+                                          (x) => x.id === subItem.query,
+                                        )
+                                      "
+                                      :value="subItem.query"
+                                    >
+                                      {{ subscriptionLabel(subItem.query) }}
+                                    </option>
+                                  </select>
                                   <!-- If search -->
                                   <Input
                                     v-else
@@ -2459,6 +2615,9 @@ async function handleImportFileChange(event) {
                               <option value="search">
                                 {{ t("home_editor.type_search") }}
                               </option>
+                              <option value="subscription">
+                                {{ t("home_editor.type_subscription") }}
+                              </option>
                             </select>
                           </div>
                           <div class="sm:col-span-4 flex flex-col gap-1.5">
@@ -2466,7 +2625,10 @@ async function handleImportFileChange(event) {
                               {{
                                 s.layout.value.publication.type === "preset"
                                   ? t("home_editor.preset_name")
-                                  : t("home_editor.search_query")
+                                  : s.layout.value.publication.type ===
+                                      "subscription"
+                                    ? t("home_editor.subscription_name")
+                                    : t("home_editor.search_query")
                               }}
                             </label>
                             <select
@@ -2511,6 +2673,52 @@ async function handleImportFileChange(event) {
                                   {{ opt.label }}
                                 </option>
                               </optgroup>
+                            </select>
+                            <select
+                              v-else-if="
+                                s.layout.value.publication.type ===
+                                'subscription'
+                              "
+                              v-model="s.layout.value.publication.query"
+                              class="home-select w-full h-8 text-xs rounded-xl border border-input bg-background px-2.5"
+                              @change="s.homeDirty.value = true"
+                            >
+                              <option
+                                v-if="availableSubscriptions.length === 0"
+                                value=""
+                                disabled
+                              >
+                                {{
+                                  t(
+                                    subscriptionsLoaded
+                                      ? "home_editor.no_subscriptions"
+                                      : "home_editor.loading_subscriptions",
+                                  )
+                                }}
+                              </option>
+                              <option
+                                v-for="sub in availableSubscriptions"
+                                :key="sub.id"
+                                :value="sub.id"
+                              >
+                                {{ sub.name }}
+                              </option>
+                              <option
+                                v-if="
+                                  s.layout.value.publication.query &&
+                                  !availableSubscriptions.some(
+                                    (x) =>
+                                      x.id === s.layout.value.publication.query,
+                                  )
+                                "
+                                :value="s.layout.value.publication.query"
+                              >
+                                {{
+                                  subscriptionLabel(
+                                    s.layout.value.publication.query,
+                                  )
+                                }}
+                              </option>
                             </select>
                             <Input
                               v-else

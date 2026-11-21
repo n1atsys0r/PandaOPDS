@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { archiveActionFor } from "./archive-flow.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,6 +57,14 @@ test("resolveExploreArchivePayload assigns status correctly for unarchived vs ex
     title: "Unarchived Favorite",
     status: "unarchived",
   });
+});
+
+test("associated and unavailable archives offer management while quotes use normal start",()=>{
+  assert.equal(archiveActionFor("ready"),"manage");
+  assert.equal(archiveActionFor("unavailable"),"manage");
+  assert.equal(archiveActionFor("failed"),"quote");
+  assert.equal(archiveActionFor("unarchived"),"quote");
+  for(const status of ["pending","submitting","staging","downloading","zipping"]) assert.equal(archiveActionFor(status),"busy");
 });
 
 test("z-index stacking invariant: Dialog < AlertDialog < Select/Dropdown < Tooltip < Reader", () => {

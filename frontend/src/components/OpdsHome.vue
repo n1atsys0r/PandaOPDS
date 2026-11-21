@@ -39,6 +39,7 @@ import {
   selectedSuggestion,
 } from "@/tag-suggestions.js";
 import { resolveOpenSearchUrl } from "@/opensearch-helper.js";
+import { captureGalleryMetadata, ensureGalleryMetadata, restoreGalleryMetadata } from "@/gallery-metadata.js";
 import {
   CompassIcon as Compass,
   HomeIcon as Home,
@@ -75,6 +76,9 @@ import {
 const emit = defineEmits([
   "read-gallery",
   "archive-gallery",
+  "archive-unlink",
+  "archive-delete",
+  "archive-manage",
   "favorite-gallery",
 ]);
 
@@ -1032,6 +1036,7 @@ function normalizePublication(pub, feedHref = window.location.href) {
     raw: pub,
     reviews,
     readingOrder: [],
+    galleryDetailsLoaded: Boolean(pub.galleryDetailsLoaded),
   };
 }
 
@@ -1196,6 +1201,7 @@ function ensurePublicationDetails(pub) {
       const reviews = Array.isArray(metadata["x:reviews"])
         ? metadata["x:reviews"]
         : normalized.reviews || pub.reviews || [];
+      const supplemental = captureGalleryMetadata(pub);
       Object.assign(pub, normalized, {
         subjects,
         reviews,
@@ -1209,7 +1215,8 @@ function ensurePublicationDetails(pub) {
             ? normalized.rating
             : pub.rating || 0,
       });
-      if (normalized.rating && normalized.rating > 0) {
+      if (supplemental) restoreGalleryMetadata(pub, supplemental);
+      if (!supplemental && normalized.rating && normalized.rating > 0) {
         pub.rating = normalized.rating;
       }
       if (
@@ -1219,7 +1226,7 @@ function ensurePublicationDetails(pub) {
             selectedPub.value.token === pub.token))
       ) {
         Object.assign(selectedPub.value, pub);
-        if (normalized.rating && normalized.rating > 0) {
+        if (!supplemental && normalized.rating && normalized.rating > 0) {
           selectedPub.value.rating = normalized.rating;
         }
       }
@@ -1228,6 +1235,11 @@ function ensurePublicationDetails(pub) {
     .catch(() => {
       return pub;
     });
+}
+
+function ensureSupplementalGalleryMetadata(pub) {
+  if (!pub?.gid || !pub?.token || pub.galleryDetailsLoaded) return Promise.resolve(pub);
+  return ensureGalleryMetadata(s.api, pub).catch(() => pub);
 }
 
 watch([selectedPub, detailOpen], ([pub, open]) => {
@@ -2404,11 +2416,13 @@ function openGallery(pub, list = null) {
     currentPubList.value = list;
   }
   detailOpen.value = true;
+  ensureSupplementalGalleryMetadata(pub);
   scrollModalToTop();
 }
 
 async function handleRead(pub, startPage = null, options = {}) {
   if (!pub?.gid || !pub?.token) return;
+  ensureSupplementalGalleryMetadata(pub);
   const selectedAtClick = pub;
 
   // 1. If publication details are already fully loaded:
@@ -3415,6 +3429,9 @@ onUnmounted(() => {
       :list="currentPubList"
       @read-gallery="emit('read-gallery', $event)"
       @archive-gallery="handleArchive"
+      @archive-unlink="emit('archive-unlink', $event)"
+      @archive-delete="emit('archive-delete', $event)"
+      @archive-manage="emit('archive-manage', $event)"
       @favorite-gallery="emit('favorite-gallery', $event)"
       @tag-click="handleTagClick"
       @category-click="handleCategoryClick"

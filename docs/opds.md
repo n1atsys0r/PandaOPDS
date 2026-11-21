@@ -15,7 +15,7 @@
 
 OPDS 1.2 的 OPDS-PSE 链接提供 PSE stream 关系、`image/jpeg` 类型、页数以及含 `{pageNumber}` 的模板地址。默认页码从 1 开始，`PSE_PAGE_BASE=0` 可切换为从 0 开始。OPDS 2.0 客户端直接读取清单中的逐页 URL。两版共用图片代理，服务端不进行双页拆分。
 
-v1.2 根导航固定由服务端提供，不读取 `HOME_CONFIG`。v2.0 根目录与自定义页面由 `HOME_CONFIG` 指向的 TOML 编排布局（主页为 `/opds/v2.0`，自定义页面为 `/opds/v2.0/page/{id}`）。各页面均支持独立配置出版物流模式（publications）与分组栏目模式（sections/groups），并通过导航项（`type="page"`，目标指向页面 ID）相互跳转。文件缺失时用内置默认布局，配置解析失败时回退默认值。Watched/Favorites 入口依赖成对配置的登录 cookie。两版 Archives shelf 按页从本地 document 表生成，只列出实际可读的本地文件，可包含无法证明 EH 身份的本地文档；不请求上游。
+v1.2 根导航固定由服务端提供，不读取 `HOME_CONFIG`。v2.0 根目录与自定义页面由 `HOME_CONFIG` 指向的 TOML 编排布局（主页为 `/opds/v2.0`，自定义页面为 `/opds/v2.0/page/{id}`）。各页面均支持独立配置出版物流模式（publications）与分组栏目模式（sections/groups），并通过导航项（`type="page"`，目标指向页面 ID）相互跳转；出版物来源和导航目标也可设为 `type="subscription"`，`query` 填订阅 ID。订阅来源将「订阅」中定期抓取并缓存在 SQLite 的累计条目展示为分页 OPDS feed（`/opds/v2.0/subscription/{id}`）；读取首页预览或该 feed 只读本地缓存，不触发上游列表抓取。订阅条目按现有缓存保留规则累计展示，可能包含先前成功抓取的结果。文件缺失时用内置默认布局，配置解析失败时回退默认值。Watched/Favorites 入口依赖成对配置的登录 cookie。两版 Archives shelf 按页从本地 document 表生成，只列出实际可读的本地文件，可包含无法证明 EH 身份的本地文档；不请求上游。
 
 Favorites 列表在 OPDS 1.2 与 2.0 中提供 Favorite category facets：All 默认显示全部收藏，`favcat=0`–`9` 对应账户自定义收藏夹，显示名称取自上游收藏夹目录。范围搜索使用 `f_search`；全部收藏显式传 `favcat=all`，分类搜索保留对应数字 `favcat`。v2.0 也继续接受旧式 `query=favorites:N`，新 facet 链接使用 `query=favorites&favcat=N`。Watched 与 Favorites feed 均接受 OpenAPI 中列出的 EH 高级筛选参数（包括分类、评分和 `f_sh=on`），并在 `self`、分页链接及 Favorites 分类 facets 中保留这些条件。
 

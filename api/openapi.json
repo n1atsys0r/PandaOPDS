@@ -891,6 +891,23 @@
         }
       }
     },
+    "/opds/v2.0/subscription/{id}": {
+      "get": {
+        "tags": ["opds2"],
+        "summary": "Cached Subscription Feed",
+        "description": "Paginated OPDS 2.0 feed of locally cached accumulated items for a subscription. Reading this feed never starts a fetch; an empty subscription returns an empty feed. Items may include retained results from earlier runs, following subscription cache retention behavior.",
+        "operationId": "subscription_feed_opds_v2_0_subscription__id__get",
+        "parameters": [
+          {"in": "path", "name": "id", "required": true, "schema": {"type": "string"}, "description": "Local subscription ID"},
+          {"name": "page", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}, "example": 1}
+        ],
+        "responses": {
+          "200": {"description": "Cached subscription feed", "content": {"application/opds+json;profile=acquisition": {"schema": {"$ref": "#/components/schemas/Feed"}}}},
+          "404": {"description": "Subscription not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "Could not read local subscription items", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
     "/opds/v2.0/page/{id}": {
       "get": {
         "tags": [
@@ -6393,6 +6410,20 @@
         ]
       }
     },
+    "/api/archive/{gid}/{token}/association": {
+      "delete": {
+        "summary": "Unlink the associated local document while preserving its file",
+        "operationId": "archive_unlink_association",
+        "parameters": [
+          {"name":"gid","in":"path","required":true,"schema":{"type":"integer"}},
+          {"name":"token","in":"path","required":true,"schema":{"type":"string"}}
+        ],
+        "responses": {
+          "200": {"description":"Association removed; local document preserved","content":{"application/json":{"schema":{"type":"object","properties":{"unlinked":{"type":"boolean"},"document_id":{"type":"string"},"file_preserved":{"type":"boolean"}}}}}},
+          "404": {"description":"No associated document"}
+        }
+      }
+    },
     "/api/documents/{id}/associate": {
       "post": {
         "summary": "Associate local document with publication",
@@ -6426,6 +6457,10 @@
                 }
               }
             }
+          }
+          ,"409": {
+            "description": "Another document already occupies this gallery identity",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
           }
         },
         "parameters": [
@@ -7420,9 +7455,15 @@
               "downloading",
               "zipping",
               "ready",
+              "unavailable",
               "failed"
             ]
           },
+          "archive_status": {"type":"string","enum":["unarchived","ready","unavailable","pending","downloading","zipping","failed"]},
+          "document_id": {"type":["string","null"],"description":"Stable local document identifier when a document is associated."},
+          "document_status": {"type":["string","null"],"enum":["available","missing","invalid",null]},
+          "association_source": {"type":["string","null"]},
+          "path": {"type":["string","null"],"description":"Archive relative path shown for explicit delete confirmation."},
           "title": {
             "type": [
               "string",
@@ -7985,11 +8026,13 @@
             "enum": [
               "preset",
               "search",
-              "page"
+              "page",
+              "subscription"
             ]
           },
           "query": {
-            "type": "string"
+            "type": "string",
+            "description": "For type=subscription, the ID of an existing local subscription."
           },
           "count": {
             "type": [
@@ -8083,11 +8126,13 @@
             "enum": [
               "preset",
               "search",
-              "page"
+              "page",
+              "subscription"
             ]
           },
           "query": {
-            "type": "string"
+            "type": "string",
+            "description": "For type=subscription, the ID of an existing local subscription."
           }
         }
       },
@@ -8166,7 +8211,8 @@
         "properties": {
           "gid": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Use 0 with an empty token to unlink the document while preserving its file."
           },
           "token": {
             "type": "string"

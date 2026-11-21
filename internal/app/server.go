@@ -183,6 +183,21 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 	s.Progression = progressStore
 	service.AttachArchive(store)
 	s.Archives = archive.NewManager(settings, service.Client, service, store)
+	service.SetArchiveEligibility(func(ctx context.Context, gid int, token string) bool {
+		path, _, e := store.ArchivePublishPath(gid, token)
+		if e != nil {
+			return true
+		}
+		root, e := filepath.Abs(settings.ArchiveDir)
+		if e != nil {
+			return false
+		}
+		rel, e := filepath.Rel(root, path)
+		if e != nil {
+			return false
+		}
+		return documents.ManagedArchiveAllowed(ctx, filepath.ToSlash(rel), gid, token)
+	})
 	s.Archives.SetAvailabilityHook(s.refreshProgressionArchiveIndex)
 	rolled := s.Archives.RecoverInterruptedUpgrades()
 	if rolled > 0 && logger != nil {
@@ -316,6 +331,7 @@ func (s *Server) register() {
 	m.HandleFunc("GET /opds/v2.0/toplist", s.toplist20)
 	m.HandleFunc("GET /opds/v2.0/archives", s.archives20)
 	m.HandleFunc("GET /opds/v2.0/history", s.history20)
+	m.HandleFunc("GET /opds/v2.0/subscription/{id}", s.subscriptionFeed20)
 	m.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}", s.detail20)
 	m.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}/manifest", s.manifest20)
 	m.HandleFunc("GET /opds/v2.0/gallery/{gid}/{token}/publication", s.publication20)
@@ -335,6 +351,7 @@ func (s *Server) register() {
 	m.HandleFunc("POST /api/archive/{gid}/{token}/refresh", s.archiveRefresh)
 	m.HandleFunc("POST /api/archive/{gid}/{token}/update", s.archiveUpdate)
 	m.HandleFunc("DELETE /api/archive/{gid}/{token}", s.archiveDelete)
+	m.HandleFunc("DELETE /api/archive/{gid}/{token}/association", s.archiveUnlink)
 	m.HandleFunc("GET /api/archive/{gid}/{token}", s.archiveStatus)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/cover", s.archiveCover)
 	m.HandleFunc("POST /api/favorites", s.favoriteAction)

@@ -545,8 +545,49 @@ func TestReadyArchiveRegistersOnlyVerifiedZipAndExactQuality(t *testing.T) {
 	if err = f.Close(); err != nil {
 		t.Fatal(err)
 	}
+	occupiedPath := filepath.Join(root, "occupied.zip")
+	occupiedFile, err := os.Create(occupiedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	occupiedZip := zip.NewWriter(occupiedFile)
+	occupiedEntry, err := occupiedZip.Create("0001.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = occupiedEntry.Write(onePixel); err != nil {
+		t.Fatal(err)
+	}
+	if err = occupiedZip.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = occupiedFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = archives.Upsert(909, "abc909", map[string]any{"status": "ready", "quality": "original", "or": "original", "page_count": 1}); err != nil {
+		t.Fatal(err)
+	}
 	docs, err := document.New(db, root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := docs.List(context.Background(), 1, 10, "available", "")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("fixture docs=%d err=%v", len(items), err)
+	}
+	var occupiedID string
+	for _, item := range items {
+		if item.Path == "occupied.zip" {
+			occupiedID = item.ID
+		}
+	}
+	if occupiedID == "" {
+		t.Fatal("occupied document missing")
+	}
+	if err = docs.Associate(context.Background(), occupiedID, 909, "abc909"); err != nil {
 		t.Fatal(err)
 	}
 	w := NewWorker(db.DB, nil, &archive.Manager{Store: archives}, docs, config.Settings{ArchiveDir: root})
@@ -569,8 +610,16 @@ func TestReadyArchiveRegistersOnlyVerifiedZipAndExactQuality(t *testing.T) {
 		t.Fatalf("registered file not readable: %+v err=%v", registered, err)
 	}
 	var other int
-	if err = db.QueryRow(`SELECT COUNT(*) FROM documents WHERE id<>? AND status<>'missing'`, id).Scan(&other); err != nil || other != 0 {
-		t.Fatalf("single-file registration affected %d unrelated docs err=%v", other, err)
+	if err = db.QueryRow(`SELECT COUNT(*) FROM documents WHERE id<>? AND status<>'missing'`, id).Scan(&other); err != nil || other != 1 {
+		t.Fatalf("occupied document changed: count=%d err=%v", other, err)
+	}
+	newDoc, err := docs.Get(context.Background(), id)
+	if err != nil || newDoc.GID != nil {
+		t.Fatalf("download must succeed as unlinked new document: %+v err=%v", newDoc, err)
+	}
+	oldDoc, err := docs.Get(context.Background(), occupiedID)
+	if err != nil || oldDoc.GID == nil || *oldDoc.GID != 909 {
+		t.Fatalf("existing gallery association changed: %+v err=%v", oldDoc, err)
 	}
 }
 

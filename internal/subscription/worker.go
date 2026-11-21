@@ -1145,7 +1145,18 @@ func (w *Worker) registerReadyDocument(ctx context.Context, gid int, token strin
 		}
 		return "", "", err
 	}
-	return w.findVerifiedDocument(ctx, gid, token)
+	var quality string
+	archiveState := w.Archives.Status(gid, token)
+	quality, _ = archiveState["or"].(string)
+	if quality == "" {
+		quality, _ = archiveState["quality"].(string)
+	}
+	if quality == "" {
+		if err = w.db.QueryRowContext(ctx, `SELECT COALESCE(av.quality,'') FROM publications p JOIN archive_versions av ON av.publication_id=p.id WHERE p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?) AND av.archive_path=? AND av.status='ready'`, gid, token, path).Scan(&quality); err != nil {
+			return "", "", err
+		}
+	}
+	return doc.ID, quality, nil
 }
 
 func (w *Worker) dispatchWaitingSources(jobID string) {

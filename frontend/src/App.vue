@@ -1049,6 +1049,9 @@ async function handleQuoteArchive(a) {
           <OpdsHome
             @read-gallery="openReader"
             @archive-gallery="handleExploreArchive"
+            @archive-unlink="s.unlinkArchive"
+            @archive-delete="s.requestDelete"
+            @archive-manage="s.route('archive')"
             @favorite-gallery="handleExploreFavorite"
           />
         </template>
@@ -1056,6 +1059,9 @@ async function handleQuoteArchive(a) {
           <SubscriptionsView
             @read-gallery="openReader"
             @archive-gallery="handleExploreArchive"
+            @archive-unlink="s.unlinkArchive"
+            @archive-delete="s.requestDelete"
+            @archive-manage="s.route('archive')"
             @favorite-gallery="handleExploreFavorite"
           />
         </template>

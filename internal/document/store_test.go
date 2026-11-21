@@ -285,7 +285,7 @@ func TestRegisterPublishedPreservesExistingLocalProgressionAndAssociation(t *tes
 	}
 }
 
-func TestRegisterPublishedRejectsManualConflictAndSymlink(t *testing.T) {
+func TestRegisterPublishedOverridesManualUnlinkAndRejectsSymlink(t *testing.T) {
 	s, root := newTestStore(t)
 	path := filepath.Join(root, "manual.zip")
 	writeArchive(t, path, map[string][]byte{"1.png": onePixelPNG})
@@ -299,18 +299,48 @@ func TestRegisterPublishedRejectsManualConflictAndSymlink(t *testing.T) {
 	if err = s.Associate(context.Background(), doc.ID, 100, "manual123"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.RegisterPublished(context.Background(), "manual.zip", 200, "download12", "download_job"); !errors.Is(err, ErrAssociationConflict) {
-		t.Fatalf("manual association conflict err=%v", err)
+	if err = s.Associate(context.Background(), doc.ID, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RegisterPublished(context.Background(), "manual.zip", 200, "download12", "download_job"); err != nil {
+		t.Fatalf("trusted download should override manual unlink: %v", err)
 	}
 	still, err := s.ListByID(context.Background(), doc.ID)
-	if err != nil || still.GID == nil || *still.GID != 100 || still.AssociationSource != "manual" {
-		t.Fatalf("manual identity changed: %+v err=%v", still, err)
+	if err != nil || still.GID == nil || *still.GID != 200 || still.AssociationSource != "download_job" {
+		t.Fatalf("trusted association not applied: %+v err=%v", still, err)
 	}
 	if err := os.Symlink(path, filepath.Join(root, "linked.cbz")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	if _, err = s.RegisterPublished(context.Background(), "linked.cbz", 300, "link1234", "download_job"); err == nil {
 		t.Fatal("registered symlink path")
+	}
+}
+
+func TestGalleryAssociationIsUniqueAndOccupiedTrustedDownloadStaysUnlinked(t *testing.T) {
+	s, root := newTestStore(t)
+	writeArchive(t, filepath.Join(root, "first.zip"), map[string][]byte{"1.png": onePixelPNG})
+	writeArchive(t, filepath.Join(root, "second.zip"), map[string][]byte{"1.png": onePixelPNG})
+	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := s.List(context.Background(), 1, 10, "available", "")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("items=%d err=%v", len(items), err)
+	}
+	if err = s.Associate(context.Background(), items[0].ID, 812, "sameToken"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Associate(context.Background(), items[1].ID, 812, "SAMETOKEN"); !errors.Is(err, ErrAssociationConflict) {
+		t.Fatalf("manual collision=%v", err)
+	}
+	writeArchive(t, filepath.Join(root, "download.zip"), map[string][]byte{"1.png": onePixelPNG})
+	got, err := s.RegisterPublished(context.Background(), "download.zip", 812, "sametoken", "download_job")
+	if err != nil {
+		t.Fatalf("successful occupied download: %v", err)
+	}
+	if got.GID != nil {
+		t.Fatalf("occupied download must remain unlinked: %+v", got)
 	}
 }
 
@@ -628,6 +658,51 @@ func TestArchiveMetadataExplicitEHURLAssociatesWithEvidence(t *testing.T) {
 	}
 	if items[0].GID == nil || *items[0].GID != 456 || items[0].Token != "abcdef0123" || items[0].AssociationSource != "archive_metadata" {
 		t.Fatalf("association=%+v", items[0])
+	}
+}
+
+func TestScannerKeepsConflictingEmbeddedIdentityUnlinkedAcrossRescan(t *testing.T) {
+	s, root := newTestStore(t)
+	comic := `<ComicInfo><Web>https://e-hentai.org/g/456/abcdef0123/</Web></ComicInfo>`
+	for _, name := range []string{"one.cbz", "two.cbz"} {
+		writeArchive(t, filepath.Join(root, name), map[string][]byte{"1.png": onePixelPNG, "ComicInfo.xml": []byte(comic)})
+	}
+	if _, err := s.ScanDeep(context.Background()); err != nil {
+		t.Fatalf("conflicting metadata scan: %v", err)
+	}
+	items, _, err := s.List(context.Background(), 1, 10, "available", "")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("items=%d err=%v", len(items), err)
+	}
+	linked, unlinked := 0, 0
+	for _, item := range items {
+		if item.GID != nil {
+			linked++
+		} else {
+			unlinked++
+			if item.AssociationSource != "manual" {
+				t.Fatalf("conflict source=%q doc=%+v", item.AssociationSource, item)
+			}
+		}
+	}
+	if linked != 1 || unlinked != 1 {
+		t.Fatalf("linked=%d unlinked=%d items=%+v", linked, unlinked, items)
+	}
+	if _, err = s.ScanDeep(context.Background()); err != nil {
+		t.Fatalf("rescan restored/conflicted identity: %v", err)
+	}
+	items, _, err = s.List(context.Background(), 1, 10, "available", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked = 0
+	for _, item := range items {
+		if item.GID != nil {
+			linked++
+		}
+	}
+	if linked != 1 {
+		t.Fatalf("rescan changed unique association count=%d", linked)
 	}
 }
 

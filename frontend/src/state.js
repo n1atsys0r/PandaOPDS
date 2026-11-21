@@ -1207,7 +1207,7 @@ async function getQuote(action = "start", target = null) {
 }
 function quoteArchiveFor(a) {
   state.archiveInput = a.gid + " " + a.token;
-  return getQuote(a.status === "unarchived" ? "start" : "refresh", {
+  return getQuote("start", {
     gid: a.gid,
     token: a.token,
   });
@@ -1402,9 +1402,13 @@ async function confirmFavoriteRemoval() {
     await loadArchives();
   });
 }
-function requestDelete(a) {
+async function requestDelete(a) {
   state.deleteTarget = a;
-  state.confirmDelete = true;
+  return deleteArchive();
+}
+async function unlinkArchive(a) {
+  if (!a) return;
+  await run(async () => { await api(`/api/archive/${a.gid}/${a.token}/association`,{method:"DELETE"}); state.notice=t("archive.unlinked"); await loadArchives(); });
 }
 async function deleteArchive() {
   const a = state.deleteTarget;
@@ -1780,6 +1784,7 @@ export function useApp() {
     askClearCache,
     refreshMetadata,
     requestDelete,
+    unlinkArchive,
     deleteArchive,
     clearCache,
     favorite,

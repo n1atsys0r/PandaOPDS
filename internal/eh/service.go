@@ -31,32 +31,33 @@ import (
 )
 
 type Service struct {
-	Settings     config.Settings
-	Logger       *log.Logger
-	Client       *Client
-	Throttle     *Throttle
-	mu           sync.Mutex
-	lists        map[string]cached[GalleryPageInfo]
-	cover        map[string]cached[string]
-	pages        map[string]cached[[]Thumbnail]
-	details      map[string]cached[DetailPageInfo]
-	imgPages     map[string]cached[ImagePageInfo]
-	metadata     map[string]cached[GalleryMetadata]
-	categories   map[string]cached[map[int]string]
-	locks        map[string]*sync.Mutex
-	listLocks    map[string]*contextMutex
-	detailFlight singleflight.Group
-	thumbFlight  singleflight.Group
-	coverFlight  singleflight.Group
-	disk         *DiskCache
-	started      time.Time
-	archive      ArchiveReader
-	myTags       map[string]map[string]string
-	myTagsAt     time.Time
-	myTagsSeen   bool
-	translator   *TagTranslator
-	memHits      atomic.Int64
-	memMisses    atomic.Int64
+	Settings       config.Settings
+	Logger         *log.Logger
+	Client         *Client
+	Throttle       *Throttle
+	mu             sync.Mutex
+	lists          map[string]cached[GalleryPageInfo]
+	cover          map[string]cached[string]
+	pages          map[string]cached[[]Thumbnail]
+	details        map[string]cached[DetailPageInfo]
+	imgPages       map[string]cached[ImagePageInfo]
+	metadata       map[string]cached[GalleryMetadata]
+	categories     map[string]cached[map[int]string]
+	locks          map[string]*sync.Mutex
+	listLocks      map[string]*contextMutex
+	detailFlight   singleflight.Group
+	thumbFlight    singleflight.Group
+	coverFlight    singleflight.Group
+	disk           *DiskCache
+	started        time.Time
+	archive        ArchiveReader
+	archiveAllowed func(context.Context, int, string) bool
+	myTags         map[string]map[string]string
+	myTagsAt       time.Time
+	myTagsSeen     bool
+	translator     *TagTranslator
+	memHits        atomic.Int64
+	memMisses      atomic.Int64
 }
 
 // ArchiveReader is implemented by the persistent archive store. Keeping this
@@ -95,6 +96,9 @@ func NewService(cfg config.Settings, transport http.RoundTripper) *Service {
 	return s
 }
 func (s *Service) AttachArchive(a ArchiveReader) { s.archive = a }
+func (s *Service) SetArchiveEligibility(fn func(context.Context, int, string) bool) {
+	s.archiveAllowed = fn
+}
 func (s *Service) Close() error {
 	if s.translator != nil {
 		s.translator.Stop()
@@ -739,7 +743,7 @@ func (s *Service) GetImage(ctx context.Context, gid int, token string, page int)
 		pageNo++
 	}
 	index := pageNo - 1
-	if s.archive != nil {
+	if s.archive != nil && (s.archiveAllowed == nil || s.archiveAllowed(ctx, gid, token)) {
 		if b, ok, err := s.archive.GetPage(gid, token, index); err == nil && ok {
 			s.memHits.Add(1)
 			return b, detectImageType(b), nil
@@ -836,7 +840,7 @@ func (s *Service) RememberCover(gid int, token string, coverURL string) {
 }
 
 func (s *Service) GetThumb(ctx context.Context, gid int, token string) ([]byte, string, error) {
-	if s.archive != nil {
+	if s.archive != nil && (s.archiveAllowed == nil || s.archiveAllowed(ctx, gid, token)) {
 		if b, ok := s.archive.GetCover(gid, token); ok {
 			s.memHits.Add(1)
 			return b, detectImageType(b), nil

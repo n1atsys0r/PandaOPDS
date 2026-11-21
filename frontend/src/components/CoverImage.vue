@@ -119,6 +119,6 @@ watch([() => props.src, () => s.authToken.value], () => {
       class="size-full object-cover"
       @error="failed = true"
     />
-    <span v-else-if="failed">{{ t("archive.no_cover") }}</span>
+    <span v-else-if="failed" class="text-[10px] text-muted-foreground p-1 text-center select-none">{{ t("archive.no_cover") }}</span>
   </div>
 </template>
