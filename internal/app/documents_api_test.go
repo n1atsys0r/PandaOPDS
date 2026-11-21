@@ -18,6 +18,7 @@ import (
 
 	"pandaopds/internal/config"
 	"pandaopds/internal/document"
+	"pandaopds/internal/feed"
 	"pandaopds/internal/migration"
 	"pandaopds/internal/progression"
 	"pandaopds/internal/storage"
@@ -56,7 +57,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = docs.Scan(context.Background()); err != nil {
+	if _, err = docs.ScanDeep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	items, _, err := docs.List(context.Background(), 1, 10, "available", "")
@@ -327,7 +328,7 @@ func TestArchiveFeedSummariesOmitReadingOrderAndAdvertiseImageStreams(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = docs.Scan(context.Background()); err != nil {
+	if _, err = docs.ScanDeep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	feedDoc, total, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{}, 1, 10)
@@ -370,5 +371,78 @@ func TestArchiveFeedSummariesOmitReadingOrderAndAdvertiseImageStreams(t *testing
 	atom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{}, 1, 10)
 	if err != nil || !strings.Contains(string(atom), `type="image/png"`) || !strings.Contains(string(atom), `type="image/*"`) {
 		t.Fatalf("Atom stream MIME types missing: err=%v body=%s", err, atom)
+	}
+}
+
+func TestManifestRejectsCorruptCandidateAndRecordsInvalid(t *testing.T) {
+	root := t.TempDir()
+	archiveRoot := filepath.Join(root, "archive")
+	if err := os.MkdirAll(archiveRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveRoot, "broken.cbz"), []byte("not a zip"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(filepath.Join(root, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	docs, err := document.New(db, archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id := mustFirstDocumentID(t, docs)
+	mux := http.NewServeMux()
+	RegisterDocumentRoutes(mux, docs, config.Settings{})
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/documents/"+id+"/manifest", nil))
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("manifest status=%d body=%s", response.Code, response.Body.String())
+	}
+	doc, err := docs.ListByID(context.Background(), id)
+	if err != nil || doc.Status != "invalid" {
+		t.Fatalf("document after failed index=%+v err=%v", doc, err)
+	}
+}
+
+func TestArchiveSummariesDoNotIndexUnopenedCandidates(t *testing.T) {
+	root := t.TempDir()
+	archiveRoot := filepath.Join(root, "archive")
+	writeTestArchive(t, filepath.Join(archiveRoot, "candidate.cbz"), "page")
+	db, err := storage.Open(filepath.Join(root, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	docs, err := document.New(db, archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	feedDoc, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{}, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := feedDoc["publications"].([]map[string]any)[0]
+	for _, link := range pub["links"].([]map[string]any) {
+		if link["rel"] == feed.RelThumb {
+			t.Fatal("unindexed candidate summary advertises an automatic cover request")
+		}
+	}
+	var pages int
+	if err = db.QueryRow(`SELECT COUNT(*) FROM document_pages`).Scan(&pages); err != nil || pages != 0 {
+		t.Fatalf("summary built page index=%d err=%v", pages, err)
+	}
+	if _, _, err = DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{}, 1, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT COUNT(*) FROM document_pages`).Scan(&pages); err != nil || pages != 0 {
+		t.Fatalf("Atom summary built page index=%d err=%v", pages, err)
 	}
 }

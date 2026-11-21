@@ -111,8 +111,10 @@ export default {
   documents: {
     header: "本地文件",
     title: "归档",
-    description: "管理归档目录中的实际文件。",
+    description: "管理归档目录中的实际文件。首次启动不会遍历归档目录，请手动运行普通扫描发现文件。",
     scan: "扫描目录",
+    deep_scan: "深度检查",
+    deep_confirm: "深度检查会打开归档并读取图片页，网络挂载目录可能产生大量网盘 I/O。它会计算容器 SHA-256，但不执行 ZIP CRC 全量校验。继续？",
     scanning: "正在扫描",
     empty: "尚未发现可阅读的归档文件。",
     pages: "{count} 页",
@@ -136,6 +138,7 @@ export default {
     status_available: "可阅读",
     status_missing: "文件缺失",
     status_invalid: "无效",
+    page_count_unknown: "页数在首次阅读时读取",
   },
   common: {
     save: "保存",

@@ -123,8 +123,10 @@ export default {
   documents: {
     header: "LOCAL FILES",
     title: "Archive",
-    description: "Manage files that exist in the archive directory.",
+    description: "Manage files that exist in the archive directory. Startup does not walk this directory; run a regular scan to discover files.",
     scan: "Scan directory",
+    deep_scan: "Deep check",
+    deep_confirm: "Deep check opens archives and reads image pages. A network-mounted directory may cause substantial drive I/O. It computes the container SHA-256 but does not perform a full ZIP CRC check. Continue?",
     scanning: "Scanning",
     empty: "No readable archive files found yet.",
     pages: "{count} pages",
@@ -148,6 +150,7 @@ export default {
     status_available: "Available",
     status_missing: "Missing file",
     status_invalid: "Invalid",
+    page_count_unknown: "Page count is read when first opened",
   },
   common: {
     save: "Save",

@@ -182,9 +182,14 @@ func TestImportLayoutsLinkDocumentsAndRestartReadOnly(t *testing.T) {
 		if err = db.QueryRow(`SELECT archive_path,source_size,source_mtime_ns,source_sha256 FROM archive_versions av JOIN publications p ON p.id=av.publication_id WHERE p.gid=? AND p.token=?`, v.gid, v.token).Scan(&rel, &size, &mtime, &hash); err != nil {
 			t.Fatal(err)
 		}
-		if rel != v.archivePath || size <= 0 || mtime <= 0 || hash == "" {
+		if rel != v.archivePath || size <= 0 || mtime <= 0 || hash != "" {
 			t.Fatalf("source evidence gid=%d path=%q size=%d mtime=%d sha=%q", v.gid, rel, size, mtime, hash)
 		}
+	}
+	// An earlier eager import can have source hashes while a new candidate
+	// row has not been read; matching stat evidence remains sufficient to link.
+	if _, err = db.Exec(`UPDATE archive_versions SET source_sha256='legacy-eager-hash' WHERE publication_id=(SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?)`, versions[0].gid, strings.ToLower(versions[0].token)); err != nil {
+		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,written) VALUES('eh','51/flat-gid',51,'flat-gid','2026-11-20T00:00:00Z','{}',0.6,12)`); err != nil {
 		t.Fatal(err)
@@ -522,11 +527,20 @@ func TestLinkLegacyDocumentsRejectsChangedPayloadManualConflictAndPathCollision(
 					t.Fatal(err)
 				}
 			}
-			if _, err = LinkLegacyDocuments(db, files); err == nil {
-				t.Fatal("linking accepted changed or conflicting source")
+			_, linkErr := LinkLegacyDocuments(db, files)
+			if mode == "path_collision" && linkErr == nil {
+				t.Fatal("linking accepted ambiguous path identity")
+			}
+			if mode != "path_collision" && linkErr != nil {
+				t.Fatalf("nonfatal changed/conflicting source blocked scan linking: %v", linkErr)
 			}
 			var marker int
 			if err = db.QueryRow(`SELECT COUNT(*) FROM legacy_imports WHERE name=?`, archiveDocumentLinksMarker).Scan(&marker); err != nil || marker != 0 {
+				if mode == "path_collision" && (err != nil || marker != 0) {
+					t.Fatalf("link marker=%d err=%v", marker, err)
+				}
+			}
+			if mode != "path_collision" && (err != nil || marker != 1) {
 				t.Fatalf("link marker=%d err=%v", marker, err)
 			}
 			var unlinked int
@@ -590,5 +604,34 @@ func TestLinkLegacyDocumentsSkipsReadyPayloadMissingAtImport(t *testing.T) {
 	}
 	if retry, err := LinkLegacyDocuments(db, files); err != nil || retry != 0 {
 		t.Fatalf("retry linked=%d err=%v", retry, err)
+	}
+}
+
+func TestLegacyImportDoesNotOpenArchivePayloads(t *testing.T) {
+	base := t.TempDir()
+	files := filepath.Join(base, "archive")
+	states := filepath.Join(base, "state")
+	versions := []layoutVersion{{gid: 1201, token: "readonly", storageDir: "1201", archivePath: "1201/archive.zip", title: "Read only", cover: fixturePNG}}
+	writeLayoutFixture(t, files, states, 1201, "readonly", "nested", "nested", versions)
+	zipPath := filepath.Join(files, "1201", "archive.zip")
+	if err := os.Chmod(zipPath, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(zipPath, 0600) })
+	db, err := storage.Open(filepath.Join(base, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = ImportLegacyArchive(db, files, states); err != nil {
+		t.Fatalf("metadata import attempted to read archive payload: %v", err)
+	}
+	var size int64
+	var hash string
+	if err = db.QueryRow(`SELECT source_size,source_sha256 FROM archive_versions`).Scan(&size, &hash); err != nil || size <= 0 || hash != "" {
+		t.Fatalf("source stat size=%d hash=%q err=%v", size, hash, err)
+	}
+	if err = ImportLegacyArchive(db, files, states); err != nil {
+		t.Fatalf("idempotent import opened payload: %v", err)
 	}
 }

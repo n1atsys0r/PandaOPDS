@@ -22,10 +22,20 @@ import (
 func main() {
 	_ = godotenv.Load()
 	settings := config.Load()
-	if (len(os.Args) == 3 || len(os.Args) == 4) && os.Args[1] == "archive" && os.Args[2] == "import" {
+	if len(os.Args) >= 3 && os.Args[1] == "archive" && os.Args[2] == "import" {
 		sidecarSource := settings.ArchiveDir
-		if len(os.Args) == 4 {
-			sidecarSource = os.Args[3]
+		deep := false
+		sourceSet := false
+		for _, arg := range os.Args[3:] {
+			if arg == "--deep" {
+				deep = true
+				continue
+			}
+			if sourceSet {
+				log.Fatal("usage: pandaopds archive import [--deep] [legacy-state-dir]")
+			}
+			sidecarSource = arg
+			sourceSet = true
 		}
 		databasePath := settings.DatabasePath
 		if databasePath == "" {
@@ -43,7 +53,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("open document scanner: %v", err)
 		}
-		report, err := docs.Scan(context.Background())
+		var report map[string]any
+		if deep {
+			report, err = docs.ScanDeep(context.Background())
+		} else {
+			report, err = docs.Scan(context.Background())
+		}
 		if err != nil {
 			log.Fatalf("scan local archive documents: %v", err)
 		}
@@ -51,7 +66,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("link imported legacy documents: %v", err)
 		}
-		fmt.Printf("SQLite archive migration complete: documents_found=%v legacy_documents_linked=%d source=%s database=%s\n", report["documents_found"], linked, sidecarSource, databasePath)
+		fmt.Printf("SQLite archive migration complete: documents_found=%v legacy_documents_linked=%d deep=%t source=%s database=%s\n", report["documents_found"], linked, deep, sidecarSource, databasePath)
 		return
 	}
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC)

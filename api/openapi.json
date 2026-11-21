@@ -2789,9 +2789,26 @@
         "tags": [
           "archive"
         ],
-        "summary": "Scan configured archive storage for legacy sidecars",
+        "summary": "Scan local archive directory",
         "operationId": "start_archive_import_scan",
-        "description": "Starts a state-backed scan of configured ARCHIVE_DIR. Repeated requests while running share the current job. ZIP-only files without state identity are ignored; this operation does not purchase or delete archives.",
+        "description": "Starts a scan of ARCHIVE_DIR. The default scan only walks paths and reads file stat metadata; it does not open ZIP payloads or calculate hashes. Deep inspection requires {\"deep\":true,\"acknowledged\":true}; it reads image pages and computes SHA-256, which may cause substantial I/O on a network-mounted drive. It does not perform a full ZIP CRC check. Startup does not automatically scan this directory; run a normal scan to discover files. Repeated requests while running share the current job.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "deep": { "type": "boolean", "default": false },
+                  "acknowledged": { "type": "boolean" }
+                }
+              },
+              "examples": {
+                "deep": { "value": { "deep": true, "acknowledged": true } }
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Scan started or an existing scan is running",
@@ -6476,6 +6493,22 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "The local archive changed while its page index was being built",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "422": {
+            "description": "The archive contains no readable image pages",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
           }
         },
         "parameters": [
@@ -7245,8 +7278,6 @@
               "idle",
               "running",
               "success",
-              "skipped",
-              "conflict",
               "error"
             ]
           },
@@ -7270,6 +7301,10 @@
           },
           "completed_at": {
             "type": "integer"
+          },
+          "deep": {
+            "type": "boolean",
+            "description": "Whether this run performed explicit deep archive inspection."
           }
         }
       },
@@ -8447,7 +8482,8 @@
             "type": "integer"
           },
           "page_count": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Zero means the archive has not yet been indexed by opening its manifest or a page."
           },
           "gid": {
             "type": "integer"
@@ -8496,7 +8532,6 @@
           "size",
           "page_count",
           "manifest_url",
-          "cover_url",
           "progression_url"
         ]
       },

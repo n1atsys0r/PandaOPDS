@@ -2,12 +2,9 @@ package migration
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,8 +88,10 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 	}
 	links := []link{}
 	missingAtImport := 0
+	unverified := 0
+	conflicts := 0
 	for _, ev := range byPath {
-		if ev.sha == "" {
+		if ev.size <= 0 {
 			// No payload existed when the legacy source was imported. Keep its
 			// sidecar history in SQLite, but do not make it a reason to block
 			// linking other scanned files or opening the service.
@@ -103,25 +102,29 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 		x.evidence = ev
 		err = db.QueryRow(`SELECT id,publication_id,association_source,progression_target,progression_gid,progression_token FROM documents WHERE archive_path=? AND status='available'`, ev.path).Scan(&x.id, &x.pub, &x.source, &x.target, &x.frozenGID, &x.frozenToken)
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("legacy archive payload %s has no scanned document", ev.path)
+			unverified++
+			continue
 		}
 		if err != nil {
 			return 0, err
 		}
-		var size int64
+		var size, mtime int64
 		var hash string
-		if err = db.QueryRow(`SELECT size,COALESCE(content_sha256,'') FROM documents WHERE id=?`, x.id).Scan(&size, &hash); err != nil {
+		if err = db.QueryRow(`SELECT size,mtime_ns,COALESCE(content_sha256,'') FROM documents WHERE id=?`, x.id).Scan(&size, &mtime, &hash); err != nil {
 			return 0, err
 		}
-		if size != ev.size || !strings.EqualFold(hash, ev.sha) {
-			return 0, fmt.Errorf("legacy payload fingerprint differs from scanned document at %s", ev.path)
+		if size != ev.size || mtime != ev.mtime || (hash != "" && ev.sha != "" && !strings.EqualFold(hash, ev.sha)) {
+			unverified++
+			continue
 		}
 		actualSize, actualMTime, actualHash, e := fingerprintArchivePath(archiveRoot, ev.path)
 		if e != nil {
-			return 0, fmt.Errorf("verify legacy payload %s: %w", ev.path, e)
+			unverified++
+			continue
 		}
-		if actualSize != ev.size || actualMTime != ev.mtime || !strings.EqualFold(actualHash, ev.sha) {
-			return 0, fmt.Errorf("legacy payload changed after import at %s", ev.path)
+		if actualSize != ev.size || actualMTime != ev.mtime || (hash != "" && ev.sha != "" && actualHash != "" && !strings.EqualFold(actualHash, ev.sha)) {
+			unverified++
+			continue
 		}
 		if x.pub.Valid {
 			var oldGID int
@@ -130,13 +133,16 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 				return 0, err
 			}
 			if oldGID != ev.gid || !strings.EqualFold(oldToken, ev.token) {
-				return 0, fmt.Errorf("document %s is associated with a different EH identity", x.id)
+				conflicts++
+				continue
 			}
 		} else if x.source.Valid && x.source.String == "manual" {
-			return 0, fmt.Errorf("document %s has a manual association without a publication", x.id)
+			conflicts++
+			continue
 		}
 		if x.target == "eh" && (x.frozenGID != ev.gid || !strings.EqualFold(x.frozenToken, ev.token)) {
-			return 0, fmt.Errorf("document %s has a different frozen EH progression identity", x.id)
+			conflicts++
+			continue
 		}
 		if err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=?)`, x.id).Scan(&x.hasLocalProgress); err != nil {
 			return 0, err
@@ -187,7 +193,7 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 			}
 		}
 	}
-	details := fmt.Sprintf(`{"linked":%d,"verified_paths":%d,"missing_at_import":%d}`, linked, len(links), missingAtImport)
+	details := fmt.Sprintf(`{"linked":%d,"verified_paths":%d,"missing_at_import":%d,"unverified":%d,"conflicts":%d}`, linked, len(links), missingAtImport, unverified, conflicts)
 	if _, err = tx.Exec(`UPDATE legacy_imports SET completed_at=?,details_json=? WHERE name=?`, time.Now().UTC().Format(time.RFC3339Nano), details, archiveDocumentLinksMarker); err != nil {
 		return 0, err
 	}
@@ -228,28 +234,12 @@ func fingerprintArchivePath(rootPath, rel string) (int64, int64, string, error) 
 			return 0, 0, "", errors.New("archive path component is not a directory")
 		}
 	}
-	f, err := r.Open(clean)
-	if err != nil {
-		return 0, 0, "", err
-	}
-	defer f.Close()
-	before, err := f.Stat()
+	before, err := r.Lstat(clean)
 	if err != nil {
 		return 0, 0, "", err
 	}
 	if !before.Mode().IsRegular() {
 		return 0, 0, "", errors.New("archive payload is not regular")
 	}
-	h := sha256.New()
-	if _, err = io.Copy(h, f); err != nil {
-		return 0, 0, "", err
-	}
-	after, err := f.Stat()
-	if err != nil {
-		return 0, 0, "", err
-	}
-	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return 0, 0, "", errors.New("archive payload changed during verification")
-	}
-	return before.Size(), before.ModTime().UnixNano(), hex.EncodeToString(h.Sum(nil)), nil
+	return before.Size(), before.ModTime().UnixNano(), "", nil
 }

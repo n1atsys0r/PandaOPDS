@@ -47,7 +47,7 @@ func documentList(w http.ResponseWriter, r *http.Request, store *document.Store)
 	}
 	result := make([]map[string]any, 0, len(items))
 	for i := range items {
-		result = append(result, decorateDocument(r, items[i]))
+		result = append(result, decorateDocument(r, items[i], store))
 	}
 	if page < 1 {
 		page = 1
@@ -70,7 +70,7 @@ func documentGet(w http.ResponseWriter, r *http.Request, store *document.Store, 
 		writeJSON(w, 500, map[string]any{"detail": "could not read document"})
 		return
 	}
-	writeJSON(w, 200, decorateDocument(r, d))
+	writeJSON(w, 200, decorateDocument(r, d, store))
 }
 func documentAssociate(w http.ResponseWriter, r *http.Request, store *document.Store) {
 	var body struct {
@@ -114,9 +114,12 @@ func documentPurgeMissing(w http.ResponseWriter, r *http.Request, store *documen
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func decorateDocument(r *http.Request, d document.Document) map[string]any {
+func decorateDocument(r *http.Request, d document.Document, store *document.Store) map[string]any {
 	progressionURL := documentProgressionURL(d)
-	out := map[string]any{"id": d.ID, "title": d.Title, "path": d.Path, "format": d.Format, "status": d.Status, "size": d.Size, "page_count": d.PageCount, "created_at": d.CreatedAt, "updated_at": d.UpdatedAt, "manifest_url": "/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest", "cover_url": "/image/documents/" + url.PathEscape(d.ID) + "/thumb", "association_source": d.AssociationSource, "progression_url": progressionURL}
+	out := map[string]any{"id": d.ID, "title": d.Title, "path": d.Path, "format": d.Format, "status": d.Status, "size": d.Size, "page_count": d.PageCount, "created_at": d.CreatedAt, "updated_at": d.UpdatedAt, "manifest_url": "/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest", "association_source": d.AssociationSource, "progression_url": progressionURL}
+	if _, ok := cachedCoverMIME(r.Context(), d, store); ok {
+		out["cover_url"] = "/image/documents/" + url.PathEscape(d.ID) + "/thumb"
+	}
 	if d.GID != nil {
 		out["gid"] = *d.GID
 		out["token"] = d.Token
@@ -137,6 +140,18 @@ func documentManifest(w http.ResponseWriter, r *http.Request, store *document.St
 	d, err := store.Get(r.Context(), r.PathValue("id"))
 	if err != nil || d.Status != "available" {
 		writeJSON(w, 404, map[string]any{"detail": "document not found"})
+		return
+	}
+	d, _, err = store.EnsurePageIndex(r.Context(), d.ID)
+	if err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, document.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, document.ErrInvalidArchive) {
+			status = http.StatusUnprocessableEntity
+		}
+		writeJSON(w, status, map[string]any{"detail": "document could not be indexed for reading"})
 		return
 	}
 	pub := LocalDocumentPublication(r.Context(), d, store, settings)
@@ -164,9 +179,12 @@ func BuildDocumentPublication(d document.Document, settings config.Settings) map
 }
 
 func LocalDocumentPublication(ctx context.Context, d document.Document, store *document.Store, settings config.Settings) map[string]any {
+	mimes, err := store.PageMIMEs(ctx, d.ID)
+	if latest, e := store.Get(ctx, d.ID); e == nil {
+		d = latest
+	}
 	pub := BuildDocumentPublication(d, settings)
 	reading := pub["readingOrder"].([]map[string]any)
-	mimes, err := store.PageMIMEs(ctx, d.ID)
 	for i := range reading {
 		if err == nil && i < len(mimes) {
 			reading[i]["type"] = mimes[i]
@@ -186,13 +204,15 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 			}
 		}
 		pub["images"].([]map[string]string)[0]["type"] = mime
-	} else if mime, err := store.PageMIME(ctx, d.ID, 0); err == nil {
-		for _, link := range pub["links"].([]map[string]any) {
-			if link["rel"] == feed.RelThumb {
-				link["type"] = mime
+	} else if d.PageCount > 0 {
+		if mime, ok, err := store.CachedPageMIME(ctx, d.ID, 0); err == nil && ok {
+			for _, link := range pub["links"].([]map[string]any) {
+				if link["rel"] == feed.RelThumb {
+					link["type"] = mime
+				}
 			}
+			pub["images"].([]map[string]string)[0]["type"] = mime
 		}
-		pub["images"].([]map[string]string)[0]["type"] = mime
 	}
 	return pub
 }
@@ -200,29 +220,51 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 func LocalDocumentSummary(ctx context.Context, d document.Document, store *document.Store, settings config.Settings) map[string]any {
 	pub := BuildDocumentPublication(d, settings)
 	delete(pub, "readingOrder")
-	if mime, err := store.PageMIMEProfile(ctx, d.ID); err == nil {
-		for _, link := range pub["links"].([]map[string]any) {
-			if link["rel"] == feed.RelStream {
-				link["type"] = mime
+	if d.PageCount > 0 {
+		if mime, err := store.PageMIMEProfile(ctx, d.ID); err == nil {
+			for _, link := range pub["links"].([]map[string]any) {
+				if link["rel"] == feed.RelStream {
+					link["type"] = mime
+				}
 			}
 		}
 	}
-	if mime, ok, err := store.CoverMIME(ctx, d.ID); err == nil && ok {
+	coverMime, hasCover := cachedCoverMIME(ctx, d, store)
+	if hasCover {
 		for _, link := range pub["links"].([]map[string]any) {
 			if link["rel"] == feed.RelThumb {
-				link["type"] = mime
+				link["type"] = coverMime
 			}
 		}
-		pub["images"].([]map[string]string)[0]["type"] = mime
-	} else if mime, err := store.PageMIME(ctx, d.ID, 0); err == nil {
-		for _, link := range pub["links"].([]map[string]any) {
-			if link["rel"] == feed.RelThumb {
-				link["type"] = mime
-			}
-		}
-		pub["images"].([]map[string]string)[0]["type"] = mime
+		pub["images"].([]map[string]string)[0]["type"] = coverMime
+	} else {
+		// A summary feed must not trigger page indexing or cause clients to
+		// fetch every unindexed candidate's cover automatically.
+		removeRelation(&pub, feed.RelThumb)
+		pub["images"] = []map[string]string{}
 	}
 	return pub
+}
+
+func cachedCoverMIME(ctx context.Context, d document.Document, store *document.Store) (string, bool) {
+	if mime, ok, err := store.CoverMIME(ctx, d.ID); err == nil && ok {
+		return mime, true
+	}
+	if mime, ok, err := store.CachedPageMIME(ctx, d.ID, 0); err == nil && ok {
+		return mime, true
+	}
+	return "", false
+}
+
+func removeRelation(pub *map[string]any, rel string) {
+	links, _ := (*pub)["links"].([]map[string]any)
+	out := links[:0]
+	for _, link := range links {
+		if link["rel"] != rel {
+			out = append(out, link)
+		}
+	}
+	(*pub)["links"] = out
 }
 
 func DocumentArchiveOPDSFeed(ctx context.Context, store *document.Store, settings config.Settings, page, perPage int) (map[string]any, int, error) {
@@ -263,18 +305,18 @@ func DocumentArchiveAtomFeed(ctx context.Context, store *document.Store, setting
 	b := feed.Builder{Settings: settings}
 	entries := make([]feed.AtomEntry, 0, len(items))
 	for _, d := range items {
-		coverMime := "application/octet-stream"
-		if mime, ok, e := store.CoverMIME(ctx, d.ID); e == nil && ok {
-			coverMime = mime
-		} else if mime, e := store.PageMIME(ctx, d.ID, 0); e == nil {
-			coverMime = mime
-		}
+		coverMime, hasCover := cachedCoverMIME(ctx, d, store)
 		streamMime := "image/*"
-		if mime, e := store.PageMIMEProfile(ctx, d.ID); e == nil {
-			streamMime = mime
+		if d.PageCount > 0 {
+			if mime, e := store.PageMIMEProfile(ctx, d.ID); e == nil {
+				streamMime = mime
+			}
 		}
 		count := d.PageCount
-		links := []feed.AtomLink{{Rel: feed.RelThumb, Href: b.Href("/image/documents/" + url.PathEscape(d.ID) + "/thumb"), Type: coverMime, Title: d.Title}, {Rel: feed.RelAcquisition, Href: b.Href("/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest"), Type: feed.MIMEDivina}, {Rel: feed.RelStream, Href: b.Href("/stream/documents/" + url.PathEscape(d.ID) + "/page/{pageNumber}"), Type: streamMime, Count: &count}, {Rel: feed.RelProgression, Href: b.Href(documentProgressionURL(d)), Type: feed.MIMEProgression}}
+		links := []feed.AtomLink{{Rel: feed.RelAcquisition, Href: b.Href("/opds/v2.0/documents/" + url.PathEscape(d.ID) + "/manifest"), Type: feed.MIMEDivina}, {Rel: feed.RelStream, Href: b.Href("/stream/documents/" + url.PathEscape(d.ID) + "/page/{pageNumber}"), Type: streamMime, Count: &count}, {Rel: feed.RelProgression, Href: b.Href(documentProgressionURL(d)), Type: feed.MIMEProgression}}
+		if hasCover {
+			links = append([]feed.AtomLink{{Rel: feed.RelThumb, Href: b.Href("/image/documents/" + url.PathEscape(d.ID) + "/thumb"), Type: coverMime, Title: d.Title}}, links...)
+		}
 		entries = append(entries, feed.AtomEntry{ID: "urn:pandaopds:document:" + d.ID, Title: "Chapter 1: " + d.Title, Updated: d.UpdatedAt.UTC().Format(time.RFC3339), Links: links})
 	}
 	now := time.Now().UTC().Format(time.RFC3339)

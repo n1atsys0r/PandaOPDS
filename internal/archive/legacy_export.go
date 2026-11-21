@@ -1,11 +1,8 @@
 package archive
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -190,33 +187,17 @@ func payloadFingerprint(rootPath, rel string) (int64, int64, string, error) {
 			return 0, 0, "", fmt.Errorf("archive path component is not a directory")
 		}
 	}
-	f, err := r.Open(clean)
+	before, err := r.Lstat(clean)
 	if os.IsNotExist(err) {
 		return 0, 0, "", nil
 	}
 	if err != nil {
 		return 0, 0, "", err
 	}
-	defer f.Close()
-	before, err := f.Stat()
-	if err != nil {
-		return 0, 0, "", err
-	}
 	if !before.Mode().IsRegular() {
 		return 0, 0, "", fmt.Errorf("archive payload is not a regular file")
 	}
-	h := sha256.New()
-	if _, err = io.Copy(h, f); err != nil {
-		return 0, 0, "", err
-	}
-	after, err := f.Stat()
-	if err != nil {
-		return 0, 0, "", err
-	}
-	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return 0, 0, "", fmt.Errorf("archive payload changed while fingerprinting")
-	}
-	return before.Size(), before.ModTime().UnixNano(), hex.EncodeToString(h.Sum(nil)), nil
+	return before.Size(), before.ModTime().UnixNano(), "", nil
 }
 
 // validateLegacyMetadataTree makes migration strict even though the runtime

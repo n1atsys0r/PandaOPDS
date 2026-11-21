@@ -47,7 +47,6 @@ type Server struct {
 	Documents              *document.Store
 	Subscriptions          *subscription.Worker
 	FavoriteSubscriptionID string
-	ArchiveScanReady       bool
 	Tracker                *recorder.Tracker
 	Logger                 *log.Logger
 	mux                    *http.ServeMux
@@ -190,21 +189,6 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 		logger.Printf("archive startup: rolled back %d interrupted tier upgrade(s)", rolled)
 	}
 	s.refreshProgressionArchiveIndex()
-	scanCtx, scanCancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	scanResult, scanErr := documents.Scan(scanCtx)
-	scanCancel()
-	if scanErr == nil {
-		_, scanErr = migration.LinkLegacyDocuments(database, settings.ArchiveDir)
-	}
-	if scanErr == nil {
-		s.ArchiveScanReady = true
-		s.archiveScan = ArchiveScanJob{Status: "success", CompletedAt: time.Now().Unix()}
-		if m, ok := scanResult["documents_found"].(int); ok {
-			s.archiveScan.Imported = m
-		}
-	} else {
-		s.archiveScan = ArchiveScanJob{Status: "error", Error: scanErr.Error(), CompletedAt: time.Now().Unix()}
-	}
 	state, err := favorites.NewDBState(database.DB, settings.FavoritesSyncState)
 	if err != nil {
 		s.Archives.Close()
@@ -257,9 +241,9 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 		_ = service.Close()
 		return nil, fmt.Errorf("start subscription worker: %w", err)
 	}
-	if s.ArchiveScanReady {
-		s.Subscriptions.EnableDispatch()
-	}
+	// Local archive indexing is explicit; dispatch must not wait for an
+	// archive-wide scan that would open user ZIP payloads during startup.
+	s.Subscriptions.EnableDispatch()
 	s.startArchiveVersionChecks()
 	s.register()
 	return s, nil

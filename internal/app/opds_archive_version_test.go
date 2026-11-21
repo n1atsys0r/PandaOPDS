@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestArchiveOPDSFeedsContainOnlyReadableLocalDocuments(t *testing.T) {
@@ -21,6 +22,34 @@ func TestArchiveOPDSFeedsContainOnlyReadableLocalDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
+	idle := httptest.NewRecorder()
+	server.Handler().ServeHTTP(idle, httptest.NewRequest(http.MethodGet, "/api/archive/import/scan", nil))
+	if !strings.Contains(idle.Body.String(), `"status":"idle"`) {
+		t.Fatalf("startup performed implicit archive scan: %s", idle.Body.String())
+	}
+	unacknowledged := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unacknowledged, httptest.NewRequest(http.MethodPost, "/api/archive/import/scan", strings.NewReader(`{"deep":true}`)))
+	if unacknowledged.Code != http.StatusBadRequest {
+		t.Fatalf("deep scan without acknowledgement status=%d", unacknowledged.Code)
+	}
+	scan := httptest.NewRecorder()
+	server.Handler().ServeHTTP(scan, httptest.NewRequest(http.MethodPost, "/api/archive/import/scan", nil))
+	if scan.Code != http.StatusAccepted {
+		t.Fatalf("explicit archive scan status=%d body=%s", scan.Code, scan.Body.String())
+	}
+	completed := false
+	for i := 0; i < 100; i++ {
+		status := httptest.NewRecorder()
+		server.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/archive/import/scan", nil))
+		if strings.Contains(status.Body.String(), `"status":"success"`) {
+			completed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatal("explicit archive scan did not complete")
+	}
 
 	list := httptest.NewRecorder()
 	server.Handler().ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/archive", nil))

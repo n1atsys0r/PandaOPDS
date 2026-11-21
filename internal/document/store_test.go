@@ -76,9 +76,11 @@ func newTestStore(t *testing.T) (*Store, string) {
 	return s, root
 }
 
-func TestScanRegistersUnknownZipAndReadsPages(t *testing.T) {
+func TestScanRegistersCandidateAndFirstReadBuildsPageIndex(t *testing.T) {
 	s, root := newTestStore(t)
 	writeArchive(t, filepath.Join(root, "unknown.cbz"), map[string][]byte{"10.png": onePixelPNG, "2.png": onePixelPNG})
+	opens := 0
+	s.payloadOpenHook = func(string) { opens++ }
 	result, err := s.Scan(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +95,7 @@ func TestScanRegistersUnknownZipAndReadsPages(t *testing.T) {
 	if total != 1 || len(items) != 1 {
 		t.Fatalf("documents=%d total=%d", len(items), total)
 	}
-	if items[0].GID != nil || items[0].PageCount != 2 {
+	if items[0].GID != nil || items[0].PageCount != 0 || items[0].SHA256 != "" || opens != 0 {
 		t.Fatalf("document=%+v", items[0])
 	}
 	page, mime, err := s.OpenPage(context.Background(), items[0].ID, 0)
@@ -102,6 +104,14 @@ func TestScanRegistersUnknownZipAndReadsPages(t *testing.T) {
 	}
 	if mime != "image/png" || len(page) == 0 {
 		t.Fatalf("mime=%q bytes=%d", mime, len(page))
+	}
+	indexed, err := s.ListByID(context.Background(), items[0].ID)
+	if err != nil || indexed.PageCount != 2 || indexed.SHA256 != "" {
+		t.Fatalf("lazy index changed identity/hash: %+v err=%v", indexed, err)
+	}
+	before := opens
+	if _, err = s.PageMIMEs(context.Background(), indexed.ID); err != nil || opens != before {
+		t.Fatalf("cached page index was reread: opens=%d before=%d err=%v", opens, before, err)
 	}
 }
 
@@ -136,7 +146,7 @@ func TestRegisterPublishedBindsNewDocumentWithoutScanningOtherPaths(t *testing.T
 		t.Fatalf("registration scanned/marked another row: %+v err=%v", other, err)
 	}
 	var pageCount int
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM document_pages WHERE document_id=?`, registered.ID).Scan(&pageCount); err != nil || pageCount != 1 {
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM document_pages WHERE document_id=?`, registered.ID).Scan(&pageCount); err != nil || pageCount != 0 || registered.PageCount != 0 || registered.SHA256 != "" {
 		t.Fatalf("page index=%d err=%v", pageCount, err)
 	}
 }
@@ -379,7 +389,7 @@ func TestListAllIncludesEveryStatusAndFillsPageAfterStaleFiles(t *testing.T) {
 	}
 }
 
-func TestScanIgnoresArchivesWithoutReadableImagesAndSymlinks(t *testing.T) {
+func TestScanRegistersCandidatesAndLazyReadMarksInvalidArchives(t *testing.T) {
 	s, root := newTestStore(t)
 	writeArchive(t, filepath.Join(root, "plain.zip"), map[string][]byte{"readme.txt": []byte("hello")})
 	if err := os.Symlink(filepath.Join(root, "plain.zip"), filepath.Join(root, "link.zip")); err != nil {
@@ -392,15 +402,25 @@ func TestScanIgnoresArchivesWithoutReadableImagesAndSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 0 {
-		t.Fatalf("registered unreadable archive: %d", total)
+	if total != 1 {
+		t.Fatalf("candidate not registered: %d", total)
 	}
-	invalid, invalidTotal, err := s.List(context.Background(), 1, 20, "invalid", "")
+	items, _, err := s.List(context.Background(), 1, 20, "available", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invalidTotal != 1 || len(invalid) != 1 {
-		t.Fatalf("diagnostic invalid docs=%d total=%d", len(invalid), invalidTotal)
+	if _, _, err = s.OpenPage(context.Background(), items[0].ID, 0); !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("lazy read error=%v", err)
+	}
+	invalid, invalidTotal, err := s.List(context.Background(), 1, 20, "invalid", "")
+	if err != nil || invalidTotal != 1 || len(invalid) != 1 {
+		t.Fatalf("diagnostic invalid docs=%d total=%d err=%v", len(invalid), invalidTotal, err)
+	}
+	if report, err := s.Scan(context.Background()); err != nil || report["documents_found"] != 0 {
+		t.Fatalf("ordinary scan revived invalid file: report=%v err=%v", report, err)
+	}
+	if _, total, err = s.List(context.Background(), 1, 20, "invalid", ""); err != nil || total != 1 {
+		t.Fatalf("invalid diagnostic lost after ordinary scan: total=%d err=%v", total, err)
 	}
 }
 
@@ -408,6 +428,10 @@ func TestArchiveMetadataExplicitEHURLAssociatesWithEvidence(t *testing.T) {
 	s, root := newTestStore(t)
 	writeArchive(t, filepath.Join(root, "declared.cbz"), map[string][]byte{"1.png": onePixelPNG, "ComicInfo.xml": []byte(`<ComicInfo><Web>https://e-hentai.org/g/456/abcdef0123/</Web></ComicInfo>`)})
 	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id := mustFirstID(t, s)
+	if _, _, err := s.OpenPage(context.Background(), id, 0); err != nil {
 		t.Fatal(err)
 	}
 	items, _, err := s.List(context.Background(), 1, 10, "available", "")
@@ -445,8 +469,62 @@ func TestScanSignatureShortcutAndDeepRecheck(t *testing.T) {
 	if _, err = s.ScanDeep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	before = mustFirstID(t, s)
+	var deepHash string
+	if err = s.db.QueryRow(`SELECT content_sha256 FROM documents WHERE id=?`, before).Scan(&deepHash); err != nil || deepHash == "" {
+		t.Fatalf("explicit deep scan did not compute hash=%q err=%v", deepHash, err)
+	}
+	old, err = os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement = solidPNG(t, color.NRGBA{G: 255, A: 255})
+	writeArchive(t, path, map[string][]byte{"1.png": replacement})
+	if err = os.Chtimes(path, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ScanDeep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if id := mustFirstID(t, s); id == before {
 		t.Fatal("deep scan failed to separate replaced content")
+	}
+}
+
+func TestCachedPageIndexStillVerifiesCurrentSafePathSignature(t *testing.T) {
+	for _, mode := range []string{"changed", "missing", "symlink"} {
+		t.Run(mode, func(t *testing.T) {
+			s, root := newTestStore(t)
+			path := filepath.Join(root, "cached.cbz")
+			writeArchive(t, path, map[string][]byte{"1.png": onePixelPNG})
+			if _, err := s.Scan(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			id := mustFirstID(t, s)
+			if _, _, err := s.OpenPage(context.Background(), id, 0); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "changed":
+				writeArchive(t, path, map[string][]byte{"1.png": bytes.Repeat([]byte{1}, len(onePixelPNG))})
+			case "missing":
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				outside := filepath.Join(t.TempDir(), "other.cbz")
+				writeArchive(t, outside, map[string][]byte{"1.png": onePixelPNG})
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, path); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			}
+			if _, _, err := s.EnsurePageIndex(context.Background(), id); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("stale cached index accepted: %v", err)
+			}
+		})
 	}
 }
 
@@ -542,6 +620,37 @@ func TestDeleteHookFailureAndFilesystemFailurePreserveSafeState(t *testing.T) {
 	current, err := s.ListByID(context.Background(), id)
 	if err != nil || current.Status != "available" {
 		t.Fatalf("document state=%+v err=%v", current, err)
+	}
+}
+
+func TestDeleteRefusesSameStatPayloadReplacementWhenDeepHashExists(t *testing.T) {
+	s, root := newTestStore(t)
+	path := filepath.Join(root, "hashed.cbz")
+	writeArchive(t, path, map[string][]byte{"1.png": onePixelPNG})
+	if _, err := s.ScanDeep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id := mustFirstID(t, s)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body[10] ^= 0x40
+	if err = os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(path, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Delete(context.Background(), id); err == nil {
+		t.Fatal("delete accepted same-stat replacement")
+	}
+	if _, err = os.Stat(path); err != nil {
+		t.Fatalf("replacement was removed: %v", err)
 	}
 }
 

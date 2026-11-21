@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CoverImage from "@/components/CoverImage.vue";
 import DownloadJobsPanel from "@/components/DownloadJobsPanel.vue";
+import { prepareDocumentForReading } from "@/document-reader.js";
 import {
   BookOpenIcon as BookOpen,
   LinkIcon as Link,
@@ -54,11 +55,15 @@ async function loadDocuments() {
     if (request === documentRequest) loading.value = false;
   }
 }
-async function startScan() {
+async function startScan(deep = false) {
+	if (deep && !window.confirm(t("documents.deep_confirm"))) return;
   error.value = "";
   try {
     const { data } = await s.api("/api/archive/import/scan", {
       method: "POST",
+      ...(deep
+        ? { body: JSON.stringify({ deep: true, acknowledged: true }) }
+        : {}),
     });
     scan.value = data;
     activeScanID = data.id || data.run_id || "";
@@ -146,10 +151,8 @@ async function deleteDocument(doc) {
 }
 async function readDocument(doc) {
   try {
-    const { data } = await s.api(
-      `/api/documents/${encodeURIComponent(doc.id)}`,
-    );
-    emit("read-document", { ...doc, ...data, document_id: doc.id });
+    const ready = await prepareDocumentForReading(doc, s.api);
+    emit("read-document", ready);
   } catch (e) {
     error.value = e.message;
   }
@@ -166,19 +169,21 @@ async function readDocument(doc) {
           {{ t("documents.description") }}
         </p>
       </div>
-      <Button
-        variant="outline"
-        :disabled="scan?.status === 'running'"
-        @click="startScan"
+      <div class="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          :disabled="scan?.status === 'running'"
+          @click="startScan(false)"
         ><RefreshCw
-          class="size-4"
           :class="{ 'animate-spin': scan?.status === 'running' }"
-        />{{
-          scan?.status === "running"
-            ? t("documents.scanning")
-            : t("documents.scan")
-        }}</Button
-      >
+          data-icon="inline-start"
+        />{{ scan?.status === "running" ? t("documents.scanning") : t("documents.scan") }}</Button>
+        <Button
+          variant="secondary"
+          :disabled="scan?.status === 'running'"
+          @click="startScan(true)"
+        >{{ t("documents.deep_scan") }}</Button>
+      </div>
     </header>
     <p
       v-if="error"
@@ -191,7 +196,7 @@ async function readDocument(doc) {
       v-if="scan"
       class="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
     >
-      <span>{{ scan.status }}</span
+      <span>{{ scan.status }}<template v-if="scan.deep"> · {{ t("documents.deep_scan") }}</template></span
       ><span v-if="scan.scanned != null">
         · {{ scan.scanned }} {{ t("documents.scanned") }}</span
       ><span v-if="scan.registered != null">
@@ -281,7 +286,8 @@ async function readDocument(doc) {
               }}</span>
             </div>
             <p class="mt-2 text-xs text-muted-foreground">
-              {{ t("documents.pages", { count: doc.page_count || 0 }) }} ·
+              <template v-if="doc.page_count > 0">{{ t("documents.pages", { count: doc.page_count }) }}</template>
+              <template v-else>{{ t("documents.page_count_unknown") }}</template> ·
               {{ t(`documents.status_${doc.status || "available"}`) }}
               <span v-if="doc.gid">· EH {{ doc.gid }}</span
               ><span v-else>· {{ t("documents.unlinked") }}</span>
