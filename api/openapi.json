@@ -7242,7 +7242,7 @@
           },
           "reason": {
             "type": "string",
-            "description": "For local-document routes: missing_record, record_unavailable, file_missing, unsafe_path, stale_signature, invalid_archive, io_error, or page_out_of_range."
+            "description": "For local-document routes, values include missing_record, record_unavailable, file_missing, unsafe_path, stale_signature (the archive changed during an active read; retry), invalid_archive, io_error, and page_out_of_range. Same-path metadata changes do not by themselves reject reads."
           },
           "path": {
             "type": "string",

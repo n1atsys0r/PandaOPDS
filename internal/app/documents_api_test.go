@@ -171,7 +171,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	}
 }
 
-func TestManifestReportsStaleSignatureAndAllowsExplicitInvalidRetry(t *testing.T) {
+func TestManifestReadsChangedPathAndAllowsExplicitInvalidRetry(t *testing.T) {
 	base := t.TempDir()
 	archiveRoot := filepath.Join(base, "archive")
 	if err := os.MkdirAll(archiveRoot, 0755); err != nil {
@@ -226,28 +226,27 @@ func TestManifestReportsStaleSignatureAndAllowsExplicitInvalidRetry(t *testing.T
 	}
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/documents/"+stale+"/manifest", nil))
-	if response.Code != http.StatusConflict {
-		t.Fatalf("stale manifest status=%d body=%s", response.Code, response.Body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("changed-path manifest status=%d body=%s", response.Code, response.Body)
 	}
-	var staleBody map[string]any
-	if err = json.Unmarshal(response.Body.Bytes(), &staleBody); err != nil {
+	var manifest map[string]any
+	if err = json.Unmarshal(response.Body.Bytes(), &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if staleBody["reason"] != "stale_signature" || staleBody["path"] != "stale.cbz" || staleBody["phase"] != "stat" {
-		t.Fatalf("stale diagnostic=%v", staleBody)
-	}
-	stored, ok := staleBody["stored_signature"].(map[string]any)
-	current, currentOK := staleBody["current_signature"].(map[string]any)
-	if !ok || stored["mtime_ns"] == nil || !currentOK || current["mtime_ns"] == nil {
-		t.Fatalf("stale signature details missing: %v", staleBody)
+	metadata, _ := manifest["metadata"].(map[string]any)
+	if metadata["numberOfPages"] != float64(1) {
+		t.Fatalf("changed-path index not available: %v", metadata)
 	}
 	for _, path := range []string{"/api/documents/" + stale, "/stream/documents/" + stale + "/page/1"} {
 		response = httptest.NewRecorder()
 		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		var body map[string]any
-		if err = json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusConflict || body["reason"] != "stale_signature" || body["path"] != "stale.cbz" {
+		if response.Code != http.StatusOK {
 			t.Fatalf("stale endpoint %s status=%d body=%s err=%v", path, response.Code, response.Body, err)
 		}
+	}
+	var count int
+	if err = db.QueryRow(`SELECT COUNT(*) FROM documents WHERE id=? AND status='available' AND page_count=1`, stale).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("same-path document not refreshed count=%d err=%v", count, err)
 	}
 
 	var badID string

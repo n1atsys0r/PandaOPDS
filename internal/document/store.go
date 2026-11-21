@@ -218,50 +218,8 @@ func (s *Store) RegisterPublished(ctx context.Context, relativePath string, gid 
 	if !before.Mode().IsRegular() {
 		return Document{}, ErrInvalidArchive
 	}
-	if before.Size() <= 0 || before.Size() > maxArchiveBytes {
-		return Document{}, ErrInvalidArchive
-	}
 	d := candidateDocument(rel, before)
 	token = strings.ToLower(token)
-	if d.ClaimGID > 0 && (d.ClaimGID != gid || d.ClaimToken != token) {
-		return Document{}, ErrAssociationConflict
-	}
-	d.ClaimGID, d.ClaimToken, d.ClaimEvidence = 0, "", ""
-
-	// Match upsert's row preference so we can distinguish a genuinely new local
-	// identity from an existing document whose local progression must stay put.
-	var priorID, priorHash, priorStatus, priorSource string
-	var priorSize, priorMTime int64
-	var priorPub sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT id,COALESCE(content_sha256,''),status,COALESCE(association_source,''),publication_id,size,mtime_ns FROM documents WHERE archive_path=? ORDER BY CASE status WHEN 'available' THEN 0 WHEN 'invalid' THEN 1 WHEN 'missing' THEN 2 ELSE 3 END,updated_at DESC LIMIT 1`, rel).Scan(&priorID, &priorHash, &priorStatus, &priorSource, &priorPub, &priorSize, &priorMTime)
-	if err != nil && err != sql.ErrNoRows {
-		return Document{}, err
-	}
-	priorFound := err == nil
-	existingIdentity := priorFound && (priorStatus == "available" || priorStatus == "missing") && priorSize == d.Size && priorMTime == d.MTimeNS
-	if existingIdentity && priorSource == "manual" && !priorPub.Valid {
-		return Document{}, ErrAssociationConflict
-	}
-	if existingIdentity && priorSource == "manual" && priorPub.Valid {
-		var oldGID int
-		var oldToken string
-		if e := s.db.QueryRowContext(ctx, `SELECT gid,token FROM publications WHERE id=?`, priorPub.Int64).Scan(&oldGID, &oldToken); e != nil {
-			return Document{}, e
-		}
-		if oldGID != gid || !strings.EqualFold(oldToken, token) {
-			return Document{}, ErrAssociationConflict
-		}
-	}
-	if existingIdentity && priorPub.Valid {
-		var oldGID int
-		var oldToken string
-		if e := s.db.QueryRowContext(ctx, `SELECT gid,token FROM publications WHERE id=?`, priorPub.Int64).Scan(&oldGID, &oldToken); e != nil {
-			return Document{}, e
-		}
-		if oldGID != gid || !strings.EqualFold(oldToken, token) {
-			return Document{}, ErrAssociationConflict
-		}
-	}
 	runID, err := randomID()
 	if err != nil {
 		return Document{}, err
@@ -269,38 +227,42 @@ func (s *Store) RegisterPublished(ctx context.Context, relativePath string, gid 
 	if err = s.upsertCandidate(ctx, d, runID, true); err != nil {
 		return Document{}, err
 	}
-	var id string
-	if err = s.db.QueryRowContext(ctx, `SELECT id FROM documents WHERE archive_path=? AND status='available' AND size=? AND mtime_ns=? ORDER BY updated_at DESC LIMIT 1`, rel, d.Size, d.MTimeNS).Scan(&id); err != nil {
+	rows, err := pathRows(ctx, s.db, rel)
+	if err != nil {
 		return Document{}, err
 	}
-	if err = s.bindPublishedIdentity(ctx, id, gid, token, source, !existingIdentity); err != nil {
+	selected, found, _ := choosePathRow(rows)
+	if !found || selected.status != "available" {
+		return Document{}, ErrNotFound
+	}
+	id := selected.id
+	if err = s.bindPublishedIdentity(ctx, id, gid, token, source); err != nil {
 		return Document{}, err
 	}
 	return s.Get(ctx, id)
 }
 
-func (s *Store) bindPublishedIdentity(ctx context.Context, id string, gid int, token, source string, freezeEH bool) error {
+func (s *Store) bindPublishedIdentity(ctx context.Context, id string, gid int, token, source string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',?,?,'{}',?,?) ON CONFLICT(provider,gid,token) DO UPDATE SET updated_at=excluded.updated_at`, gid, token, now, now); err != nil {
-		return err
-	}
-	var pubID int64
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, token).Scan(&pubID); err != nil {
-		return err
-	}
 	var currentPub sql.NullInt64
+	var currentSource sql.NullString
 	var target string
-	var frozenGID int
-	var frozenToken string
-	if err = tx.QueryRowContext(ctx, `SELECT publication_id,progression_target,progression_gid,progression_token FROM documents WHERE id=? AND status='available'`, id).Scan(&currentPub, &target, &frozenGID, &frozenToken); err != nil {
+	var hasProgress bool
+	if err = tx.QueryRowContext(ctx, `SELECT publication_id,association_source,progression_target,EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=documents.id) FROM documents WHERE id=? AND status='available'`, id).Scan(&currentPub, &currentSource, &target, &hasProgress); err != nil {
 		return err
 	}
-	if currentPub.Valid {
+	if currentSource.Valid && currentSource.String == "manual" && !currentPub.Valid {
+		return ErrAssociationConflict
+	}
+	if currentSource.Valid && currentSource.String == "manual" {
+		if !currentPub.Valid {
+			return ErrAssociationConflict
+		}
 		var oldGID int
 		var oldToken string
 		if err = tx.QueryRowContext(ctx, `SELECT gid,token FROM publications WHERE id=?`, currentPub.Int64).Scan(&oldGID, &oldToken); err != nil {
@@ -309,15 +271,17 @@ func (s *Store) bindPublishedIdentity(ctx context.Context, id string, gid int, t
 		if oldGID != gid || !strings.EqualFold(oldToken, token) {
 			return ErrAssociationConflict
 		}
+		return nil
 	}
-	if target == "eh" && (frozenGID != gid || !strings.EqualFold(frozenToken, token)) {
-		return ErrAssociationConflict
+	if _, err = tx.ExecContext(ctx, `INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',?,?,'{}',?,?) ON CONFLICT(provider,gid,token) DO UPDATE SET updated_at=excluded.updated_at`, gid, token, now, now); err != nil {
+		return err
 	}
-	if freezeEH {
-		_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source=?,association_evidence='trusted_download_job',progression_target='eh',progression_gid=?,progression_token=?,updated_at=? WHERE id=? AND status='available' AND association_source IS NULL`, pubID, source, gid, token, now, id)
-	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source=CASE WHEN association_source='manual' THEN association_source ELSE ? END,association_evidence=CASE WHEN association_source='manual' THEN association_evidence ELSE 'trusted_download_job' END,updated_at=? WHERE id=? AND status='available'`, pubID, source, now, id)
+	var pubID int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, token).Scan(&pubID); err != nil {
+		return err
 	}
+	freezeEH := !hasProgress && target != "eh"
+	_, err = tx.ExecContext(ctx, `UPDATE documents SET publication_id=?,association_source=?,association_evidence='trusted_download_job',progression_target=CASE WHEN ? THEN 'eh' ELSE progression_target END,progression_gid=CASE WHEN ? THEN ? ELSE progression_gid END,progression_token=CASE WHEN ? THEN ? ELSE progression_token END,updated_at=? WHERE id=? AND status='available'`, pubID, source, freezeEH, freezeEH, gid, freezeEH, token, now, id)
 	if err != nil {
 		return err
 	}
@@ -350,7 +314,7 @@ func (s *Store) scan(ctx context.Context, deep bool) (map[string]any, error) {
 		}
 		defer tx.Rollback()
 		if completed {
-			rows, e := tx.QueryContext(cleanupCtx, `SELECT id,archive_path FROM documents WHERE status='available'`)
+			rows, e := tx.QueryContext(cleanupCtx, `SELECT id,archive_path FROM documents WHERE status IN ('available','invalid')`)
 			if e != nil {
 				return e
 			}
@@ -372,7 +336,7 @@ func (s *Store) scan(ctx context.Context, deep bool) (map[string]any, error) {
 			}
 			rows.Close()
 			for _, x := range toMark {
-				if _, e = tx.ExecContext(cleanupCtx, `UPDATE documents SET status='missing',missing_at=?,updated_at=? WHERE id=?`, missing.Format(time.RFC3339Nano), missing.Format(time.RFC3339Nano), x.id); e != nil {
+				if _, e = tx.ExecContext(cleanupCtx, `UPDATE documents SET status='missing',missing_at=?,updated_at=? WHERE id=? AND status IN ('available','invalid')`, missing.Format(time.RFC3339Nano), missing.Format(time.RFC3339Nano), x.id); e != nil {
 					return e
 				}
 			}
@@ -436,48 +400,174 @@ func candidateDocument(rel string, info os.FileInfo) Document {
 	}
 }
 
+type pathRow struct {
+	id, status, source, target, created string
+	size, mtime                         int64
+	publicationID                       sql.NullInt64
+	publicationGID                      sql.NullInt64
+	publicationToken                    sql.NullString
+	localProgress                       bool
+}
+
+type pathQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func pathRows(ctx context.Context, q pathQuerier, rel string) ([]pathRow, error) {
+	rows, err := q.QueryContext(ctx, `SELECT d.id,d.status,COALESCE(d.association_source,''),d.progression_target,d.created_at,d.size,d.mtime_ns,d.publication_id,p.gid,p.token,EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=d.id) FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE d.archive_path=? ORDER BY d.created_at,d.id`, rel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []pathRow{}
+	for rows.Next() {
+		var row pathRow
+		if err = rows.Scan(&row.id, &row.status, &row.source, &row.target, &row.created, &row.size, &row.mtime, &row.publicationID, &row.publicationGID, &row.publicationToken, &row.localProgress); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func choosePathRow(rows []pathRow) (pathRow, bool, bool) {
+	if len(rows) == 0 {
+		return pathRow{}, false, false
+	}
+	findOne := func(candidates []pathRow) (pathRow, bool) {
+		if len(candidates) == 1 {
+			return candidates[0], true
+		}
+		return pathRow{}, false
+	}
+	active := []pathRow{}
+	for _, row := range rows {
+		if row.status == "available" {
+			active = append(active, row)
+			if row.publicationID.Valid || row.source == "manual" || row.localProgress {
+				return row, true, false
+			}
+		}
+	}
+	manual := []pathRow{}
+	manualIdentities := map[string]bool{}
+	for _, row := range rows {
+		if row.source == "manual" {
+			manual = append(manual, row)
+			key := "unlinked"
+			if row.publicationID.Valid && row.publicationGID.Valid {
+				key = fmt.Sprintf("%d:%s", row.publicationGID.Int64, strings.ToLower(row.publicationToken.String))
+			}
+			manualIdentities[key] = true
+		}
+	}
+	if len(manualIdentities) > 1 {
+		if len(active) > 0 {
+			return active[0], true, true
+		}
+		return manual[0], true, true
+	}
+	if len(manual) > 0 {
+		for _, row := range manual {
+			if row.status == "available" {
+				return row, true, false
+			}
+		}
+		return manual[0], true, false
+	}
+	pubRows := []pathRow{}
+	pubIdentities := map[string]bool{}
+	for _, row := range rows {
+		if row.publicationID.Valid && row.publicationGID.Valid {
+			pubRows = append(pubRows, row)
+			pubIdentities[fmt.Sprintf("%d:%s", row.publicationGID.Int64, strings.ToLower(row.publicationToken.String))] = true
+		}
+	}
+	if len(pubIdentities) == 1 && len(pubRows) > 0 {
+		for _, row := range pubRows {
+			if row.localProgress {
+				return row, true, false
+			}
+		}
+		for _, row := range pubRows {
+			if row.status == "available" {
+				return row, true, false
+			}
+		}
+		return pubRows[0], true, false
+	}
+	conflict := len(pubIdentities) > 1 || len(manual) > 1
+	if conflict {
+		if len(active) > 0 {
+			return active[0], true, true
+		}
+		return rows[0], true, true
+	}
+	frozen := []pathRow{}
+	frozenIDs := map[string]bool{}
+	for _, row := range rows {
+		if row.target == "eh" && row.publicationGID.Valid {
+			frozen = append(frozen, row)
+			frozenIDs[fmt.Sprintf("%d:%s", row.publicationGID.Int64, strings.ToLower(row.publicationToken.String))] = true
+		}
+	}
+	if len(frozenIDs) == 1 && len(frozen) == 1 {
+		return frozen[0], true, false
+	}
+	progress := []pathRow{}
+	for _, row := range rows {
+		if row.localProgress {
+			progress = append(progress, row)
+		}
+	}
+	if selected, ok := findOne(progress); ok {
+		return selected, true, false
+	}
+	if len(active) > 0 {
+		return active[0], true, conflict || len(frozenIDs) > 1 || len(progress) > 1
+	}
+	return rows[0], true, conflict || len(frozenIDs) > 1 || len(progress) > 1
+}
+
 // upsertCandidate records only path and stat metadata. It never opens the ZIP.
-// A matching signature reuses its previous identity and cached index; a changed
-// signature creates a new local identity and leaves prior progress on history.
-func (s *Store) upsertCandidate(ctx context.Context, d Document, runID string, reviveInvalid bool) error {
+// The archive-relative path is the document identity; stat changes only
+// invalidate the optional hash and page index.
+func (s *Store) upsertCandidate(ctx context.Context, d Document, runID string, _ bool) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var sameID string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM documents WHERE archive_path=? AND size=? AND mtime_ns=? ORDER BY CASE status WHEN 'available' THEN 0 WHEN 'missing' THEN 1 WHEN 'invalid' THEN 2 ELSE 3 END,updated_at DESC LIMIT 1`, d.Path, d.Size, d.MTimeNS).Scan(&sameID)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if err == nil {
-		var priorStatus string
-		if err = tx.QueryRowContext(ctx, `SELECT status FROM documents WHERE id=?`, sameID).Scan(&priorStatus); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?),updated_at=? WHERE archive_path=? AND status='available' AND id<>?`, now, now, d.Path, sameID); err != nil {
-			return err
-		}
-		nextStatus := priorStatus
-		if priorStatus == "missing" || (priorStatus == "invalid" && reviveInvalid) {
-			nextStatus = "available"
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE documents SET status=?,missing_at=CASE WHEN ?='available' THEN NULL ELSE missing_at END,scan_run_id=?,updated_at=CASE WHEN status=? THEN updated_at ELSE ? END WHERE id=?`, nextStatus, nextStatus, runID, nextStatus, now, sameID); err != nil {
-			return err
-		}
-		return tx.Commit()
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?),updated_at=? WHERE archive_path=? AND status='available'`, now, now, d.Path); err != nil {
-		return err
-	}
-	id, err := randomID()
+	rows, err := pathRows(ctx, tx, d.Path)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at) VALUES(?,?,?,?,?,'available','',?,0,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.Title, runID, now, now)
-	if err != nil {
-		return err
+	chosen, found, _ := choosePathRow(rows)
+	if !found {
+		id, e := randomID()
+		if e != nil {
+			return e
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at) VALUES(?,?,?,?,?,'available','',?,0,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.Title, runID, now, now); err != nil {
+			return err
+		}
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?),updated_at=? WHERE archive_path=? AND status='available' AND id<>?`, now, now, d.Path, chosen.id); err != nil {
+			return err
+		}
+		changed := chosen.size != d.Size || chosen.mtime != d.MTimeNS
+		resetIndex := changed || chosen.status == "invalid"
+		nextStatus := "available"
+		_, err = tx.ExecContext(ctx, `UPDATE documents SET format=?,size=?,mtime_ns=?,status=?,content_sha256=CASE WHEN size<>? OR mtime_ns<>? OR status='invalid' THEN '' ELSE content_sha256 END,title=?,page_count=CASE WHEN size<>? OR mtime_ns<>? OR status='invalid' THEN 0 ELSE page_count END,scan_run_id=?,missing_at=NULL,updated_at=CASE WHEN size<>? OR mtime_ns<>? OR status<>? THEN ? ELSE updated_at END WHERE id=?`, d.Format, d.Size, d.MTimeNS, nextStatus, d.Size, d.MTimeNS, d.Title, d.Size, d.MTimeNS, runID, d.Size, d.MTimeNS, nextStatus, now, chosen.id)
+		if err != nil {
+			return err
+		}
+		if resetIndex {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, chosen.id); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }
@@ -532,9 +622,8 @@ func (s *Store) inspect(ctx context.Context, path, rel string, before os.FileInf
 	if err != nil {
 		return Document{}, false, err
 	}
-	if !os.SameFile(before, st) || before.Size() != st.Size() || !before.ModTime().Equal(st.ModTime()) {
-		return Document{}, false, nil
-	}
+	// The file handle is authoritative. WalkDir's timestamp can have a
+	// different precision on network filesystems; it is not identity proof.
 	invalid := Document{Path: rel, Title: titleFrom(rel), Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(rel)), "."), Status: "invalid", Size: st.Size(), MTimeNS: st.ModTime().UnixNano()}
 	if st.Size() <= 0 || st.Size() > maxArchiveBytes {
 		return invalid, false, nil
@@ -568,7 +657,7 @@ func (s *Store) inspect(ctx context.Context, path, rel string, before os.FileInf
 	if err != nil {
 		return Document{}, false, err
 	}
-	if after.Size() != st.Size() || !after.ModTime().Equal(st.ModTime()) {
+	if after.Size() != st.Size() || after.ModTime().UnixNano() != st.ModTime().UnixNano() {
 		return Document{}, false, nil
 	}
 	now := time.Now().UTC()
@@ -621,62 +710,55 @@ func archiveIdentity(ctx context.Context, zr *zip.Reader) (int, string) {
 }
 
 func (s *Store) upsert(ctx context.Context, d Document, runID string) error {
-	var id, oldHash string
-	var oldStatus string
-	var oldSize, oldMTime int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(content_sha256,''),status,size,mtime_ns FROM documents WHERE archive_path=? ORDER BY CASE status WHEN 'available' THEN 0 WHEN 'invalid' THEN 1 ELSE 2 END,updated_at DESC LIMIT 1`, d.Path).Scan(&id, &oldHash, &oldStatus, &oldSize, &oldMTime)
-	if err != nil && err != sql.ErrNoRows {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	if err == sql.ErrNoRows {
+	defer tx.Rollback()
+	rows, err := pathRows(ctx, tx, d.Path)
+	if err != nil {
+		return err
+	}
+	chosen, found, _ := choosePathRow(rows)
+	id := chosen.id
+	createdAt := d.CreatedAt.Format(time.RFC3339Nano)
+	updatedAt := d.UpdatedAt.Format(time.RFC3339Nano)
+	if !found {
 		id, err = randomID()
 		if err != nil {
 			return err
 		}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at) VALUES(?,?,?,?,?,'available',?,?,?,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.SHA256, d.Title, d.PageCount, runID, d.CreatedAt.Format(time.RFC3339Nano), d.UpdatedAt.Format(time.RFC3339Nano))
+		if _, err = tx.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at) VALUES(?,?,?,?,?,'available',?,?,?,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.SHA256, d.Title, d.PageCount, runID, createdAt, updatedAt); err != nil {
+			return err
+		}
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?),updated_at=? WHERE archive_path=? AND status='available' AND id<>?`, updatedAt, updatedAt, d.Path, id); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE documents SET format=?,size=?,mtime_ns=?,status='available',content_sha256=?,title=?,page_count=?,scan_run_id=?,missing_at=NULL,updated_at=CASE WHEN size<>? OR mtime_ns<>? OR COALESCE(content_sha256,'')<>? OR status<>'available' THEN ? ELSE updated_at END WHERE id=?`, d.Format, d.Size, d.MTimeNS, d.SHA256, d.Title, d.PageCount, runID, d.Size, d.MTimeNS, d.SHA256, updatedAt, id)
 		if err != nil {
 			return err
 		}
-		if err = s.replacePageIndex(ctx, id, d.Pages); err != nil {
-			return err
-		}
-		return s.applyArchiveClaim(ctx, id, d)
 	}
-	if (oldSize != d.Size || oldMTime != d.MTimeNS) || (oldHash != "" && oldHash != d.SHA256) {
-		// A replacement at the same name is a new local identity. Leave any
-		// previous progress attached to the old document record.
-		tx, e := s.db.BeginTx(ctx, nil)
-		if e != nil {
-			return e
-		}
-		defer tx.Rollback()
-		if _, e = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=?,updated_at=? WHERE id=?`, d.UpdatedAt.Format(time.RFC3339Nano), d.UpdatedAt.Format(time.RFC3339Nano), id); e != nil {
-			return e
-		}
-		id, e = randomID()
-		if e != nil {
-			return e
-		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at) VALUES(?,?,?,?,?,'available',?,?,?,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.SHA256, d.Title, d.PageCount, runID, d.CreatedAt.Format(time.RFC3339Nano), d.UpdatedAt.Format(time.RFC3339Nano))
-		if e != nil {
-			return e
-		}
-		if e = tx.Commit(); e != nil {
-			return e
-		}
-		if e = s.replacePageIndex(ctx, id, d.Pages); e != nil {
-			return e
-		}
-		return s.applyArchiveClaim(ctx, id, d)
-	}
-	_, err = s.db.ExecContext(ctx, `UPDATE documents SET format=?,size=?,mtime_ns=?,status='available',content_sha256=?,title=?,page_count=?,scan_run_id=?,missing_at=NULL,updated_at=CASE WHEN status='available' AND COALESCE(content_sha256,'')=? AND size=? AND mtime_ns=? THEN updated_at ELSE ? END WHERE id=?`, d.Format, d.Size, d.MTimeNS, d.SHA256, d.Title, d.PageCount, runID, d.SHA256, d.Size, d.MTimeNS, d.UpdatedAt.Format(time.RFC3339Nano), id)
-	if err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, id); err != nil {
 		return err
 	}
-	if err = s.replacePageIndex(ctx, id, d.Pages); err != nil {
+	if err = insertPageIndex(ctx, tx, id, d.Pages); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
 		return err
 	}
 	return s.applyArchiveClaim(ctx, id, d)
+}
+
+func insertPageIndex(ctx context.Context, tx *sql.Tx, id string, pages []PageInfo) error {
+	for _, page := range pages {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO document_pages(document_id,page_index,central_index,entry_name,mime,size)VALUES(?,?,?,?,?,?)`, id, page.Index, page.CentralIndex, page.EntryName, page.MIME, page.Size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) applyArchiveClaim(ctx context.Context, id string, d Document) error {
@@ -702,82 +784,38 @@ func (s *Store) applyArchiveClaim(ctx context.Context, id string, d Document) er
 	return tx.Commit()
 }
 
-func (s *Store) markUnchanged(ctx context.Context, rel string, info os.FileInfo, runID string) (bool, bool, error) {
-	var id, status string
-	var size, mtime int64
-	var pages int
-	var hash sql.NullString
-	var publicationID sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,size,mtime_ns,page_count,content_sha256,publication_id FROM documents WHERE archive_path=? AND status IN ('available','invalid') ORDER BY CASE status WHEN 'available' THEN 0 WHEN 'invalid' THEN 1 ELSE 2 END,updated_at DESC LIMIT 1`, rel).Scan(&id, &status, &size, &mtime, &pages, &hash, &publicationID)
-	if err == sql.ErrNoRows {
-		return false, false, nil
-	}
-	if err != nil {
-		return false, false, err
-	}
-	if info.Size() != size || info.ModTime().UnixNano() != mtime {
-		return false, false, nil
-	}
-	if status == "available" {
-		if !hash.Valid || hash.String == "" {
-			return false, false, nil
-		}
-		var indexed int
-		if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_pages WHERE document_id=?`, id).Scan(&indexed); err != nil {
-			return false, false, err
-		}
-		if indexed != pages {
-			return false, false, nil
-		}
-	}
-	f, err := s.openPayload(rel)
-	if err != nil {
-		return false, false, nil
-	}
-	st, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return false, false, err
-	}
-	if !os.SameFile(info, st) || st.Size() != size || st.ModTime().UnixNano() != mtime {
-		_ = f.Close()
-		return false, false, nil
-	}
-	if status == "available" && !publicationID.Valid {
-		if zr, e := zip.NewReader(f, st.Size()); e == nil {
-			gid, token := archiveIdentity(ctx, zr)
-			if gid > 0 && token != "" {
-				if e = s.applyArchiveClaim(ctx, id, Document{ClaimGID: gid, ClaimToken: token, ClaimEvidence: "archive_metadata_url"}); e != nil {
-					_ = f.Close()
-					return false, false, e
-				}
-			}
-		}
-	}
-	_ = f.Close()
-	if _, err = s.db.ExecContext(ctx, `UPDATE documents SET scan_run_id=? WHERE id=?`, runID, id); err != nil {
-		return false, false, err
-	}
-	return true, status == "available", nil
-}
-
 func (s *Store) upsertInvalid(ctx context.Context, d Document, runID string) error {
-	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM documents WHERE archive_path=? AND status IN ('available','invalid') ORDER BY CASE status WHEN 'available' THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`, d.Path).Scan(&id)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err == nil {
-		_, err = s.db.ExecContext(ctx, `UPDATE documents SET format=?,size=?,mtime_ns=?,status='invalid',title=?,page_count=0,scan_run_id=?,updated_at=? WHERE id=?`, d.Format, d.Size, d.MTimeNS, d.Title, runID, now, id)
-		return err
-	}
-	id, err = randomID()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at)VALUES(?,?,?,?,?,'invalid','',?,0,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.Title, runID, now, now)
-	return err
+	defer tx.Rollback()
+	rows, err := pathRows(ctx, tx, d.Path)
+	if err != nil {
+		return err
+	}
+	chosen, found, _ := choosePathRow(rows)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if found {
+		if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?),updated_at=? WHERE archive_path=? AND status='available' AND id<>?`, now, now, d.Path, chosen.id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE documents SET format=?,size=?,mtime_ns=?,status='invalid',content_sha256='',title=?,page_count=0,scan_run_id=?,missing_at=NULL,updated_at=? WHERE id=?`, d.Format, d.Size, d.MTimeNS, d.Title, runID, now, chosen.id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, chosen.id); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	id, err := randomID()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,scan_run_id,created_at,updated_at)VALUES(?,?,?,?,?,'invalid','',?,0,?,?,?)`, id, d.Path, d.Format, d.Size, d.MTimeNS, d.Title, runID, now, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) List(ctx context.Context, page, perPage int, status, linked string) ([]Document, int, error) {
@@ -840,7 +878,7 @@ func (s *Store) List(ctx context.Context, page, perPage int, status, linked stri
 			queryArgs = append(queryArgs, cursorCreated, cursorCreated, cursorID)
 		}
 		queryArgs = append(queryArgs, batchSize)
-		query := `SELECT d.id,d.title,d.archive_path,d.format,d.status,d.size,d.mtime_ns,d.content_sha256,d.page_count,d.publication_id,d.association_source,d.created_at,d.updated_at,d.missing_at,p.gid,p.token,d.progression_target,d.progression_gid,d.progression_token FROM documents d LEFT JOIN publications p ON p.id=d.publication_id` + queryWhere + ` ORDER BY d.created_at DESC,d.id LIMIT ?`
+		query := `SELECT d.id,COALESCE(NULLIF(p.title,''),d.title),d.archive_path,d.format,d.status,d.size,d.mtime_ns,d.content_sha256,d.page_count,d.publication_id,d.association_source,d.created_at,d.updated_at,d.missing_at,p.gid,p.token,d.progression_target,d.progression_gid,d.progression_token FROM documents d LEFT JOIN publications p ON p.id=d.publication_id` + queryWhere + ` ORDER BY d.created_at DESC,d.id LIMIT ?`
 		if firstBatch {
 			query += ` OFFSET ?`
 			queryArgs = append(queryArgs, offset)
@@ -915,6 +953,18 @@ func (s *Store) Get(ctx context.Context, id string) (Document, error) {
 		}
 		return d, &ValidationError{Reason: reason, Phase: "load", Cause: e}
 	}
+	if d.Status == "missing" {
+		rows, err := pathRows(ctx, s.db, d.Path)
+		if err != nil {
+			return d, &ValidationError{Reason: "io_error", Phase: "canonical_lookup", Path: d.Path, Cause: err}
+		}
+		if canonical, ok, _ := choosePathRow(rows); ok && canonical.status == "available" && canonical.id != d.ID {
+			d, e = s.ListByID(ctx, canonical.id)
+			if e != nil {
+				return d, &ValidationError{Reason: "io_error", Phase: "canonical_load", Path: d.Path, Cause: e}
+			}
+		}
+	}
 	if d.Status == "available" {
 		if e = s.verify(ctx, d); e != nil {
 			return d, e
@@ -938,9 +988,8 @@ func (s *Store) verify(ctx context.Context, d Document) error {
 		}
 		return &ValidationError{Reason: reason, Phase: "stat", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
 	}
-	if st.Size() != d.Size || st.ModTime().UnixNano() != d.MTimeNS {
-		size, mtime := st.Size(), st.ModTime().UnixNano()
-		return &ValidationError{Reason: "stale_signature", Phase: "stat", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime, Cause: errors.New("stored file attributes no longer match the file")}
+	if !st.Mode().IsRegular() {
+		return &ValidationError{Reason: "file_missing", Phase: "stat", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: ErrInvalidArchive}
 	}
 	return nil
 }
@@ -959,18 +1008,23 @@ func (s *Store) EnsurePageIndex(ctx context.Context, id string) (Document, []Pag
 		}
 		return Document{}, nil, &ValidationError{Reason: reason, Phase: "load", Cause: err}
 	}
-	if d.Status != "available" && d.Status != "invalid" {
-		return Document{}, nil, &ValidationError{Reason: "record_unavailable", Phase: "record", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
+	rows, err := pathRows(ctx, s.db, d.Path)
+	if err != nil {
+		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "canonical_lookup", Path: d.Path, Cause: err}
 	}
-	if err = s.verify(ctx, d); err != nil {
-		return Document{}, nil, err
+	if canonical, ok, _ := choosePathRow(rows); ok && canonical.id != id {
+		id = canonical.id
+		d, err = s.ListByID(ctx, id)
+		if err != nil {
+			return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "canonical_load", Path: d.Path, Cause: err}
+		}
+	}
+	if d.Status != "available" && d.Status != "invalid" && d.Status != "missing" {
+		return Document{}, nil, &ValidationError{Reason: "record_unavailable", Phase: "record", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
 	}
 	pages, err := s.pageIndex(ctx, id)
 	if err != nil {
 		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "page_index_cache", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
-	}
-	if d.PageCount > 0 && len(pages) == d.PageCount {
-		return d, pages, nil
 	}
 	f, err := s.openPayload(d.Path)
 	if err != nil {
@@ -981,9 +1035,28 @@ func (s *Store) EnsurePageIndex(ctx context.Context, id string) (Document, []Pag
 	if err != nil {
 		return Document{}, nil, &ValidationError{Reason: "io_error", Phase: "stat_open_file", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: err}
 	}
-	if before.Size() != d.Size || before.ModTime().UnixNano() != d.MTimeNS {
-		size, mtime := before.Size(), before.ModTime().UnixNano()
-		return Document{}, nil, &ValidationError{Reason: "stale_signature", Phase: "open", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime}
+	if !before.Mode().IsRegular() || before.Size() <= 0 || before.Size() > maxArchiveBytes {
+		return Document{}, nil, &ValidationError{Reason: "invalid_archive", Phase: "open", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: ErrInvalidArchive}
+	}
+	currentMTime := before.ModTime().UnixNano()
+	indexMatchesCurrent := d.Size == before.Size() && d.MTimeNS == currentMTime && d.PageCount > 0 && len(pages) == d.PageCount
+	if indexMatchesCurrent {
+		tx, txErr := s.db.BeginTx(ctx, nil)
+		if txErr != nil {
+			return Document{}, nil, txErr
+		}
+		defer tx.Rollback()
+		if _, txErr = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?) WHERE archive_path=? AND status='available' AND id<>?`, time.Now().UTC().Format(time.RFC3339Nano), d.Path, id); txErr != nil {
+			return Document{}, nil, txErr
+		}
+		if _, txErr = tx.ExecContext(ctx, `UPDATE documents SET status='available',missing_at=NULL WHERE id=?`, id); txErr != nil {
+			return Document{}, nil, txErr
+		}
+		if txErr = tx.Commit(); txErr != nil {
+			return Document{}, nil, txErr
+		}
+		d.Status, d.MissingAt = "available", nil
+		return d, pages, nil
 	}
 	zr, err := s.newZipReader(f, before.Size())
 	if err != nil {
@@ -1008,7 +1081,7 @@ func (s *Store) EnsurePageIndex(ctx context.Context, id string) (Document, []Pag
 	}
 	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		size, mtime := after.Size(), after.ModTime().UnixNano()
-		return Document{}, nil, &ValidationError{Reason: "stale_signature", Phase: "page_index", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime}
+		return Document{}, nil, &ValidationError{Reason: "stale_signature", Phase: "page_index", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime, Cause: errors.New("archive changed while page index was read; retry the read")}
 	}
 	claimGID, claimToken := archiveIdentity(ctx, zr)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1019,12 +1092,13 @@ func (s *Store) EnsurePageIndex(ctx context.Context, id string) (Document, []Pag
 	if _, err = tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, id); err != nil {
 		return Document{}, nil, err
 	}
-	for _, p := range pages {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO document_pages(document_id,page_index,central_index,entry_name,mime,size)VALUES(?,?,?,?,?,?)`, id, p.Index, p.CentralIndex, p.EntryName, p.MIME, p.Size); err != nil {
-			return Document{}, nil, err
-		}
+	if err = insertPageIndex(ctx, tx, id, pages); err != nil {
+		return Document{}, nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE documents SET page_count=?,status='available',updated_at=CASE WHEN page_count=0 THEN ? ELSE updated_at END WHERE id=? AND size=? AND mtime_ns=?`, len(pages), time.Now().UTC().Format(time.RFC3339Nano), id, d.Size, d.MTimeNS); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE documents SET status='missing',missing_at=COALESCE(missing_at,?) WHERE archive_path=? AND status='available' AND id<>?`, time.Now().UTC().Format(time.RFC3339Nano), d.Path, id); err != nil {
+		return Document{}, nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE documents SET size=?,mtime_ns=?,content_sha256=CASE WHEN size<>? OR mtime_ns<>? THEN '' ELSE content_sha256 END,page_count=?,status='available',missing_at=NULL,updated_at=CASE WHEN size<>? OR mtime_ns<>? OR page_count=0 OR status<>'available' THEN ? ELSE updated_at END WHERE id=?`, before.Size(), currentMTime, before.Size(), currentMTime, len(pages), before.Size(), currentMTime, time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
 		return Document{}, nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -1121,7 +1195,7 @@ func (s *Store) ListByID(ctx context.Context, id string) (Document, error) {
 	var src, missing sql.NullString
 	var gid sql.NullInt64
 	var token sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT d.id,d.title,d.archive_path,d.format,d.status,d.size,d.mtime_ns,d.content_sha256,d.page_count,d.publication_id,d.association_source,d.created_at,d.updated_at,d.missing_at,p.gid,p.token,d.progression_target,d.progression_gid,d.progression_token FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE d.id=?`, id).Scan(&d.ID, &d.Title, &d.Path, &d.Format, &d.Status, &d.Size, &d.MTimeNS, &d.SHA256, &d.PageCount, new(sql.NullInt64), &src, &created, &updated, &missing, &gid, &token, &d.ProgressionTarget, &d.ProgressionGID, &d.ProgressionToken)
+	err := s.db.QueryRowContext(ctx, `SELECT d.id,COALESCE(NULLIF(p.title,''),d.title),d.archive_path,d.format,d.status,d.size,d.mtime_ns,d.content_sha256,d.page_count,d.publication_id,d.association_source,d.created_at,d.updated_at,d.missing_at,p.gid,p.token,d.progression_target,d.progression_gid,d.progression_token FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE d.id=?`, id).Scan(&d.ID, &d.Title, &d.Path, &d.Format, &d.Status, &d.Size, &d.MTimeNS, &d.SHA256, &d.PageCount, new(sql.NullInt64), &src, &created, &updated, &missing, &gid, &token, &d.ProgressionTarget, &d.ProgressionGID, &d.ProgressionToken)
 	if err == sql.ErrNoRows {
 		return d, ErrNotFound
 	}
@@ -1144,60 +1218,107 @@ func (s *Store) ListByID(ctx context.Context, id string) (Document, error) {
 }
 
 func (s *Store) OpenPage(ctx context.Context, id string, page int) ([]byte, string, error) {
-	d, pages, e := s.EnsurePageIndex(ctx, id)
-	if e != nil {
-		return nil, "", e
-	}
-	if d.Status != "available" {
-		return nil, "", ErrNotFound
-	}
-	if page < 0 || page >= d.PageCount {
-		return nil, "", &ValidationError{Reason: "page_out_of_range", Phase: "page_lookup", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
-	}
-	f, e := s.openPayload(d.Path)
-	if e != nil {
-		return nil, "", &ValidationError{Reason: validationReasonForPathError(e), Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
-	}
-	defer f.Close()
-	st, e := f.Stat()
-	if e != nil {
-		return nil, "", &ValidationError{Reason: "io_error", Phase: "stat_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
-	}
-	if st.Size() != d.Size || st.ModTime().UnixNano() != d.MTimeNS {
-		size, mtime := st.Size(), st.ModTime().UnixNano()
-		return nil, "", &ValidationError{Reason: "stale_signature", Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime}
-	}
-	if page >= len(pages) {
-		return nil, "", &ValidationError{Reason: "page_out_of_range", Phase: "page_lookup", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
-	}
-	info := pages[page]
-	zr, e := s.newZipReader(f, st.Size())
-	if e != nil {
-		if errors.Is(e, zip.ErrFormat) {
-			return nil, "", &ValidationError{Reason: "invalid_archive", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
+	for attempt := 0; attempt < 2; attempt++ {
+		d, pages, e := s.EnsurePageIndex(ctx, id)
+		if e != nil {
+			return nil, "", e
 		}
-		return nil, "", &ValidationError{Reason: "io_error", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
+		id = d.ID
+		if page < 0 || page >= d.PageCount || page >= len(pages) {
+			return nil, "", &ValidationError{Reason: "page_out_of_range", Phase: "page_lookup", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS}
+		}
+		f, e := s.openPayload(d.Path)
+		if e != nil {
+			return nil, "", &ValidationError{Reason: validationReasonForPathError(e), Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
+		}
+		st, e := f.Stat()
+		if e != nil {
+			_ = f.Close()
+			return nil, "", &ValidationError{Reason: "io_error", Phase: "stat_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
+		}
+		if !st.Mode().IsRegular() || st.Size() <= 0 || st.Size() > maxArchiveBytes {
+			_ = f.Close()
+			return nil, "", &ValidationError{Reason: "invalid_archive", Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: ErrInvalidArchive}
+		}
+		if st.Size() != d.Size || st.ModTime().UnixNano() != d.MTimeNS {
+			_ = f.Close()
+			if attempt == 0 {
+				if e = s.clearPageIndex(ctx, id); e != nil {
+					return nil, "", e
+				}
+				continue
+			}
+			size, mtime := st.Size(), st.ModTime().UnixNano()
+			return nil, "", &ValidationError{Reason: "stale_signature", Phase: "open_page", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, CurrentSize: &size, CurrentMTime: &mtime, Cause: errors.New("archive changed while opening page; retry")}
+		}
+		info := pages[page]
+		zr, e := s.newZipReader(f, st.Size())
+		if e != nil {
+			_ = f.Close()
+			if errors.Is(e, zip.ErrFormat) {
+				return nil, "", &ValidationError{Reason: "invalid_archive", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: e}
+			}
+			return nil, "", &ValidationError{Reason: "io_error", Phase: "zip_directory", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
+		}
+		var zf *zip.File
+		if info.CentralIndex >= 0 && info.CentralIndex < len(zr.File) {
+			zf = zr.File[info.CentralIndex]
+		}
+		if zf == nil || zf.Name != info.EntryName || zf.UncompressedSize64 != info.Size {
+			_ = f.Close()
+			if attempt == 0 {
+				if e = s.clearPageIndex(ctx, id); e != nil {
+					return nil, "", e
+				}
+				continue
+			}
+			return nil, "", &ValidationError{Reason: "io_error", Phase: "page_index_changed", Path: d.Path, Cause: errors.New("archive changed while opening page; retry")}
+		}
+		rc, e := zf.Open()
+		if e != nil {
+			_ = f.Close()
+			return nil, "", &ValidationError{Reason: "io_error", Phase: "open_page_member", Path: d.Path, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
+		}
+		b, e := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, r: rc}, int64(maxImageBytes)+1))
+		_ = rc.Close()
+		if e != nil {
+			_ = f.Close()
+			return nil, "", &ValidationError{Reason: "io_error", Phase: "read_page_member", Path: d.Path, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
+		}
+		if len(b) > int(maxImageBytes) {
+			_ = f.Close()
+			return nil, "", errors.New("image page exceeds size limit")
+		}
+		after, statErr := f.Stat()
+		_ = f.Close()
+		if statErr != nil {
+			return nil, "", statErr
+		}
+		if after.Size() != st.Size() || after.ModTime().UnixNano() != st.ModTime().UnixNano() {
+			if attempt == 0 {
+				_ = s.clearPageIndex(ctx, id)
+				continue
+			}
+			return nil, "", &ValidationError{Reason: "stale_signature", Phase: "read_page_member", Path: d.Path, Cause: errors.New("archive changed while reading page; retry")}
+		}
+		return b, info.MIME, nil
 	}
-	var zf *zip.File
-	if info.CentralIndex >= 0 && info.CentralIndex < len(zr.File) {
-		zf = zr.File[info.CentralIndex]
+	return nil, "", &ValidationError{Reason: "io_error", Phase: "open_page", Cause: ErrTransientRead}
+}
+
+func (s *Store) clearPageIndex(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	if zf == nil || zf.UncompressedSize64 != info.Size {
-		return nil, "", errors.New("document page index is stale")
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id=?`, id); err != nil {
+		return err
 	}
-	rc, e := zf.Open()
-	if e != nil {
-		return nil, "", &ValidationError{Reason: "io_error", Phase: "open_page_member", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
+	if _, err = tx.ExecContext(ctx, `UPDATE documents SET page_count=0 WHERE id=?`, id); err != nil {
+		return err
 	}
-	defer rc.Close()
-	b, e := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, r: rc}, int64(maxImageBytes)+1))
-	if e != nil {
-		return nil, "", &ValidationError{Reason: "io_error", Phase: "read_page_member", Path: d.Path, StoredSize: d.Size, StoredMTime: d.MTimeNS, Cause: fmt.Errorf("%w: %w", ErrTransientRead, e)}
-	}
-	if len(b) > int(maxImageBytes) {
-		return nil, "", errors.New("image page exceeds size limit")
-	}
-	return b, info.MIME, nil
+	return tx.Commit()
 }
 
 func (s *Store) rebuildPageIndex(ctx context.Context, d Document, f *os.File) ([]PageInfo, error) {
@@ -1339,11 +1460,13 @@ func (s *Store) PageMIME(ctx context.Context, id string, page int) (string, erro
 // opening the archive. Catalog builders use it to preserve the no-payload-I/O
 // contract for summary feeds.
 func (s *Store) CachedPageMIME(ctx context.Context, id string, page int) (string, bool, error) {
-	if _, err := s.Get(ctx, id); err != nil {
+	d, err := s.Get(ctx, id)
+	if err != nil {
 		return "", false, err
 	}
+	id = d.ID
 	var mime string
-	err := s.db.QueryRowContext(ctx, `SELECT p.mime FROM document_pages p JOIN documents d ON d.id=p.document_id WHERE p.document_id=? AND p.page_index=? AND d.page_count>0 AND (SELECT COUNT(*) FROM document_pages WHERE document_id=d.id)=d.page_count`, id, page).Scan(&mime)
+	err = s.db.QueryRowContext(ctx, `SELECT p.mime FROM document_pages p JOIN documents d ON d.id=p.document_id WHERE p.document_id=? AND p.page_index=? AND d.page_count>0 AND (SELECT COUNT(*) FROM document_pages WHERE document_id=d.id)=d.page_count`, id, page).Scan(&mime)
 	if err == sql.ErrNoRows {
 		return "", false, nil
 	}
@@ -1373,6 +1496,7 @@ func (s *Store) PageMIMEProfile(ctx context.Context, id string) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	id = d.ID
 	var minMIME, maxMIME string
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT MIN(mime),MAX(mime),COUNT(*) FROM document_pages WHERE document_id=?`, id).Scan(&minMIME, &maxMIME, &count); err != nil {
@@ -1390,11 +1514,13 @@ func (s *Store) PageMIMEProfile(ctx context.Context, id string) (string, error) 
 // CoverMIME returns only the stored cover's content type; it never loads the
 // cover BLOB into application memory.
 func (s *Store) CoverMIME(ctx context.Context, id string) (string, bool, error) {
-	if _, err := s.Get(ctx, id); err != nil {
+	d, err := s.Get(ctx, id)
+	if err != nil {
 		return "", false, err
 	}
+	id = d.ID
 	var mime string
-	err := s.db.QueryRowContext(ctx, `SELECT c.mime FROM documents d JOIN covers c ON c.publication_id=d.publication_id WHERE d.id=?`, id).Scan(&mime)
+	err = s.db.QueryRowContext(ctx, `SELECT c.mime FROM documents d JOIN covers c ON c.publication_id=d.publication_id WHERE d.id=?`, id).Scan(&mime)
 	if err == sql.ErrNoRows {
 		return "", false, nil
 	}
@@ -1412,6 +1538,7 @@ func (s *Store) Cover(ctx context.Context, id string) ([]byte, string, bool, err
 	if d.GID == nil {
 		return nil, "", false, nil
 	}
+	id = d.ID
 	var data []byte
 	var mime string
 	err = s.db.QueryRowContext(ctx, `SELECT c.data,c.mime FROM documents d JOIN covers c ON c.publication_id=d.publication_id WHERE d.id=?`, id).Scan(&data, &mime)
@@ -1434,6 +1561,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if d.Status != "available" {
 		return ErrNotFound
 	}
+	id = d.ID
 	root, e := openArchiveRoot(s.root)
 	if e != nil {
 		return e

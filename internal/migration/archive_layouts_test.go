@@ -478,7 +478,7 @@ func TestLegacyDownloadImportRetriesAcrossWorkTransactionsWithoutDuplicates(t *t
 	}
 }
 
-func TestLinkLegacyDocumentsRejectsChangedPayloadManualConflictAndPathCollision(t *testing.T) {
+func TestLinkLegacyDocumentsUsesPathAvailabilityAndProtectsManualOrAmbiguousIdentity(t *testing.T) {
 	for _, mode := range []string{"changed", "manual", "path_collision"} {
 		t.Run(mode, func(t *testing.T) {
 			base := t.TempDir()
@@ -529,25 +529,40 @@ func TestLinkLegacyDocumentsRejectsChangedPayloadManualConflictAndPathCollision(
 					t.Fatal(err)
 				}
 			}
-			_, linkErr := LinkLegacyDocuments(db, files)
-			if mode == "path_collision" && linkErr == nil {
-				t.Fatal("linking accepted ambiguous path identity")
-			}
-			if mode != "path_collision" && linkErr != nil {
-				t.Fatalf("nonfatal changed/conflicting source blocked scan linking: %v", linkErr)
+			linked, linkErr := LinkLegacyDocuments(db, files)
+			if linkErr != nil {
+				t.Fatalf("reconciliation failed: %v", linkErr)
 			}
 			var marker int
 			if err = db.QueryRow(`SELECT COUNT(*) FROM legacy_imports WHERE name=?`, archiveDocumentLinksMarker).Scan(&marker); err != nil || marker != 0 {
-				if mode == "path_collision" && (err != nil || marker != 0) {
-					t.Fatalf("link marker=%d err=%v", marker, err)
+				if err != nil {
+					t.Fatal(err)
 				}
 			}
-			if mode != "path_collision" && (err != nil || marker != 1) {
+			if marker != 1 {
 				t.Fatalf("link marker=%d err=%v", marker, err)
 			}
 			var unlinked int
 			if err = db.QueryRow(`SELECT COUNT(*) FROM documents WHERE association_source='legacy_sidecar'`).Scan(&unlinked); err != nil || unlinked != 0 {
-				t.Fatalf("partial associations persisted=%d err=%v", unlinked, err)
+				if mode == "changed" {
+					if unlinked != 1 {
+						t.Fatalf("changed same-path association=%d err=%v", unlinked, err)
+					}
+				} else if unlinked != 0 {
+					t.Fatalf("protected/conflicting association persisted=%d err=%v", unlinked, err)
+				}
+			}
+			if mode == "changed" && linked != 1 {
+				t.Fatalf("changed same-path linked=%d", linked)
+			}
+			if mode != "changed" && linked != 0 {
+				t.Fatalf("protected/conflicting linked=%d", linked)
+			}
+			if mode == "path_collision" {
+				diagnostics, e := LegacyDocumentLinkDiagnostics(db)
+				if e != nil || diagnostics["identity_conflict"] == 0 {
+					t.Fatalf("ambiguous path diagnostics=%v err=%v", diagnostics, e)
+				}
 			}
 		})
 	}
@@ -601,15 +616,15 @@ func TestLinkLegacyDocumentsSkipsReadyPayloadMissingAtImport(t *testing.T) {
 	if err = db.QueryRow(`SELECT details_json FROM legacy_imports WHERE name=?`, archiveDocumentLinksMarker).Scan(&details); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(details, `"missing_at_import":1`) {
-		t.Fatalf("link marker omits missing history: %s", details)
+	if !strings.Contains(details, `"file_unavailable":1`) {
+		t.Fatalf("link marker omits unavailable path: %s", details)
 	}
 	if retry, err := LinkLegacyDocuments(db, files); err != nil || retry != 0 {
 		t.Fatalf("retry linked=%d err=%v", retry, err)
 	}
 }
 
-func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t *testing.T) {
+func TestFlatGIDLegacyMetadataReconcilesPathIdentityAndAllowsImportWithoutSourceSize(t *testing.T) {
 	base := t.TempDir()
 	files, states := filepath.Join(base, "archive"), filepath.Join(base, "state")
 	const gid = 1726517
@@ -618,6 +633,10 @@ func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t 
 		t.Fatal(err)
 	}
 	writeLayoutZIP(t, filepath.Join(files, fmt.Sprintf("%d.zip", gid)), "001.png")
+	legacyMTime := time.Unix(1794492164, 520000000)
+	if err := os.Chtimes(filepath.Join(files, fmt.Sprintf("%d.zip", gid)), legacyMTime, legacyMTime); err != nil {
+		t.Fatal(err)
+	}
 	state := fmt.Sprintf(`{"gid":%d,"token":"%s","root_gid":%d,"root_token":"%s","payload_layout":"flat-gid","status":"ready","archive_size":14243223,"page_count":24,"or":"res"}`, gid, token, gid, token)
 	if err := os.WriteFile(filepath.Join(states, strconv.Itoa(gid), "state.json"), []byte(state), 0600); err != nil {
 		t.Fatal(err)
@@ -645,6 +664,12 @@ func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t 
 	if path != fmt.Sprintf("%d.zip", gid) || sourceSize <= 0 || sourceMTime <= 0 {
 		t.Fatalf("legacy flat path/evidence path=%q size=%d mtime=%d", path, sourceSize, sourceMTime)
 	}
+	if sourceMTime != legacyMTime.UnixNano() {
+		t.Fatalf("imported timestamp=%d want %d", sourceMTime, legacyMTime.UnixNano())
+	}
+	if _, err = db.Exec(`UPDATE archive_versions SET source_size=0 WHERE archive_path=?`, path); err != nil {
+		t.Fatal(err)
+	}
 	// An early reconciliation must remain retryable after the explicit scan.
 	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
 		t.Fatalf("pre-scan reconciliation linked=%d err=%v", linked, err)
@@ -654,6 +679,15 @@ func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t 
 	}
 	docs, err := document.New(db, files)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// The mounted file reports a second-rounded timestamp while the imported
+	// source reports .520s. Path availability plus unique metadata is enough.
+	mountedMTime := time.Unix(1794492164, 0)
+	if err = os.Chtimes(filepath.Join(files, path), mountedMTime, mountedMTime); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = docs.Scan(t.Context()); err != nil {
@@ -669,6 +703,21 @@ func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t 
 	var source, progressionTarget string
 	if err = db.QueryRow(`SELECT association_source,progression_target FROM documents WHERE id=?`, oldID).Scan(&source, &progressionTarget); err != nil || source != "legacy_sidecar" || progressionTarget != "eh" {
 		t.Fatalf("legacy link source=%q target=%q err=%v", source, progressionTarget, err)
+	}
+	linkedDocument, err := docs.Get(t.Context(), oldID)
+	if err != nil || linkedDocument.GID == nil || *linkedDocument.GID != gid || linkedDocument.Title != "Flat legacy" {
+		t.Fatalf("flat legacy metadata was not restored: %+v err=%v", linkedDocument, err)
+	}
+	indexedDocument, pages, err := docs.EnsurePageIndex(t.Context(), oldID)
+	if err != nil || indexedDocument.ID != oldID || len(pages) != 1 {
+		t.Fatalf("flat document manifest index id=%q pages=%d err=%v", indexedDocument.ID, len(pages), err)
+	}
+	page, mime, err := docs.OpenPage(t.Context(), oldID, 0)
+	if err != nil || len(page) == 0 || mime != "image/png" {
+		t.Fatalf("flat document page unavailable mime=%q bytes=%d err=%v", mime, len(page), err)
+	}
+	if diagnostics, err := LegacyDocumentLinkDiagnostics(db); err != nil || diagnostics["restored_from_metadata"] != 1 {
+		t.Fatalf("source_size=0 recovery diagnostics=%v err=%v", diagnostics, err)
 	}
 	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
 		t.Fatalf("idempotent reconciliation linked=%d err=%v", linked, err)
@@ -687,21 +736,21 @@ func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t 
 	if currentPub.Valid || associationSource != "manual" || currentTarget != "eh" {
 		t.Fatalf("manual unlink/frozen progression changed pub=%v source=%q target=%q", currentPub, associationSource, currentTarget)
 	}
-	if err = os.Chtimes(filepath.Join(files, path), time.Now(), time.Now().Add(2*time.Second)); err != nil {
+	if err = os.Chtimes(filepath.Join(files, path), mountedMTime.Add(time.Second), mountedMTime.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = docs.Scan(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if linked, err := LinkLegacyDocuments(db, files); err != nil || linked != 0 {
-		t.Fatalf("replacement reconciliation linked=%d err=%v", linked, err)
+		t.Fatalf("manual decision reconciliation linked=%d err=%v", linked, err)
 	}
 	var newID string
 	if err = db.QueryRow(`SELECT id FROM documents WHERE archive_path=? AND status='available'`, path).Scan(&newID); err != nil {
 		t.Fatal(err)
 	}
-	if newID == oldID {
-		t.Fatal("changed signature reused the previous document UUID")
+	if newID != oldID {
+		t.Fatalf("same path changed identity: %s -> %s", oldID, newID)
 	}
 	var newSource sql.NullString
 	var oldStatus string
@@ -711,15 +760,15 @@ func TestFlatGIDLegacyMetadataReconcilesRepeatedlyWithoutRebindingReplacement(t 
 	if err = db.QueryRow(`SELECT status FROM documents WHERE id=?`, oldID).Scan(&oldStatus); err != nil {
 		t.Fatal(err)
 	}
-	if newSource.Valid || oldStatus != "missing" {
-		t.Fatalf("replacement inherited association source=%q old status=%q", newSource.String, oldStatus)
+	if !newSource.Valid || newSource.String != "manual" || oldStatus != "available" {
+		t.Fatalf("same-path update lost explicit decision source=%q old status=%q", newSource.String, oldStatus)
 	}
 	diagnostics, err := LegacyDocumentLinkDiagnostics(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diagnostics["stale_mtime"] != 1 || diagnostics["linked"] != 0 {
-		t.Fatalf("replacement link diagnostics=%v", diagnostics)
+	if diagnostics["manual_decision"] == 0 || diagnostics["linked"] != 0 {
+		t.Fatalf("manual path decision diagnostics=%v", diagnostics)
 	}
 }
 

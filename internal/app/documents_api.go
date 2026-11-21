@@ -366,7 +366,7 @@ func writeDocumentError(w http.ResponseWriter, id string, err error) {
 			detail = "本地文档记录、文件或请求页码不存在。"
 		case "stale_signature":
 			status = http.StatusConflict
-			detail = "文件属性已变化，请执行普通扫描后重试。"
+			detail = "文件在读取过程中发生变化，请重试阅读。"
 		case "invalid_archive":
 			status = http.StatusUnprocessableEntity
 			detail = "归档结构无效或不包含可读取图片；可再次点击阅读重试。"
@@ -375,7 +375,7 @@ func writeDocumentError(w http.ResponseWriter, id string, err error) {
 			detail = "归档路径不安全，已拒绝读取。"
 		case "record_unavailable":
 			status = http.StatusConflict
-			detail = "文档登记状态不可阅读，请重新扫描目录以核验文件。"
+			detail = "文档登记状态当前不可读取。"
 		case "io_error":
 			status = http.StatusServiceUnavailable
 			detail = "归档读取未能完成；请重试阅读。"

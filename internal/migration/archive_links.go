@@ -30,22 +30,19 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 		return 0, nil
 	}
 	type evidence struct {
-		path   string
-		status string
-		gid    int
-		token  string
-		size   int64
-		mtime  int64
-		sha    string
+		path, status            string
+		gid                     int
+		token                   string
+		sourceSize, sourceMTime int64
 	}
-	rows, err := db.Query(`SELECT v.archive_path,v.status,p.gid,p.token,v.source_size,v.source_mtime_ns,v.source_sha256 FROM archive_versions v JOIN publications p ON p.id=v.publication_id WHERE v.archive_path<>'' ORDER BY v.archive_path,p.gid,p.token`)
+	rows, err := db.Query(`SELECT v.archive_path,v.status,p.gid,p.token,v.source_size,v.source_mtime_ns FROM archive_versions v JOIN publications p ON p.id=v.publication_id WHERE v.archive_path<>'' ORDER BY v.archive_path,p.gid,p.token`)
 	if err != nil {
 		return 0, err
 	}
-	byPath := map[string]evidence{}
+	byPath := map[string][]evidence{}
 	for rows.Next() {
 		var e evidence
-		if err = rows.Scan(&e.path, &e.status, &e.gid, &e.token, &e.size, &e.mtime, &e.sha); err != nil {
+		if err = rows.Scan(&e.path, &e.status, &e.gid, &e.token, &e.sourceSize, &e.sourceMTime); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -54,14 +51,7 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 			rows.Close()
 			return 0, fmt.Errorf("legacy archive path is unsafe: %q", e.path)
 		}
-		if prior, ok := byPath[e.path]; ok {
-			if prior.gid != e.gid || !strings.EqualFold(prior.token, e.token) {
-				rows.Close()
-				return 0, fmt.Errorf("legacy archive path %s is claimed by multiple EH identities", e.path)
-			}
-			continue
-		}
-		byPath[e.path] = e
+		byPath[e.path] = append(byPath[e.path], e)
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
@@ -69,109 +59,96 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 	}
 	rows.Close()
 
-	type link struct {
-		evidence
-		id               string
-		pub              sql.NullInt64
-		source           sql.NullString
-		target           string
-		frozenGID        int
-		frozenToken      string
-		hasLocalProgress bool
-	}
-	links := []link{}
-	missingAtImport := 0
-	unverified := 0
-	conflicts := 0
-	alreadyLinked := 0
+	links := []evidence{}
 	reasons := map[string]int{}
-	for _, ev := range byPath {
-		if ev.size <= 0 {
-			// No payload existed when the legacy source was imported. Keep its
-			// sidecar history in SQLite, but do not make it a reason to block
-			// linking other scanned files or opening the service.
-			missingAtImport++
-			reasons["source_missing_at_import"]++
-			continue
-		} // no source payload existed when sidecars were imported
-		var x link
-		x.evidence = ev
-		err = db.QueryRow(`SELECT id,publication_id,association_source,progression_target,progression_gid,progression_token FROM documents WHERE archive_path=? AND status='available'`, ev.path).Scan(&x.id, &x.pub, &x.source, &x.target, &x.frozenGID, &x.frozenToken)
-		if errors.Is(err, sql.ErrNoRows) {
-			unverified++
-			reasons["no_document"]++
+	conflicts, alreadyLinked, missingAtImport, unverified := 0, 0, 0, 0
+	for path, candidates := range byPath {
+		identity := map[string]evidence{}
+		for _, ev := range candidates {
+			identity[fmt.Sprintf("%d:%s", ev.gid, strings.ToLower(ev.token))] = ev
+		}
+		if len(identity) == 0 {
+			reasons["metadata_not_ready"]++
 			continue
 		}
+		if len(identity) != 1 {
+			reasons["identity_conflict"]++
+			conflicts++
+			continue
+		}
+		var ev evidence
+		for _, ev = range identity {
+		}
+		_, _, _, e := fingerprintArchivePath(archiveRoot, path)
+		if e != nil {
+			reasons["file_unavailable"]++
+			unverified++
+			continue
+		}
+		var totalDocs int
+		if err = db.QueryRow(`SELECT COUNT(*) FROM documents WHERE archive_path=?`, path).Scan(&totalDocs); err != nil {
+			return 0, err
+		}
+		if totalDocs == 0 {
+			reasons["no_document"]++
+			unverified++
+			continue
+		}
+		// The scan normally leaves a single active row. When older runs created
+		// duplicates, prefer the active row carrying the strongest user state.
+		var id string
+		err = db.QueryRow(`SELECT d.id FROM documents d WHERE d.archive_path=? ORDER BY CASE WHEN d.status='available' AND (d.publication_id IS NOT NULL OR d.association_source='manual' OR EXISTS(SELECT 1 FROM progressions q WHERE q.target_type='document' AND q.target_id=d.id)) THEN 0 WHEN d.association_source='manual' THEN 1 WHEN d.publication_id IS NOT NULL THEN 2 WHEN EXISTS(SELECT 1 FROM progressions q WHERE q.target_type='document' AND q.target_id=d.id) THEN 3 WHEN d.status='available' THEN 4 ELSE 5 END,d.created_at,d.id LIMIT 1`, path).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
-		var size, mtime int64
-		var hash string
-		if err = db.QueryRow(`SELECT size,mtime_ns,COALESCE(content_sha256,'') FROM documents WHERE id=?`, x.id).Scan(&size, &mtime, &hash); err != nil {
+		var manualDecisions, conflicting int
+		if err = db.QueryRow(`SELECT COUNT(*) FROM documents WHERE archive_path=? AND association_source='manual'`, path).Scan(&manualDecisions); err != nil {
 			return 0, err
 		}
-		if size != ev.size {
-			unverified++
-			reasons["stale_size"]++
+		if manualDecisions > 0 {
+			reasons["manual_decision"]++
 			continue
 		}
-		if mtime != ev.mtime {
-			unverified++
-			reasons["stale_mtime"]++
+		if err = db.QueryRow(`SELECT COUNT(*) FROM documents d JOIN publications p ON p.id=d.publication_id WHERE d.archive_path=? AND (p.gid<>? OR lower(p.token)<>lower(?))`, path, ev.gid, ev.token).Scan(&conflicting); err != nil {
+			return 0, err
+		}
+		if conflicting > 0 {
+			reasons["identity_conflict"]++
+			conflicts++
 			continue
 		}
-		if hash != "" && ev.sha != "" && !strings.EqualFold(hash, ev.sha) {
-			unverified++
-			reasons["hash_mismatch"]++
+		var pub sql.NullInt64
+		var source sql.NullString
+		var oldGID sql.NullInt64
+		var oldToken sql.NullString
+		if err = db.QueryRow(`SELECT d.publication_id,d.association_source,p.gid,p.token FROM documents d LEFT JOIN publications p ON p.id=d.publication_id WHERE d.id=?`, id).Scan(&pub, &source, &oldGID, &oldToken); err != nil {
+			return 0, err
+		}
+		if source.Valid && source.String == "manual" {
+			reasons["manual_decision"]++
 			continue
 		}
-		actualSize, actualMTime, actualHash, e := fingerprintArchivePath(archiveRoot, ev.path)
-		if e != nil {
-			unverified++
-			reasons["stat_error"]++
-			continue
-		}
-		if actualSize != ev.size {
-			unverified++
-			reasons["stale_size"]++
-			continue
-		}
-		if actualMTime != ev.mtime {
-			unverified++
-			reasons["stale_mtime"]++
-			continue
-		}
-		if hash != "" && ev.sha != "" && actualHash != "" && !strings.EqualFold(actualHash, ev.sha) {
-			unverified++
-			reasons["hash_mismatch"]++
-			continue
-		}
-		if x.pub.Valid {
-			var oldGID int
-			var oldToken string
-			if err = db.QueryRow(`SELECT gid,token FROM publications WHERE id=?`, x.pub.Int64).Scan(&oldGID, &oldToken); err != nil {
-				return 0, err
-			}
-			if oldGID != ev.gid || !strings.EqualFold(oldToken, ev.token) {
-				conflicts++
-				reasons["conflict"]++
+		if pub.Valid {
+			if oldGID.Valid && int(oldGID.Int64) == ev.gid && strings.EqualFold(oldToken.String, ev.token) {
+				alreadyLinked++
+				reasons["already_linked"]++
 				continue
 			}
-			alreadyLinked++
-		} else if x.source.Valid && x.source.String == "manual" {
+			reasons["identity_conflict"]++
 			conflicts++
-			reasons["conflict"]++
 			continue
 		}
-		if x.target == "eh" && (x.frozenGID != ev.gid || !strings.EqualFold(x.frozenToken, ev.token)) {
-			conflicts++
-			reasons["conflict"]++
-			continue
+		links = append(links, ev)
+		if ev.sourceSize <= 0 {
+			reasons["restored_from_metadata"]++
+		} else if ev.sourceMTime != 0 {
+			_, actualMTime, _, statErr := fingerprintArchivePath(archiveRoot, path)
+			if statErr == nil && actualMTime != ev.sourceMTime {
+				reasons["metadata_mtime_changed"]++
+			}
 		}
-		if err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=?)`, x.id).Scan(&x.hasLocalProgress); err != nil {
-			return 0, err
-		}
-		links = append(links, x)
+		// Preserve the chosen id separately through an ephemeral path lookup in
+		// the transaction below; no archive bytes are opened here.
 	}
 
 	tx, err := db.BeginTx(context.Background(), nil)
@@ -184,12 +161,18 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 	}
 	linked := 0
 	for _, x := range links {
+		var id string
+		if err = tx.QueryRow(`SELECT d.id FROM documents d WHERE d.archive_path=? ORDER BY CASE WHEN d.status='available' AND (d.publication_id IS NOT NULL OR d.association_source='manual' OR EXISTS(SELECT 1 FROM progressions q WHERE q.target_type='document' AND q.target_id=d.id)) THEN 0 WHEN d.association_source='manual' THEN 1 WHEN d.publication_id IS NOT NULL THEN 2 WHEN EXISTS(SELECT 1 FROM progressions q WHERE q.target_type='document' AND q.target_id=d.id) THEN 3 WHEN d.status='available' THEN 4 ELSE 5 END,d.created_at,d.id LIMIT 1`, x.path).Scan(&id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				reasons["no_document"]++
+				continue
+			}
+			return 0, err
+		}
 		var currentPub sql.NullInt64
 		var currentSource sql.NullString
 		var target string
-		var frozenGID int
-		var frozenToken string
-		if err = tx.QueryRow(`SELECT publication_id,association_source,progression_target,progression_gid,progression_token FROM documents WHERE id=? AND status='available'`, x.id).Scan(&currentPub, &currentSource, &target, &frozenGID, &frozenToken); err != nil {
+		if err = tx.QueryRow(`SELECT publication_id,association_source,progression_target FROM documents WHERE id=?`, id).Scan(&currentPub, &currentSource, &target); err != nil {
 			return 0, err
 		}
 		if currentPub.Valid {
@@ -199,22 +182,19 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 				return 0, err
 			}
 			if currentGID != x.gid || !strings.EqualFold(currentToken, x.token) {
-				reasons["conflict"]++
+				reasons["identity_conflict"]++
 				conflicts++
 				continue
 			}
 		} else if currentSource.Valid && currentSource.String == "manual" {
 			// An explicit user unlink is a manual decision too; a later scan
 			// must not silently restore the legacy association.
-			reasons["conflict"]++
+			reasons["manual_decision"]++
 			conflicts++
 			continue
 		}
-		if target == "eh" && (frozenGID != x.gid || !strings.EqualFold(frozenToken, x.token)) {
-			reasons["conflict"]++
-			conflicts++
-			continue
-		}
+		// A previously frozen progression destination is independent of this
+		// publication association; preserve it unless local user action changes it.
 		var pubID int64
 		if currentPub.Valid {
 			pubID = currentPub.Int64
@@ -223,27 +203,23 @@ func LinkLegacyDocuments(db *storage.DB, archiveRoot string) (int, error) {
 		}
 		if !currentPub.Valid {
 			var res sql.Result
-			res, err = tx.Exec(`UPDATE documents SET publication_id=?,association_source='legacy_sidecar',association_evidence='archive_version_path',updated_at=? WHERE id=? AND publication_id IS NULL AND association_source IS NULL`, pubID, time.Now().UTC().Format(time.RFC3339Nano), x.id)
+			res, err = tx.Exec(`UPDATE documents SET publication_id=?,association_source='legacy_sidecar',association_evidence='archive_version_path',updated_at=? WHERE id=? AND publication_id IS NULL AND association_source IS NULL`, pubID, time.Now().UTC().Format(time.RFC3339Nano), id)
 			if err != nil {
 				return 0, err
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
-				reasons["conflict"]++
+				reasons["identity_conflict"]++
 				conflicts++
 				continue
 			}
 			linked++
-		} else if !currentSource.Valid || (currentSource.String != "manual" && currentSource.String != "download_job" && currentSource.String != "legacy_sidecar") {
-			if _, err = tx.Exec(`UPDATE documents SET association_source='legacy_sidecar',association_evidence='archive_version_path',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), x.id); err != nil {
-				return 0, err
-			}
 		}
 		var hasLocalProgress bool
-		if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=?)`, x.id).Scan(&hasLocalProgress); err != nil {
+		if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=?)`, id).Scan(&hasLocalProgress); err != nil {
 			return 0, err
 		}
-		if !hasLocalProgress && !x.hasLocalProgress && target != "eh" && (!currentSource.Valid || currentSource.String != "manual") {
-			if _, err = tx.Exec(`UPDATE documents SET progression_target='eh',progression_gid=?,progression_token=? WHERE id=? AND progression_target='document' AND association_source='legacy_sidecar' AND publication_id=? AND NOT EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=?)`, x.gid, strings.ToLower(x.token), x.id, pubID, x.id); err != nil {
+		if !hasLocalProgress && target != "eh" && (!currentSource.Valid || currentSource.String != "manual") {
+			if _, err = tx.Exec(`UPDATE documents SET progression_target='eh',progression_gid=?,progression_token=? WHERE id=? AND progression_target='document' AND association_source='legacy_sidecar' AND publication_id=? AND NOT EXISTS(SELECT 1 FROM progressions WHERE target_type='document' AND target_id=?)`, x.gid, strings.ToLower(x.token), id, pubID, id); err != nil {
 				return 0, err
 			}
 		}

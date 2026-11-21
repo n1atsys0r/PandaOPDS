@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"pandaopds/internal/storage"
 )
@@ -113,8 +114,8 @@ func TestScanRegistersCandidateAndFirstReadBuildsPageIndex(t *testing.T) {
 		t.Fatalf("lazy index changed identity/hash: %+v err=%v", indexed, err)
 	}
 	before := opens
-	if _, err = s.PageMIMEs(context.Background(), indexed.ID); err != nil || opens != before {
-		t.Fatalf("cached page index was reread: opens=%d before=%d err=%v", opens, before, err)
+	if _, err = s.PageMIMEs(context.Background(), indexed.ID); err != nil || opens != before+1 {
+		t.Fatalf("cached index verification should stat the current file without rebuilding it: opens=%d before=%d err=%v", opens, before, err)
 	}
 }
 
@@ -313,7 +314,7 @@ func TestRegisterPublishedRejectsManualConflictAndSymlink(t *testing.T) {
 	}
 }
 
-func TestSamePathReplacementGetsNewIdentityAndDoesNotTransferAssociation(t *testing.T) {
+func TestSamePathReplacementKeepsIdentityAssociationAndProgress(t *testing.T) {
 	s, root := newTestStore(t)
 	path := filepath.Join(root, "book.zip")
 	writeArchive(t, path, map[string][]byte{"1.png": solidPNG(t, color.NRGBA{R: 255, A: 255})})
@@ -327,9 +328,10 @@ func TestSamePathReplacementGetsNewIdentityAndDoesNotTransferAssociation(t *test
 	if err = s.Associate(context.Background(), first.ID, 123, "AbCd"); err != nil {
 		t.Fatal(err)
 	}
-	replacement := append([]byte(nil), onePixelPNG...)
-	replacement[len(replacement)-1] ^= 1
-	writeArchive(t, path, map[string][]byte{"1.png": replacement})
+	if _, err = s.db.Exec(`INSERT INTO progressions(target_type,target_id,modified,device_json,progression,written) VALUES('document',?,'2026-11-20T00:00:00Z','{}',0.75,9)`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	writeArchive(t, path, map[string][]byte{"1.png": solidPNG(t, color.NRGBA{B: 255, A: 255}), "2.png": onePixelPNG})
 	if _, err = s.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -337,22 +339,85 @@ func TestSamePathReplacementGetsNewIdentityAndDoesNotTransferAssociation(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Fatalf("replacement inherited association: %+v", rows)
+	if len(rows) != 1 || rows[0].ID != first.ID || rows[0].GID == nil || *rows[0].GID != 123 {
+		t.Fatalf("same-path identity/association changed: %+v", rows)
 	}
-	missing, err := s.ListByID(context.Background(), first.ID)
+	current, err := s.ListByID(context.Background(), first.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing.Status != "missing" || missing.GID == nil {
-		t.Fatalf("old document was not preserved: %+v", missing)
+	if current.Status != "available" || current.GID == nil || current.PageCount != 0 || current.SHA256 != "" {
+		t.Fatalf("path update did not preserve identity while invalidating cache: %+v", current)
 	}
-	rows, _, err = s.List(context.Background(), 1, 20, "", "false")
-	if err != nil {
+	var progress float64
+	var written int64
+	if err = s.db.QueryRow(`SELECT progression,written FROM progressions WHERE target_type='document' AND target_id=?`, first.ID).Scan(&progress, &written); err != nil || progress != .75 || written != 9 {
+		t.Fatalf("same-path progress changed value=%v written=%d err=%v", progress, written, err)
+	}
+	page, _, err := s.OpenPage(context.Background(), first.ID, 0)
+	if err != nil || !bytes.Equal(page, solidPNG(t, color.NRGBA{B: 255, A: 255})) {
+		t.Fatalf("replacement page read failed or served stale bytes, err=%v", err)
+	}
+}
+
+func TestMissingHistoricalIDUsesCanonicalAvailableDocumentForReadAndDelete(t *testing.T) {
+	s, root := newTestStore(t)
+	path := filepath.Join(root, "same.zip")
+	writeArchive(t, path, map[string][]byte{"1.png": onePixelPNG})
+	if _, err := s.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].ID == first.ID {
-		t.Fatalf("replacement identity=%+v old=%s", rows, first.ID)
+	oldID := mustFirstID(t, s)
+	var size, mtime int64
+	if err := s.db.QueryRow(`SELECT size,mtime_ns FROM documents WHERE id=?`, oldID).Scan(&size, &mtime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE documents SET status='missing' WHERE id=?`, oldID); err != nil {
+		t.Fatal(err)
+	}
+	canonicalID := "canonical-history-id"
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`INSERT INTO documents(id,archive_path,format,size,mtime_ns,status,content_sha256,title,page_count,progression_target,created_at,updated_at)VALUES(?,'same.zip','zip',?,?,'available','', 'same',0,'document',?,?)`, canonicalID, size, mtime, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Associate(context.Background(), canonicalID, 777, "canonical-token"); err != nil {
+		t.Fatal(err)
+	}
+	var pubID int64
+	if err := s.db.QueryRow(`SELECT publication_id FROM documents WHERE id=?`, canonicalID).Scan(&pubID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO covers(publication_id,mime,data,sha256,source,updated_at)VALUES(?,?,?,?,?,?)`, pubID, "image/png", onePixelPNG, "fixture", "legacy_sidecar", now); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := s.Get(context.Background(), oldID); err != nil || d.ID != canonicalID {
+		t.Fatalf("GET did not resolve canonical id: %+v err=%v", d, err)
+	}
+	page, mime, err := s.OpenPage(context.Background(), oldID, 0)
+	if err != nil || mime != "image/png" || !bytes.Equal(page, onePixelPNG) {
+		t.Fatalf("historical id read failed mime=%q err=%v", mime, err)
+	}
+	if profile, err := s.PageMIMEProfile(context.Background(), oldID); err != nil || profile != "image/png" {
+		t.Fatalf("historical id MIME profile=%q err=%v", profile, err)
+	}
+	if cover, coverMIME, ok, coverErr := s.Cover(context.Background(), oldID); coverErr != nil || !ok || coverMIME != "image/png" || !bytes.Equal(cover, onePixelPNG) {
+		t.Fatalf("historical id cover failed ok=%v mime=%q err=%v", ok, coverMIME, coverErr)
+	}
+	if err = s.Delete(context.Background(), oldID); err != nil {
+		t.Fatalf("delete through historical id failed: %v", err)
+	}
+	var canonicalStatus, oldStatus string
+	if err = s.db.QueryRow(`SELECT status FROM documents WHERE id=?`, canonicalID).Scan(&canonicalStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.QueryRow(`SELECT status FROM documents WHERE id=?`, oldID).Scan(&oldStatus); err != nil {
+		t.Fatal(err)
+	}
+	if canonicalStatus != "missing" || oldStatus != "missing" {
+		t.Fatalf("wrong records marked missing canonical=%q old=%q", canonicalStatus, oldStatus)
+	}
+	if _, err = os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file still exists after delete: %v", err)
 	}
 }
 
@@ -518,11 +583,32 @@ func TestScanRegistersCandidatesAndLazyReadMarksInvalidArchives(t *testing.T) {
 	if err != nil || invalidTotal != 1 || len(invalid) != 1 {
 		t.Fatalf("diagnostic invalid docs=%d total=%d err=%v", len(invalid), invalidTotal, err)
 	}
-	if report, err := s.Scan(context.Background()); err != nil || report["documents_found"] != 0 {
-		t.Fatalf("ordinary scan revived invalid file: report=%v err=%v", report, err)
+	if report, err := s.Scan(context.Background()); err != nil || report["documents_found"] != 1 {
+		t.Fatalf("ordinary scan should restore the available candidate without opening it: report=%v err=%v", report, err)
 	}
-	if _, total, err = s.List(context.Background(), 1, 20, "invalid", ""); err != nil || total != 1 {
-		t.Fatalf("invalid diagnostic lost after ordinary scan: total=%d err=%v", total, err)
+	if _, total, err = s.List(context.Background(), 1, 20, "available", ""); err != nil || total != 1 {
+		t.Fatalf("candidate missing after ordinary scan: total=%d err=%v", total, err)
+	}
+	if _, _, err = s.OpenPage(context.Background(), items[0].ID, 0); !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("bad format should still fail on explicit read: %v", err)
+	}
+	if err = os.Remove(filepath.Join(root, "plain.zip")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err = s.db.QueryRow(`SELECT status FROM documents WHERE id=?`, items[0].ID).Scan(&status); err != nil || status != "missing" {
+		t.Fatalf("invalid document disappearance status=%q err=%v", status, err)
+	}
+	writeArchive(t, filepath.Join(root, "plain.zip"), map[string][]byte{"readme.txt": []byte("hello")})
+	if _, err = s.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var returnedID, returnedStatus string
+	if err = s.db.QueryRow(`SELECT id,status FROM documents WHERE archive_path='plain.zip' AND status='available'`).Scan(&returnedID, &returnedStatus); err != nil || returnedID != items[0].ID || returnedStatus != "available" {
+		t.Fatalf("returned path did not restore stable candidate id=%q status=%q err=%v", returnedID, returnedStatus, err)
 	}
 }
 
@@ -588,12 +674,12 @@ func TestScanSignatureShortcutAndDeepRecheck(t *testing.T) {
 	if _, err = s.ScanDeep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if id := mustFirstID(t, s); id == before {
-		t.Fatal("deep scan failed to separate replaced content")
+	if id := mustFirstID(t, s); id != before {
+		t.Fatal("deep scan changed path identity")
 	}
 }
 
-func TestCachedPageIndexStillVerifiesCurrentSafePathSignature(t *testing.T) {
+func TestCachedPageIndexRefreshesChangedPathAndRejectsMissingOrSymlink(t *testing.T) {
 	for _, mode := range []string{"changed", "missing", "symlink"} {
 		t.Run(mode, func(t *testing.T) {
 			s, root := newTestStore(t)
@@ -608,7 +694,7 @@ func TestCachedPageIndexStillVerifiesCurrentSafePathSignature(t *testing.T) {
 			}
 			switch mode {
 			case "changed":
-				writeArchive(t, path, map[string][]byte{"1.png": bytes.Repeat([]byte{1}, len(onePixelPNG))})
+				writeArchive(t, path, map[string][]byte{"1.png": solidPNG(t, color.NRGBA{G: 255, A: 255})})
 			case "missing":
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
@@ -624,11 +710,21 @@ func TestCachedPageIndexStillVerifiesCurrentSafePathSignature(t *testing.T) {
 				}
 			}
 			_, _, err := s.EnsurePageIndex(context.Background(), id)
+			if mode == "changed" {
+				if err != nil {
+					t.Fatalf("changed same-path file should rebuild index: %v", err)
+				}
+				page, _, readErr := s.OpenPage(context.Background(), id, 0)
+				if readErr != nil || !bytes.Equal(page, solidPNG(t, color.NRGBA{G: 255, A: 255})) {
+					t.Fatalf("changed file read failed: %v", readErr)
+				}
+				return
+			}
 			var validation *ValidationError
 			if !errors.As(err, &validation) {
 				t.Fatalf("expected typed validation error, got %v", err)
 			}
-			want := map[string]string{"changed": "stale_signature", "missing": "file_missing", "symlink": "unsafe_path"}[mode]
+			want := map[string]string{"missing": "file_missing", "symlink": "unsafe_path"}[mode]
 			if validation.Reason != want {
 				t.Fatalf("reason=%q want %q err=%v", validation.Reason, want, err)
 			}

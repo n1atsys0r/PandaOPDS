@@ -142,7 +142,7 @@ export default {
     read_error_missing_record: "本地文档记录不存在。",
     read_error_file_missing: "归档文件不存在；请重新扫描目录。",
     read_error_unsafe_path: "归档路径不安全，已拒绝读取。",
-    read_error_stale_signature: "文件属性已变化，请重新扫描目录后再阅读。",
+    read_error_stale_signature: "文件在读取过程中发生变化，请稍后重试。",
     read_error_invalid_archive: "归档无可读取图片；可再次点击阅读重试。",
     read_error_io_error: "归档读取未完成；请再次点击阅读重试。",
     read_error_page_out_of_range: "请求的页面不存在。",

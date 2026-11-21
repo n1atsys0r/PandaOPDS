@@ -154,7 +154,7 @@ export default {
     read_error_missing_record: "The local document record does not exist.",
     read_error_file_missing: "The archive file is missing; scan the directory again.",
     read_error_unsafe_path: "The archive path is unsafe, so reading was refused.",
-    read_error_stale_signature: "File attributes changed; scan the directory before reading again.",
+    read_error_stale_signature: "The file changed while it was being read. Please retry shortly.",
     read_error_invalid_archive: "No readable image pages were found; click Read to retry.",
     read_error_io_error: "The archive could not be read completely; click Read to retry.",
     read_error_page_out_of_range: "The requested page does not exist.",
