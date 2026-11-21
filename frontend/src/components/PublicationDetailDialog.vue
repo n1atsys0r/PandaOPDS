@@ -974,7 +974,7 @@ onUnmounted(() => {
       <!-- BASE VIEW: Main Gallery Details (always mounted, preserving scroll position) -->
       <div
         ref="modalScrollRef"
-        class="overflow-y-auto flex-1 flex flex-col select-text no-scrollbar"
+        class="overflow-y-auto flex-1 flex flex-col select-text overlay-scrollbar"
       >
         <!-- 1. HERO HEADER (Apple Books Dark Slate Banner) -->
         <div
@@ -1232,7 +1232,7 @@ onUnmounted(() => {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="start"
-                      class="w-56 max-h-[70vh] overflow-y-auto no-scrollbar"
+                      class="w-56 max-h-[70vh] overflow-y-auto overlay-scrollbar"
                     >
                       <div
                         class="px-2.5 py-1.5 text-xs font-semibold text-muted-foreground select-none"
@@ -1514,7 +1514,7 @@ onUnmounted(() => {
 
             <!-- Horizontal Thumbnails Track -->
             <div
-              class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none"
+              class="flex gap-3 overflow-x-auto pb-2 pt-1 overlay-scrollbar select-none"
             >
               <div
                 v-for="(page, idx) in previewPages"
@@ -1602,7 +1602,7 @@ onUnmounted(() => {
 
             <!-- Horizontal Review Cards Track -->
             <div
-              class="flex gap-3 overflow-x-auto pb-2 pt-1 no-scrollbar select-none"
+              class="flex gap-3 overflow-x-auto pb-2 pt-1 overlay-scrollbar select-none"
             >
               <div
                 v-for="rev in previewReviews"
@@ -1659,7 +1659,7 @@ onUnmounted(() => {
         <div
           v-if="detailSubView === 'thumbnails'"
           key="thumbnails"
-          class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto no-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
+          class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto overlay-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
         >
           <!-- Sticky Subview Header -->
           <div
@@ -1804,7 +1804,7 @@ onUnmounted(() => {
         <div
           v-else-if="detailSubView === 'reviews'"
           key="reviews"
-          class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto no-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
+          class="absolute inset-0 z-30 bg-background flex flex-col overflow-y-auto overlay-scrollbar border-l border-border/40 shadow-[-8px_0_30px_rgba(0,0,0,0.18)] select-text"
         >
           <!-- Sticky Subview Header -->
           <div
