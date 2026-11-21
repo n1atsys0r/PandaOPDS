@@ -28,6 +28,7 @@ import CoverImage from "@/components/CoverImage.vue";
 import {
   X,
   ChevronRight,
+  ChevronLeft,
   Star,
   BookOpen,
   ChevronDown,
@@ -37,9 +38,18 @@ import {
   Heart,
   ExternalLink,
   Layers,
+  MessageSquare,
   MessageSquareText,
   ArrowLeft,
   Send,
+  Bookmark,
+  BookmarkX,
+  Check,
+  CircleAlert,
+  Grid,
+  HatGlasses,
+  Loader2,
+  Package2,
 } from "@lucide/vue";
 import { useApp } from "@/state.js";
 import { archiveActionFor } from "@/archive-flow.js";
@@ -1173,11 +1183,6 @@ onUnmounted(() => {
                     />
                     <span>{{ primaryReadButtonLabel }}</span>
                   </Button>
-                    <template v-if="currentArchiveItem?.document_id || currentArchiveItem?.id">
-                    <Button v-if="currentArchiveBadge?.isUnavailable" size="sm" variant="secondary" @click="emit('archive-manage',currentArchiveItem)">{{ t('archive.manage') }}</Button>
-                    <Button size="sm" variant="outline" :disabled="isArchiveQuoteBusy || currentArchiveBadge?.isDownloading" @click="requestArchiveAction('unlink',currentArchiveItem)">{{ t('archive.unlink') }}</Button>
-                    <Button size="sm" variant="destructive" :disabled="isArchiveQuoteBusy || currentArchiveBadge?.isDownloading" @click="requestArchiveAction('delete',currentArchiveItem)">{{ t('archive.delete') }}</Button>
-                  </template>
 
                   <!-- Secondary Icon Button: Incognito Read -->
                   <Button
@@ -1279,9 +1284,58 @@ onUnmounted(() => {
                     </DropdownMenuContent>
                   </DropdownMenu>
 
-                  <!-- Secondary Icon Button: Archive (State-aware icon variant) -->
+                  <!-- Secondary Icon Button: Archive (Dropdown menu when archived/associated, single button when unarchived) -->
+                  <DropdownMenu v-if="currentArchiveItem?.document_id || currentArchiveItem?.id">
+                    <DropdownMenuTrigger as-child>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"
+                        :class="
+                          currentArchiveBadge?.isReady
+                            ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/35 text-emerald-400'
+                            : currentArchiveBadge?.isDownloading || isArchiveQuoteBusy
+                              ? 'bg-white/20 border-white/30 text-white cursor-wait'
+                              : currentArchiveBadge?.isFailed
+                                ? 'bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/35 text-rose-400'
+                                : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'
+                        "
+                        :title="t('archive.title')"
+                      >
+                        <Loader2
+                          v-if="currentArchiveBadge?.isDownloading || isArchiveQuoteBusy"
+                          class="size-4 animate-spin text-white"
+                        />
+                        <Package2 v-else class="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" class="w-40">
+                      <DropdownMenuItem
+                        v-if="currentArchiveBadge?.isUnavailable"
+                        class="cursor-pointer"
+                        @click="emit('archive-manage', currentArchiveItem)"
+                      >
+                        {{ t('archive.manage') }}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        class="cursor-pointer"
+                        :disabled="isArchiveQuoteBusy || currentArchiveBadge?.isDownloading"
+                        @click="requestArchiveAction('unlink', currentArchiveItem)"
+                      >
+                        {{ t('archive.unlink') }}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        class="text-rose-400 focus:text-rose-400 focus:bg-rose-500/10 cursor-pointer"
+                        :disabled="isArchiveQuoteBusy || currentArchiveBadge?.isDownloading"
+                        @click="requestArchiveAction('delete', currentArchiveItem)"
+                      >
+                        {{ t('archive.delete') }}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
                   <Button
-                    v-if="!currentArchiveItem?.document_id && !currentArchiveItem?.id"
+                    v-else
                     variant="ghost"
                     size="icon"
                     class="size-9 rounded-full border transition-all shrink-0 active:scale-95 focus-visible:ring-0 focus:outline-none"

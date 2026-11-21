@@ -20,6 +20,7 @@ import {
   SlidersHorizontal,
   Upload,
   Download,
+  Filter,
 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import {
