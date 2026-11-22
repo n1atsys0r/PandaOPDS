@@ -7,9 +7,11 @@ import {
   buildCleanupPayload,
   buildReviewPayload,
   buildBatchDownloadPayload,
+  buildBatchInspectPayload,
   cleanupSubscription,
   reviewDownloadJob,
   submitBatchDownload,
+  submitBatchInspect,
   createSubscriptionPoller,
   documentReaderPaths,
   parseCategoryIDs,
@@ -152,14 +154,19 @@ test("UI action adapters send acknowledged requests without triggering a fetch",
   await cleanupSubscription(api, "sub/1", "hidden");
   await reviewDownloadJob(api, "job 1", "reconcile");
   await submitBatchDownload(api, [{ gid: 42, token: "abc" }], "res");
+  await submitBatchInspect(api, [
+    { gid: 101, token: "tok1", subscription_ids: ["sub1"] },
+  ]);
   assert.deepEqual(
     requests.map(({ path }) => path),
     [
       "/api/subscriptions/sub%2F1/cleanup",
       "/api/download-jobs/job%201/review",
       "/api/download-jobs/batch",
+      "/api/subscription-items/batch-inspect",
     ],
   );
+  assert.deepEqual(buildBatchInspectPayload([]), { items: [] });
   assert.deepEqual(
     requests.map(({ options }) => JSON.parse(options.body)),
     [
@@ -168,6 +175,9 @@ test("UI action adapters send acknowledged requests without triggering a fetch",
       {
         acknowledged: true,
         items: [{ gid: 42, token: "abc", quality: "res", force: false }],
+      },
+      {
+        items: [{ gid: 101, token: "tok1", subscription_ids: ["sub1"] }],
       },
     ],
   );

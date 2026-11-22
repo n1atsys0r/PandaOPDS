@@ -53,7 +53,12 @@ import {
 } from "@lucide/vue";
 import { useApp } from "@/state.js";
 import { archiveActionFor } from "@/archive-flow.js";
-import { captureGalleryMetadata, ensureGalleryMetadata, restoreGalleryMetadata } from "@/gallery-metadata.js";
+import {
+  captureGalleryMetadata,
+  ensureGalleryMetadata,
+  restoreGalleryMetadata,
+  formatLanguage,
+} from "@/gallery-metadata.js";
 import { t } from "@/i18n.js";
 import { EH_CATEGORIES, getCategoryColor } from "@/subscription-view.js";
 
@@ -159,7 +164,7 @@ function normalizePublicationItem(p) {
       0,
   );
   const publishTime = p.publishTime || p.publish_time || meta.published || "";
-  const language = p.language || meta.language || "";
+  const language = formatLanguage(p.language || meta.language || "", p);
   const uploader = p.uploader || meta["x:uploader"] || "";
   const fileSize = p.fileSize || p.file_size || meta["x:fileSize"] || "";
   const readingOrder = Array.isArray(p.readingOrder) ? p.readingOrder : [];

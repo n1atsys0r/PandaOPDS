@@ -314,6 +314,12 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+type ItemRef struct {
+	GID             int      `json:"gid"`
+	Token           string   `json:"token"`
+	SubscriptionIDs []string `json:"subscription_ids"`
+}
+
 type ItemQuery struct {
 	SubscriptionIDs             []string
 	CategoryNamesBySubscription map[string][]string
@@ -386,8 +392,10 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 	}
 	having := ""
 	switch q.View {
-	case "unread":
+	case "unread", "new":
 		having = ` HAVING SUM(CASE WHEN si.hidden=0 AND si.inspected=1 THEN 1 ELSE 0 END)<SUM(CASE WHEN si.hidden=0 THEN 1 ELSE 0 END)`
+	case "reading":
+		having = ` HAVING SUM(CASE WHEN si.hidden=0 THEN 1 ELSE 0 END)>0 AND (SELECT pr.progression FROM progressions pr WHERE pr.target_type='eh' AND pr.target_id=(p.gid || '/' || lower(p.token)) LIMIT 1)>0 AND (SELECT pr.progression FROM progressions pr WHERE pr.target_type='eh' AND pr.target_id=(p.gid || '/' || lower(p.token)) LIMIT 1)<0.95`
 	case "hidden":
 		having = ` HAVING SUM(si.hidden)>0`
 	case "all":
@@ -397,7 +405,7 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 	if e := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT p.id`+base+group+`)`, args...).Scan(&total); e != nil {
 		return nil, 0, e
 	}
-	query := `SELECT p.id,p.gid,p.token,p.metadata_json,p.title,p.title_jpn,p.cover_url,GROUP_CONCAT(DISTINCT si.subscription_id),SUM(CASE WHEN si.inspected=1 THEN 1 ELSE 0 END),SUM(CASE WHEN si.hidden=1 THEN 1 ELSE 0 END),COUNT(*),MIN(si.first_seen_at),MAX(si.last_seen_at),(SELECT GROUP_CONCAT(d.id) FROM documents d WHERE d.publication_id=p.id AND d.status='available'),EXISTS(SELECT 1 FROM documents d WHERE d.publication_id=p.id AND d.status='available'),(SELECT j.status FROM download_jobs j WHERE j.provider=p.provider AND j.gid=p.gid AND j.token=p.token ORDER BY j.created_at DESC LIMIT 1),EXISTS(SELECT 1 FROM covers c WHERE c.publication_id=p.id)` + base + group + ` ORDER BY MIN(si.first_seen_at) DESC,p.id DESC LIMIT ? OFFSET ?`
+	query := `SELECT p.id,p.gid,p.token,p.metadata_json,p.title,p.title_jpn,p.cover_url,GROUP_CONCAT(DISTINCT si.subscription_id),SUM(CASE WHEN si.inspected=1 THEN 1 ELSE 0 END),SUM(CASE WHEN si.hidden=1 THEN 1 ELSE 0 END),COUNT(*),MIN(si.first_seen_at),MAX(si.last_seen_at),(SELECT GROUP_CONCAT(d.id) FROM documents d WHERE d.publication_id=p.id AND d.status='available'),EXISTS(SELECT 1 FROM documents d WHERE d.publication_id=p.id AND d.status='available'),(SELECT j.status FROM download_jobs j WHERE j.provider=p.provider AND j.gid=p.gid AND j.token=p.token ORDER BY j.created_at DESC LIMIT 1),EXISTS(SELECT 1 FROM covers c WHERE c.publication_id=p.id),(SELECT pr.progression FROM progressions pr WHERE pr.target_type='eh' AND pr.target_id=(p.gid || '/' || lower(p.token)) LIMIT 1),(SELECT pr.modified FROM progressions pr WHERE pr.target_type='eh' AND pr.target_id=(p.gid || '/' || lower(p.token)) LIMIT 1)` + base + group + ` ORDER BY MIN(si.first_seen_at) DESC,p.id DESC LIMIT ? OFFSET ?`
 	params := append(append([]any{}, args...), q.PerPage, (q.Page-1)*q.PerPage)
 	rows, e := s.db.QueryContext(ctx, query, params...)
 	if e != nil {
@@ -413,10 +421,18 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 		var archived int
 		var download sql.NullString
 		var cachedCover int
-		if e = rows.Scan(&pubID, &gid, &token, &raw, &title, &titleJPN, &coverURL, &members, &inspected, &hidden, &count, &first, &last, &docs, &archived, &download, &cachedCover); e != nil {
+		var progVal sql.NullFloat64
+		var progMod sql.NullString
+		if e = rows.Scan(&pubID, &gid, &token, &raw, &title, &titleJPN, &coverURL, &members, &inspected, &hidden, &count, &first, &last, &docs, &archived, &download, &cachedCover, &progVal, &progMod); e != nil {
 			return nil, 0, e
 		}
 		item := map[string]any{"publication_id": pubID, "gid": gid, "token": token, "inspected": inspected == count, "hidden": hidden == count, "first_seen_at": first, "last_seen_at": last, "archived": archived != 0, "document_ids": []string{}, "download_status": download.String}
+		if progVal.Valid {
+			item["progression"] = progVal.Float64
+		}
+		if progMod.Valid {
+			item["progression_modified"] = progMod.String
+		}
 		var meta map[string]any
 		decode(raw, &meta)
 		for _, k := range []string{"title", "title_jpn", "category", "cover_url", "page_count", "rating", "publish_time", "language", "tags"} {
@@ -616,6 +632,52 @@ func (s *Store) MarkItems(ctx context.Context, ids []string, gid int, token stri
 	args = append(args, pubID)
 	_, e := s.db.ExecContext(ctx, `UPDATE subscription_items SET `+strings.Join(sets, ",")+` WHERE subscription_id IN (`+placeholders(len(ids))+`) AND publication_id=?`, args...)
 	return e
+}
+
+func (s *Store) MarkBatchInspected(ctx context.Context, items []ItemRef) (int64, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var totalUpdated int64
+	for _, item := range items {
+		if item.GID < 1 || item.Token == "" {
+			continue
+		}
+		var pubID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider=? AND gid=? AND token=?`, "eh", item.GID, strings.ToLower(item.Token)).Scan(&pubID)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return totalUpdated, err
+		}
+		var res sql.Result
+		if len(item.SubscriptionIDs) == 0 {
+			res, err = tx.ExecContext(ctx, `UPDATE subscription_items SET inspected=1 WHERE publication_id=?`, pubID)
+		} else {
+			args := []any{1}
+			for _, id := range item.SubscriptionIDs {
+				args = append(args, id)
+			}
+			args = append(args, pubID)
+			res, err = tx.ExecContext(ctx, `UPDATE subscription_items SET inspected=? WHERE subscription_id IN (`+placeholders(len(item.SubscriptionIDs))+`) AND publication_id=?`, args...)
+		}
+		if err != nil {
+			return totalUpdated, err
+		}
+		n, _ := res.RowsAffected()
+		totalUpdated += n
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return totalUpdated, nil
 }
 
 // CleanupItems removes selected entries from subscription views while keeping

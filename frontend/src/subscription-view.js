@@ -148,6 +148,28 @@ export function submitBatchDownload(api, items, quality) {
   });
 }
 
+export function buildBatchInspectPayload(items) {
+  if (!Array.isArray(items) || items.length === 0) return { items: [] };
+  return {
+    items: items.map((item) => ({
+      gid: Number(item.gid),
+      token: String(item.token),
+      subscription_ids: Array.isArray(item.subscription_ids)
+        ? item.subscription_ids
+        : Array.isArray(item.membership_ids)
+          ? item.membership_ids
+          : [],
+    })),
+  };
+}
+
+export function submitBatchInspect(api, items) {
+  return api("/api/subscription-items/batch-inspect", {
+    method: "POST",
+    body: JSON.stringify(buildBatchInspectPayload(items)),
+  });
+}
+
 export function parseCategoryIDs(value) {
   const values = Array.isArray(value)
     ? value

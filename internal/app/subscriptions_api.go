@@ -234,6 +234,29 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 		}
 		patchItemValues(rw, r, w, body.SubscriptionIDs, body.Inspected, body.Hidden)
 	})
+	m.HandleFunc("POST /api/subscription-items/batch-inspect", func(rw http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Items []subscription.ItemRef `json:"items"`
+		}
+		if e := json.NewDecoder(http.MaxBytesReader(rw, r.Body, 1<<20)).Decode(&body); e != nil {
+			writeJSON(rw, 400, map[string]any{"detail": "invalid batch inspect request"})
+			return
+		}
+		if len(body.Items) == 0 {
+			writeJSON(rw, 200, map[string]any{"ok": true, "count": 0})
+			return
+		}
+		if len(body.Items) > 200 {
+			writeJSON(rw, 400, map[string]any{"detail": "batch items must contain at most 200 entries"})
+			return
+		}
+		count, e := w.Store.MarkBatchInspected(r.Context(), body.Items)
+		if e != nil {
+			writeJSON(rw, 500, map[string]any{"detail": "could not mark batch inspected"})
+			return
+		}
+		writeJSON(rw, 200, map[string]any{"ok": true, "count": count})
+	})
 	m.HandleFunc("GET /api/download-jobs", func(rw http.ResponseWriter, r *http.Request) {
 		items, e := w.ListJobs(r.Context(), r.URL.Query().Get("status"))
 		if e != nil {

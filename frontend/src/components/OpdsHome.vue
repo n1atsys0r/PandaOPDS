@@ -39,7 +39,12 @@ import {
   selectedSuggestion,
 } from "@/tag-suggestions.js";
 import { resolveOpenSearchUrl } from "@/opensearch-helper.js";
-import { captureGalleryMetadata, ensureGalleryMetadata, restoreGalleryMetadata } from "@/gallery-metadata.js";
+import {
+  captureGalleryMetadata,
+  ensureGalleryMetadata,
+  restoreGalleryMetadata,
+  formatLanguage,
+} from "@/gallery-metadata.js";
 import {
   CompassIcon as Compass,
   HomeIcon as Home,
@@ -736,149 +741,9 @@ const currentFavcatId = computed(() => {
   return currentFavcatInfo.value?.favcatId ?? null;
 });
 
-const LANGUAGE_DISPLAY_NAMES = {
-  // Japanese
-  japanese: "日本语",
-  ja: "日本语",
-  日文: "日本语",
-  日语: "日本语",
-  日本語: "日本语",
-  日本语: "日本语",
-
-  // English
-  english: "English",
-  en: "English",
-  英文: "English",
-  英语: "English",
-
-  // Chinese
-  chinese: "中文",
-  zh: "中文",
-  中文: "中文",
-  汉语: "中文",
-  國語: "中文",
-  国语: "中文",
-
-  // Korean
-  korean: "韩语",
-  ko: "韩语",
-  韩文: "韩语",
-  韩语: "韩语",
-  한국어: "韩语",
-
-  // European languages
-  spanish: "Español",
-  es: "Español",
-  西班牙语: "Español",
-
-  french: "Français",
-  fr: "Français",
-  法语: "Français",
-
-  german: "Deutsch",
-  de: "Deutsch",
-  德语: "Deutsch",
-
-  russian: "Русский",
-  ru: "Русский",
-  俄语: "Русский",
-
-  italian: "Italiano",
-  it: "Italiano",
-  意大利语: "Italiano",
-
-  portuguese: "Português",
-  pt: "Português",
-  葡萄牙语: "Português",
-  "pt-br": "Português",
-  brazilian: "Português",
-
-  // Other languages
-  thai: "ไทย",
-  th: "ไทย",
-  泰语: "ไทย",
-
-  vietnamese: "Tiếng Việt",
-  vi: "Tiếng Việt",
-  越南语: "Tiếng Việt",
-
-  indonesian: "Indonesia",
-  id: "Indonesia",
-  印尼语: "Indonesia",
-
-  polish: "Polski",
-  pl: "Polski",
-  波兰语: "Polski",
-
-  dutch: "Nederlands",
-  nl: "Nederlands",
-  荷兰语: "Nederlands",
-
-  swedish: "Svenska",
-  sv: "Svenska",
-  瑞典语: "Svenska",
-
-  turkish: "Türkçe",
-  tr: "Türkçe",
-  土耳其语: "Türkçe",
-
-  ukrainian: "Українська",
-  uk: "Українська",
-  乌克兰语: "Українська",
-};
-
 function extractLanguage(meta) {
   if (!meta) return "";
-
-  // 1. Check meta.subject tags first (e.g. "language:japanese", "语言:日文")
-  const subjects = Array.isArray(meta.subject) ? meta.subject : [];
-  for (const s of subjects) {
-    if (!s || !s.name) continue;
-    const raw = String(s.name).trim();
-    const colonIdx = raw.indexOf(":");
-    if (colonIdx === -1) continue;
-
-    const ns = raw.slice(0, colonIdx).trim().toLowerCase();
-    const key = raw.slice(colonIdx + 1).trim();
-    const keyLower = key.toLowerCase();
-
-    if (ns === "language" || ns === "语言" || ns === "lang") {
-      // Skip auxiliary tags like "translated", "rewrite", "翻译", "改图"
-      if (
-        keyLower === "translated" ||
-        keyLower === "rewrite" ||
-        keyLower === "翻译" ||
-        keyLower === "改图"
-      ) {
-        continue;
-      }
-
-      if (LANGUAGE_DISPLAY_NAMES[keyLower]) {
-        return LANGUAGE_DISPLAY_NAMES[keyLower];
-      }
-      if (LANGUAGE_DISPLAY_NAMES[key]) {
-        return LANGUAGE_DISPLAY_NAMES[key];
-      }
-      return key.charAt(0).toUpperCase() + key.slice(1);
-    }
-  }
-
-  // 2. Fallback to meta.language if subject had no language tag
-  let langCode = "";
-  if (Array.isArray(meta.language) && meta.language.length > 0) {
-    langCode = String(meta.language[0]).trim().toLowerCase();
-  } else if (typeof meta.language === "string" && meta.language.trim()) {
-    langCode = meta.language.trim().toLowerCase();
-  }
-
-  if (langCode) {
-    if (LANGUAGE_DISPLAY_NAMES[langCode]) {
-      return LANGUAGE_DISPLAY_NAMES[langCode];
-    }
-    return langCode.toUpperCase();
-  }
-
-  return "";
+  return formatLanguage(meta.language, { subjects: meta.subject });
 }
 
 function normalizePublication(pub, feedHref = window.location.href) {

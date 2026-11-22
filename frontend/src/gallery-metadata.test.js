@@ -6,6 +6,7 @@ import {
   loadGalleryMetadata,
   mergeGalleryMetadata,
   restoreGalleryMetadata,
+  formatLanguage,
 } from "./gallery-metadata.js";
 
 function metadata(title, pageCount = 99) {
@@ -179,4 +180,35 @@ test("failed or malformed metadata is retried and local-only docs skip lookup", 
   const local = { title: "Document", pageCount: 1 };
   assert.equal(await ensureGalleryMetadata(() => { localCalls += 1; }, local), local);
   assert.equal(localCalls, 0);
+});
+
+test("formatLanguage maps BCP 47 and EH tags to natural language display names", () => {
+  assert.equal(formatLanguage("zh"), "中文");
+  assert.equal(formatLanguage("zh-Hans"), "中文");
+  assert.equal(formatLanguage("chinese"), "中文");
+  assert.equal(formatLanguage("en"), "English");
+  assert.equal(formatLanguage("english"), "English");
+  assert.equal(formatLanguage("ja"), "日本語");
+  assert.equal(formatLanguage("japanese"), "日本語");
+  assert.equal(formatLanguage("ko"), "韩语");
+  assert.equal(formatLanguage("korean"), "韩语");
+  assert.equal(formatLanguage("es"), "Español");
+  assert.equal(formatLanguage("fr"), "Français");
+  assert.equal(formatLanguage("de"), "Deutsch");
+  assert.equal(formatLanguage("ru"), "Русский");
+  assert.equal(formatLanguage("pt-BR"), "Português");
+
+  // Filter out non-language marker tags
+  assert.equal(formatLanguage("translated"), "");
+  assert.equal(formatLanguage("rewrite"), "");
+
+  // Fallback to tags or subjects when language string is empty
+  assert.equal(
+    formatLanguage("", { tags: [{ namespace: "language", key: "chinese" }] }),
+    "中文",
+  );
+  assert.equal(
+    formatLanguage("", { subjects: [{ name: "language:japanese" }] }),
+    "日本語",
+  );
 });

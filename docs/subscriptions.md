@@ -12,7 +12,7 @@
 
 关键词支持 EH 搜索语法，例如 `l:chinese expunged -o:"rough translation$" -o:"extraneous ads$"`；高级控制词会作为上游筛选参数处理，引用短语保持原样传递。订阅修改查询或分类时会创建新 revision，旧请求不能覆盖新条件的状态。
 
-下载任务状态、订阅配置和缓存条目通过 [`api/openapi.json`](../api/openapi.json) 中的 `/api/subscriptions`、`/api/subscription-items` 与 `/api/download-jobs` 接口访问。收藏添加、移动、移除仍由 `/api/favorites` 代理上游。
+下载任务状态、订阅配置和缓存条目通过 [`api/openapi.json`](../api/openapi.json) 中的 `/api/subscriptions`、`/api/subscription-items` 与 `/api/download-jobs` 接口访问。订阅列表支持按「全部」、「新到」与「在读」视图筛选，并聚合作品的 OPDS 阅读进度与完读状态；Web 界面提供视口停留自动检视，离开或刷新后「新」标记自然流转。收藏添加、移动、移除仍由 `/api/favorites` 代理上游。
 
 「清理已检视」与「清理已隐藏」会从订阅列表中移除相应条目，并保留成员去重 tombstone；它不会删除 publication、封面、归档文件、进度或下载任务。清理操作要求显式确认。人工批量下载最多接受 200 项，要求请求明确确认；服务会先验证整批输入，再逐项进入独立任务列表。单项错误不会隐藏其他项的接受结果，已存在的运行任务会返回原任务 ID。
 

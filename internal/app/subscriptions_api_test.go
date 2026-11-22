@@ -191,3 +191,108 @@ func TestSubscriptionCleanupAPIRequiresAcknowledgmentAndRetainsMember(t *testing
 		t.Fatalf("dedup tombstone=%d err=%v", purged, err)
 	}
 }
+
+func TestBatchInspectAPIAndReadingViews(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "batch_inspect.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := subscription.New(db.DB)
+	c, err := store.Create(context.Background(), subscription.Config{Name: "sub", Source: "preset", Query: map[string]any{"preset": "latest"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES('run-1',?,'2026-01-01T00:00:00Z','running',1)`, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AddPage(context.Background(), c.ID, "run-1", 1, 1, "", false, false, []eh.GalleryListItem{
+		{GID: 201, Token: "tok201", Title: "Gallery 201"},
+		{GID: 202, Token: "tok202", Title: "Gallery 202"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert progression for 202 (in progress, reading)
+	_, err = db.Exec(`INSERT INTO progressions(target_type,target_id,gid,token,modified,device_json,progression,written) VALUES('eh','202/tok202',202,'tok202','2026-01-01T00:00:00Z','{}',0.5,1000)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := subscription.NewWorker(db.DB, nil, nil, nil, config.Settings{})
+	mux := http.NewServeMux()
+	RegisterSubscriptionRoutes(mux, w)
+
+	// Test GET items?view=new (both uninspected)
+	req := httptest.NewRequest(http.MethodGet, "/api/subscriptions/"+c.ID+"/items?view=new", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("view=new code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resNew struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resNew); err != nil {
+		t.Fatal(err)
+	}
+	if resNew.Total != 2 {
+		t.Fatalf("expected 2 items in view=new, got %d", resNew.Total)
+	}
+
+	// Test GET items?view=reading (only 202 with 0 < progression < 0.95)
+	req = httptest.NewRequest(http.MethodGet, "/api/subscriptions/"+c.ID+"/items?view=reading", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("view=reading code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resReading struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resReading); err != nil {
+		t.Fatal(err)
+	}
+	if resReading.Total != 1 || int(resReading.Items[0]["gid"].(float64)) != 202 {
+		t.Fatalf("expected 1 item with gid 202 in view=reading, got %+v", resReading.Items)
+	}
+	if prog, ok := resReading.Items[0]["progression"].(float64); !ok || prog != 0.5 {
+		t.Fatalf("expected progression 0.5, got %v", resReading.Items[0]["progression"])
+	}
+
+	// Call POST /api/subscription-items/batch-inspect for 201
+	batchBody := `{"items":[{"gid":201,"token":"tok201","subscription_ids":["` + c.ID + `"]}]}`
+	req = httptest.NewRequest(http.MethodPost, "/api/subscription-items/batch-inspect", strings.NewReader(batchBody))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("batch-inspect code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resBatch struct {
+		OK    bool  `json:"ok"`
+		Count int64 `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resBatch); err != nil {
+		t.Fatal(err)
+	}
+	if !resBatch.OK || resBatch.Count != 1 {
+		t.Fatalf("expected count 1, got %+v", resBatch)
+	}
+
+	// Check GET items?view=new again (now only 202)
+	req = httptest.NewRequest(http.MethodGet, "/api/subscriptions/"+c.ID+"/items?view=new", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("view=new code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resNew); err != nil {
+		t.Fatal(err)
+	}
+	if resNew.Total != 1 || int(resNew.Items[0]["gid"].(float64)) != 202 {
+		t.Fatalf("expected 1 item with gid 202 in view=new after inspect, got %+v", resNew.Items)
+	}
+}

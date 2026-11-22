@@ -13,6 +13,7 @@ import {
   createSubscriptionUpdate,
   cleanupSubscription,
   submitBatchDownload,
+  submitBatchInspect,
   createSubscriptionPoller,
   EH_CATEGORIES,
   getCategoryColor,
@@ -89,7 +90,7 @@ const total = ref(0);
 const runInfo = ref(null);
 const page = ref(1);
 const perPage = 30;
-const view = ref("unread");
+const view = ref("new");
 const filterText = ref("");
 const filterCategory = ref("ALL_CATEGORIES");
 const loading = ref(false);
@@ -307,8 +308,92 @@ async function loadItems() {
   }
 }
 
+// Viewport Dwell Auto-Inspect
+let inspectObserver = null;
+const cardElements = new WeakMap();
+const dwellTimers = new Map();
+const pendingBatchItems = new Map();
+let batchSyncTimeout = null;
+
+function cancelDwell(key) {
+  if (dwellTimers.has(key)) {
+    clearTimeout(dwellTimers.get(key));
+    dwellTimers.delete(key);
+  }
+}
+
+function flushBatchInspect() {
+  if (batchSyncTimeout) {
+    clearTimeout(batchSyncTimeout);
+    batchSyncTimeout = null;
+  }
+  if (pendingBatchItems.size === 0) return;
+  const toSubmit = Array.from(pendingBatchItems.values());
+  pendingBatchItems.clear();
+  submitBatchInspect(s.api, toSubmit).catch((e) => {
+    console.error("Batch inspect sync failed:", e);
+  });
+}
+
+function scheduleBatchInspect(item) {
+  const key = itemKey(item);
+  const subIds = allSelected.value
+    ? item.subscription_ids || item.membership_ids || []
+    : [selectedId.value].filter(Boolean);
+  pendingBatchItems.set(key, {
+    gid: item.gid,
+    token: item.token,
+    subscription_ids: subIds,
+  });
+  // Mark local inspected so NEW badge fades out
+  item.inspected = true;
+
+  if (batchSyncTimeout) clearTimeout(batchSyncTimeout);
+  batchSyncTimeout = setTimeout(flushBatchInspect, 1500);
+}
+
+function initObserver() {
+  if (typeof window === "undefined" || !("IntersectionObserver" in window)) return;
+  inspectObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        const item = cardElements.get(entry.target);
+        if (!item || item.inspected) {
+          if (item) cancelDwell(itemKey(item));
+          inspectObserver?.unobserve(entry.target);
+          return;
+        }
+        const key = itemKey(item);
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+          if (!dwellTimers.has(key)) {
+            const timer = setTimeout(() => {
+              dwellTimers.delete(key);
+              inspectObserver?.unobserve(entry.target);
+              scheduleBatchInspect(item);
+            }, 1000);
+            dwellTimers.set(key, timer);
+          }
+        } else {
+          cancelDwell(key);
+        }
+      });
+    },
+    { threshold: 0.5 },
+  );
+}
+
+function observeCard(el, item) {
+  if (!el) return;
+  if (!item || item.inspected) return;
+  cardElements.set(el, item);
+  inspectObserver?.observe(el);
+}
+
 watch([selectedId, view, page, filterText, filterCategory], loadItems);
 watch([selectedId, view, page, filterText, filterCategory], () => {
+  flushBatchInspect();
+  dwellTimers.forEach((timer) => clearTimeout(timer));
+  dwellTimers.clear();
   selectedItems.value = new Set();
   batchResult.value = "";
 });
@@ -340,11 +425,19 @@ async function loadDefaultQuality() {
 }
 
 onMounted(async () => {
+  initObserver();
   await Promise.all([loadSubscriptions(), loadDefaultQuality()]);
   if (subscriptions.value.some((x) => x.running)) startPolling();
 });
 
 onBeforeUnmount(() => {
+  flushBatchInspect();
+  dwellTimers.forEach((timer) => clearTimeout(timer));
+  dwellTimers.clear();
+  if (inspectObserver) {
+    inspectObserver.disconnect();
+    inspectObserver = null;
+  }
   poller.stop();
   itemsLoadID++;
   itemsController.invalidate();
@@ -573,6 +666,10 @@ function badgeFor(item) {
     return { label: item.download_status, variant: "secondary" };
   if (item.archived)
     return { label: t("subscription.local_archive"), variant: "outline" };
+  const isCompleted =
+    typeof item.progression === "number" && item.progression >= 0.95;
+  if (isCompleted)
+    return { label: t("subscription.completed_badge"), variant: "outline" };
   if (!item.inspected)
     return { label: t("subscription.new_badge"), variant: "default" };
   return null;
@@ -843,21 +940,27 @@ function onDetailCategory(cat) {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <!-- View Switcher (Unread / All) + Item Count -->
+            <!-- View Switcher (New / Reading / All) + Item Count -->
             <ToggleGroup
               type="single"
               v-model="view"
               class="bg-muted/60 p-0.5 rounded-lg border border-border/40"
             >
               <ToggleGroupItem
-                value="unread"
-                class="h-7 px-3 text-xs data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs rounded-md"
+                value="new"
+                class="h-7 px-3 text-xs data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs rounded-md cursor-pointer"
               >
-                {{ t("subscription.view_unread") }}
+                {{ t("subscription.view_new") }}
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="reading"
+                class="h-7 px-3 text-xs data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs rounded-md cursor-pointer"
+              >
+                {{ t("subscription.view_reading") }}
               </ToggleGroupItem>
               <ToggleGroupItem
                 value="all"
-                class="h-7 px-3 text-xs data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs rounded-md"
+                class="h-7 px-3 text-xs data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs rounded-md cursor-pointer"
               >
                 {{ t("subscription.view_all") }}
               </ToggleGroupItem>
@@ -945,6 +1048,7 @@ function onDetailCategory(cat) {
           <div
             v-for="item in items"
             :key="`${item.publication_id || item.gid}:${item.token}`"
+            :ref="(el) => observeCard(el, item)"
             class="group relative"
           >
             <PublicationCard

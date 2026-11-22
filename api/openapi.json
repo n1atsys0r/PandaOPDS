@@ -5777,6 +5777,8 @@
               "type": "string",
               "enum": [
                 "all",
+                "new",
+                "reading",
                 "unread",
                 "hidden"
               ]
@@ -5944,6 +5946,8 @@
               "type": "string",
               "enum": [
                 "all",
+                "new",
+                "reading",
                 "unread",
                 "hidden"
               ]
@@ -6036,6 +6040,84 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SubscriptionMembershipPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscription-items/batch-inspect": {
+      "post": {
+        "summary": "Batch mark items as inspected",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "count"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid batch inspect request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "gid": {
+                          "type": "integer"
+                        },
+                        "token": {
+                          "type": "string"
+                        },
+                        "subscription_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "gid",
+                        "token"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ]
               }
             }
           }
