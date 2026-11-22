@@ -56,11 +56,8 @@ const availableSubscriptions = ref([]);
 const subscriptionsLoaded = ref(false);
 async function loadSubscriptions() {
   try {
-    const response = await fetch("/api/subscriptions", {
-      credentials: "same-origin",
-    });
-    if (response.ok)
-      availableSubscriptions.value = (await response.json()).items || [];
+    const { data } = await s.api("/api/subscriptions");
+    availableSubscriptions.value = data.items || [];
   } catch {
     availableSubscriptions.value = [];
   } finally {
