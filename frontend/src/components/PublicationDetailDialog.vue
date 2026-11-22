@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import CoverImage from "@/components/CoverImage.vue";
+import ReviewHtml from "@/components/ReviewHtml.vue";
 import {
   X,
   ChevronRight,
@@ -471,6 +472,20 @@ function scrollModalToTop() {
   }
 }
 
+function openLinkedGallery({ gid, token }) {
+  const match = props.list.find(
+    (item) =>
+      Number(item?.gid) === gid &&
+      String(item?.token || "").toLowerCase() === token.toLowerCase(),
+  );
+  pubData.value = normalizePublicationItem(match || { gid, token });
+  emit("update:publication", pubData.value);
+  detailSubView.value = "main";
+  scrollModalToTop();
+  ensureSupplementalGalleryMetadata(pubData.value);
+  ensurePublicationDetails(pubData.value);
+}
+
 // Adjacent navigation
 const currentIndex = computed(() => {
   if (!selectedPub.value || !props.list.length) return -1;
@@ -720,19 +735,6 @@ const displayedThumbnails = computed(() => {
 const displayedReviews = computed(() => {
   return (selectedPub.value?.reviews || []).slice(0, reviewRenderLimit.value);
 });
-
-function formatReviewHtml(html) {
-  if (!html) return "";
-  let res = html.replace(
-    /<img\s+(?![^>]*\bloading=)/gi,
-    '<img loading="lazy" decoding="async" ',
-  );
-  res = res.replace(
-    /<a\s+(?![^>]*\btarget=)/gi,
-    '<a target="_blank" rel="noopener noreferrer" ',
-  );
-  return res;
-}
 
 function setupSentinelObserver() {
   if (typeof IntersectionObserver === "undefined") return;
@@ -1896,9 +1898,10 @@ onUnmounted(() => {
               </div>
 
               <!-- Review Content HTML with lazy images & safe links -->
-              <div
+              <ReviewHtml
                 class="text-xs sm:text-[13px] text-foreground/90 break-words leading-relaxed review-html-content"
-                v-html="formatReviewHtml(rev.content)"
+                :html="rev.content"
+                @gallery-link="openLinkedGallery"
               />
             </div>
 
