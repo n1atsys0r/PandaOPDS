@@ -91,53 +91,56 @@ onBeforeUnmount(() => {
 
 <template>
   <Sheet v-model:open="open">
-    <SheetTrigger as-child>
-      <!-- Trigger Button in Toolbar -->
-      <Button
-        v-if="needsReviewCount > 0"
-        variant="outline"
-        size="sm"
-        class="h-7 text-xs gap-1.5 px-2.5 border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs cursor-pointer"
-        :title="t('documents.download_jobs')"
+    <Transition
+      enter-active-class="transition duration-300 ease-out"
+      enter-from-class="opacity-0 translate-y-4 scale-90"
+      enter-to-class="opacity-100 translate-y-0 scale-100"
+      leave-active-class="transition duration-200 ease-in"
+      leave-from-class="opacity-100 translate-y-0 scale-100"
+      leave-to-class="opacity-0 translate-y-4 scale-90"
+    >
+      <div
+        v-if="needsReviewCount > 0 || runningCount > 0"
+        class="fixed bottom-6 right-6 z-40 select-none"
       >
-        <AlertTriangle class="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-        <span>{{ t("documents.download_jobs") }}</span>
-        <Badge
-          variant="destructive"
-          class="h-4 px-1 text-[10px] font-mono leading-none bg-amber-600 text-white dark:bg-amber-500 hover:bg-amber-600"
-        >
-          {{ needsReviewCount }}
-        </Badge>
-      </Button>
+        <SheetTrigger as-child>
+          <!-- Floating Action Trigger (Only visible when queue is active) -->
+          <Button
+            v-if="needsReviewCount > 0"
+            variant="outline"
+            size="sm"
+            class="h-9.5 text-xs gap-2 px-3.5 rounded-full border-amber-500/50 bg-background/90 text-amber-600 dark:text-amber-400 backdrop-blur-xl shadow-xl ring-1 ring-amber-500/20 hover:bg-background/95 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            :title="t('documents.download_jobs')"
+          >
+            <AlertTriangle class="size-4 shrink-0 text-amber-500 animate-pulse" />
+            <span class="font-medium">{{ t("documents.download_jobs") }}</span>
+            <Badge
+              variant="destructive"
+              class="h-4.5 px-1.5 text-[10px] font-mono leading-none bg-amber-600 text-white rounded-full"
+            >
+              {{ needsReviewCount }}
+            </Badge>
+          </Button>
 
-      <Button
-        v-else-if="runningCount > 0"
-        variant="outline"
-        size="sm"
-        class="h-7 text-xs gap-1.5 px-2.5 border-primary/40 text-primary bg-primary/5 hover:bg-primary/10 shadow-xs cursor-pointer"
-        :title="t('documents.download_jobs')"
-      >
-        <RefreshCw class="size-3.5 shrink-0 animate-spin" />
-        <span>{{ t("documents.download_jobs") }}</span>
-        <Badge
-          variant="secondary"
-          class="h-4 px-1 text-[10px] font-mono leading-none bg-primary/15 text-primary"
-        >
-          {{ runningCount }}
-        </Badge>
-      </Button>
-
-      <Button
-        v-else
-        variant="outline"
-        size="sm"
-        class="h-7 text-xs gap-1.5 px-2.5 text-muted-foreground hover:text-foreground cursor-pointer"
-        :title="t('documents.download_jobs')"
-      >
-        <Download class="size-3.5 shrink-0" />
-        <span>{{ t("documents.download_jobs") }}</span>
-      </Button>
-    </SheetTrigger>
+          <Button
+            v-else
+            variant="outline"
+            size="sm"
+            class="h-9.5 text-xs gap-2 px-3.5 rounded-full border-primary/40 bg-background/90 text-primary backdrop-blur-xl shadow-xl ring-1 ring-primary/20 hover:bg-background/95 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            :title="t('documents.download_jobs')"
+          >
+            <RefreshCw class="size-4 shrink-0 animate-spin text-primary" />
+            <span class="font-medium">{{ t("documents.download_jobs") }}</span>
+            <Badge
+              variant="secondary"
+              class="h-4.5 px-1.5 text-[10px] font-mono leading-none bg-primary/15 text-primary rounded-full"
+            >
+              {{ runningCount }}
+            </Badge>
+          </Button>
+        </SheetTrigger>
+      </div>
+    </Transition>
 
     <SheetContent
       side="right"

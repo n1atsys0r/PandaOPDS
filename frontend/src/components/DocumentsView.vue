@@ -285,7 +285,7 @@ function getDiagnosticLabel(reason) {
       </div>
       <div class="heading-actions">
         <Button
-          class="gap-1.5"
+          class="gap-1.5 cursor-pointer"
           @click="openCreateArchiveDialog"
         >
           <Plus class="size-4" data-icon="inline-start" />
@@ -293,7 +293,7 @@ function getDiagnosticLabel(reason) {
         </Button>
         <Button
           variant="outline"
-          class="gap-1.5"
+          class="gap-1.5 cursor-pointer"
           :disabled="scan?.status === 'running'"
           @click="startScan(false)"
         >
@@ -304,6 +304,32 @@ function getDiagnosticLabel(reason) {
           />
           {{ scan?.status === "running" ? t("documents.scanning") : t("documents.scan") }}
         </Button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="outline"
+              size="icon"
+              class="size-9 cursor-pointer"
+              :aria-label="t('common.more_options')"
+            >
+              <MoreVertical class="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              :disabled="scan?.status === 'running'"
+              @click="startScan(true)"
+            >
+              <FileSearch class="size-4 mr-2" />
+              {{ t("documents.deep_scan") }}
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="scanReportOpen = true">
+              <Info class="size-4 mr-2" />
+              {{ t("documents.scan_report") }}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
 
@@ -351,7 +377,7 @@ function getDiagnosticLabel(reason) {
       </div>
     </Alert>
 
-    <!-- 规范化单行卡片工具栏（完全对齐 SubscriptionsView 结构与视觉层次） -->
+    <!-- 规范化单行卡片工具栏（左侧主要分类，右侧靠右排列搜索与状态筛选） -->
     <div
       class="p-3 rounded-2xl border border-border/60 bg-card shadow-xs flex flex-wrap items-center justify-between gap-3"
     >
@@ -391,8 +417,8 @@ function getDiagnosticLabel(reason) {
         </Badge>
       </div>
 
-      <!-- 中间：搜索框与次要状态下拉筛选组合（撑起呼吸感，告别空旷断层） -->
-      <div class="flex items-center gap-2 flex-1 max-w-md min-w-[220px]">
+      <!-- 右侧：搜索框与次要状态下拉筛选组合（靠右对齐并赋予弹性宽度） -->
+      <div class="flex items-center gap-2 flex-1 sm:flex-initial justify-end min-w-[220px] max-w-md ml-auto">
         <div class="relative flex-1">
           <Search
             class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground pointer-events-none"
@@ -420,37 +446,6 @@ function getDiagnosticLabel(reason) {
             </SelectItem>
           </SelectContent>
         </Select>
-      </div>
-
-      <!-- 右侧：下载任务面板 + 更多操作下拉菜单 (Ellipsis) -->
-      <div class="flex items-center gap-2">
-        <DownloadJobsPanel />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 size-8 p-0"
-              :aria-label="t('common.more_options')"
-            >
-              <MoreVertical class="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              :disabled="scan?.status === 'running'"
-              @click="startScan(true)"
-            >
-              <FileSearch class="size-4 mr-2" />
-              {{ t("documents.deep_scan") }}
-            </DropdownMenuItem>
-            <DropdownMenuItem @click="scanReportOpen = true">
-              <Info class="size-4 mr-2" />
-              {{ t("documents.scan_report") }}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     </div>
 
@@ -940,5 +935,8 @@ function getDiagnosticLabel(reason) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <!-- 右下角悬浮下载任务队列面板（只在有队列或待审核时浮动出现） -->
+    <DownloadJobsPanel />
   </div>
 </template>
