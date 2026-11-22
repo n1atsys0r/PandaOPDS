@@ -2,7 +2,6 @@ package subscription
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,42 +79,6 @@ func TestAddPagePersistsBaselineMembershipAndLocalFilters(t *testing.T) {
 	}
 }
 
-func TestLegacyKnownFavoritePlaceholderStaysHiddenUntilFetchedAndUsesCoverProxy(t *testing.T) {
-	ctx := context.Background()
-	db, s := testStore(t)
-	c, err := s.EnsureFavorites(ctx, 3600, false, nil, nil, "res")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := "7123:abcdef12"
-	if err = s.SeedKnownFavorites(ctx, c.ID, map[string]bool{key: true}, nil); err != nil {
-		t.Fatal(err)
-	}
-	items, total, err := s.ListItems(ctx, ItemQuery{SubscriptionIDs: []string{c.ID}, View: "all", Page: 1, PerPage: 20})
-	if err != nil || total != 0 || len(items) != 0 {
-		t.Fatalf("identity-only placeholder leaked into cards: items=%#v total=%d err=%v", items, total, err)
-	}
-	_, err = db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision)VALUES('legacy-fetch',?,?,'running',1)`, c.ID, time.Now().UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cover := "https://ehgt.org/t/7123.jpg"
-	if _, err = s.AddPage(ctx, c.ID, "legacy-fetch", 1, 1, "", false, false, []eh.GalleryListItem{{GID: 7123, Token: "abcdef12", Title: "Fetched title", CoverURL: cover}}); err != nil {
-		t.Fatal(err)
-	}
-	items, total, err = s.ListItems(ctx, ItemQuery{SubscriptionIDs: []string{c.ID}, View: "all", Page: 1, PerPage: 20})
-	if err != nil || total != 1 || len(items) != 1 {
-		t.Fatalf("fetched favorite not visible: items=%#v total=%d err=%v", items, total, err)
-	}
-	if got := items[0]["cover_url"]; got != "/api/publications/eh/7123/abcdef12/cover" {
-		t.Fatalf("grid cover URL=%v; want local lazy-cache endpoint", got)
-	}
-	var member, baseline int
-	if err = db.QueryRow(`SELECT remote_member,baseline_item FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=7123`, c.ID).Scan(&member, &baseline); err != nil || member != 1 || baseline != 1 {
-		t.Fatalf("legacy membership changed: remote_member=%d baseline=%d err=%v", member, baseline, err)
-	}
-}
-
 func TestAddPageRejectsOldRevisionAndDoesNotCreateRows(t *testing.T) {
 	ctx := context.Background()
 	db, s := testStore(t)
@@ -141,87 +104,56 @@ func TestAddPageRejectsOldRevisionAndDoesNotCreateRows(t *testing.T) {
 	}
 }
 
-func TestFavoritesBootstrapIsStableAndMigratesKnownAsBaseline(t *testing.T) {
+func TestLegacyFavoritesSubscriptionMigratesToOrdinaryPreset(t *testing.T) {
 	ctx := context.Background()
-	_, s := testStore(t)
-	c, err := s.EnsureFavorites(ctx, 3600, true, nil, nil, "best")
+	db, s := testStore(t)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := db.Exec(`INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,created_at,updated_at) VALUES('builtin-favorites','EH 收藏','favorites','{"favorite_categories":[3],"categories":[2],"max_pages":50}',3600,1,1,'{"quality":"res","categories":[4]}',7,1,?,?)`, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.ID != "builtin-favorites" || c.DownloadRules["quality"] != "best" {
-		t.Fatalf("builtin=%#v", c)
-	}
-	if got := c.Query["favorite_categories"]; got == nil {
-		t.Fatalf("favorites query has no independent source scope: %#v", c.Query)
-	}
-	if _, exists := c.Query["categories"]; exists {
-		t.Fatalf("auto-download categories leaked into source query: %#v", c.Query)
-	}
-	known := map[string]bool{"123:AbCd": true}
-	favcats := map[string]int{"123:AbCd": 4}
-	if err = s.SeedKnownFavorites(ctx, c.ID, known, favcats); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SeedKnownFavorites(ctx, c.ID, known, favcats); err != nil {
-		t.Fatal(err)
-	}
-	var pending, baseline, favcat int
-	if err := s.db.QueryRow(`SELECT pending_auto,baseline_item,favcat FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=123`, c.ID).Scan(&pending, &baseline, &favcat); err != nil {
-		t.Fatal(err)
-	}
-	if pending != 0 || baseline != 1 || favcat != 4 {
-		t.Fatalf("pending=%d baseline=%d favcat=%d", pending, baseline, favcat)
-	}
-	members, err := s.FavoriteMemberships(ctx, c.ID)
-	if err != nil || members["123:abcd"] != 4 {
-		t.Fatalf("favorite membership snapshot=%v err=%v", members, err)
-	}
-	if err = s.Delete(ctx, c.ID); err != nil {
-		t.Fatal(err)
-	}
-	again, err := s.EnsureFavorites(ctx, 3600, true, nil, nil)
+	_, err = db.Exec(`INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',123,'abcd','{}',?,?)`, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.ID != "" {
-		t.Fatalf("deleted builtin recreated: %#v", again)
+	_, err = db.Exec(`INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at,remote_member,first_seen_revision,baseline_item,pending_auto,favcat) SELECT 'builtin-favorites',id,?,?,1,6,1,0,3 FROM publications WHERE gid=123`, now, now)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err = s.Get(ctx, c.ID); err != sql.ErrNoRows {
-		t.Fatalf("deleted subscription get err=%v", err)
-	}
-}
 
-func TestLegacyFavoriteDiagnosticsBecomeUnknownCoverageRunAndFailedHistory(t *testing.T) {
-	ctx := context.Background()
-	_, s := testStore(t)
-	c, err := s.EnsureFavorites(ctx, 3600, true, []int{2}, nil, "res")
+	disabled, err := s.MigrateLegacyFavoriteSubscriptions(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	when := float64(1795140000)
-	if err := s.ImportLegacyFavoriteDiagnostics(ctx, c.ID, true, when, false, 7, map[string]string{"123:ABCD": "legacy purchase failed"}); err != nil {
+	if len(disabled) != 1 || disabled[0] != "builtin-favorites" {
+		t.Fatalf("subscriptions with legacy folder archive rules=%v", disabled)
+	}
+	c, err := s.Get(ctx, "builtin-favorites")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ImportLegacyFavoriteDiagnostics(ctx, c.ID, true, when, false, 7, map[string]string{"123:ABCD": "legacy purchase failed"}); err != nil {
+	if c.Source != "preset" || c.Query["preset"] != "favorites:3" || intNumber(c.Query["max_pages"]) != 1 || c.BaselineComplete != true || c.Revision != 8 {
+		t.Fatalf("migrated subscription=%#v", c)
+	}
+	if c.Query["categories"] == nil || c.AutoDownload || c.DownloadRules["quality"] != "res" || c.DownloadRules["categories"] != nil {
+		t.Fatalf("migration lost gallery filter or retained unsafe auto archive: %#v", c)
+	}
+	var itemCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM subscription_items WHERE subscription_id='builtin-favorites'`).Scan(&itemCount); err != nil || itemCount != 1 {
+		t.Fatalf("cached items=%d err=%v", itemCount, err)
+	}
+	members, err := s.FavoritePresetMemberships(ctx)
+	if err != nil || members["123:abcd"] != 3 {
+		t.Fatalf("last-seen favorites=%v err=%v", members, err)
+	}
+	if err := s.Delete(ctx, c.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Get(ctx, c.ID)
-	if err != nil || !got.BaselineComplete {
-		t.Fatalf("subscription=%#v err=%v", got, err)
-	}
-	run := s.LatestRun(ctx, c.ID)
-	if run == nil || run["coverage"] != "unknown" || run["status"] != "failed" || run["pages"] != 7 {
-		t.Fatalf("legacy run=%#v", run)
-	}
-	var jobs, pages int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM download_jobs WHERE gid=123 AND token='abcd' AND status='failed' AND stage='legacy_favorites_error'`).Scan(&jobs); err != nil {
+	if _, err = s.MigrateLegacyFavoriteSubscriptions(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM subscription_runs WHERE subscription_id=? AND id='legacy-favorites-diagnostics'`, c.ID).Scan(&pages); err != nil {
-		t.Fatal(err)
-	}
-	if jobs != 1 || pages != 1 {
-		t.Fatalf("legacy diagnostics jobs=%d runs=%d", jobs, pages)
+	if _, err = s.Get(ctx, c.ID); err == nil {
+		t.Fatal("deleted subscription was recreated")
 	}
 }
 

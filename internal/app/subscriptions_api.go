@@ -70,7 +70,7 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 			writeJSON(rw, 400, map[string]any{"detail": "invalid subscription"})
 			return
 		}
-		if c.Source == "favorites" && !w.Settings.HasIPB() {
+		if subscription.IsFavoritesSubscription(c) && !w.Settings.HasIPB() {
 			writeJSON(rw, 403, map[string]any{"detail": "favorites require IPB cookies"})
 			return
 		}
@@ -120,7 +120,7 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 			writeJSON(rw, 400, map[string]any{"detail": "invalid subscription update"})
 			return
 		}
-		if next.Source == "favorites" && !w.Settings.HasIPB() {
+		if subscription.IsFavoritesSubscription(next) && !w.Settings.HasIPB() {
 			writeJSON(rw, 403, map[string]any{"detail": "favorites require IPB cookies"})
 			return
 		}
@@ -355,57 +355,28 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 			return fmt.Errorf("unsupported preset %q", preset)
 		}
 	}
-	if c.Source != "favorites" && c.Source != "search" && c.Source != "preset" {
-		return errors.New("source must be favorites, search, or preset")
+	if c.Source != "search" && c.Source != "preset" {
+		return errors.New("source must be search or preset")
 	}
 	if err := normalizeGalleryCategoryQuery(c, settings); err != nil {
 		return err
 	}
-	if c.Source == "search" || c.Source == "preset" {
-		if _, ok := c.Query["favorite_categories"]; ok {
-			return errors.New("favorite_categories is only supported for favorites")
-		}
-		sort := subscriptionString(c.Query["sort"])
-		if sort != "" && sort != "newest" {
-			return errors.New("supported sort is newest")
-		}
-		for _, key := range []string{"categories", "excluded_categories"} {
-			if vals, ok := c.DownloadRules[key]; ok {
-				if ids, err := categoryIDs(vals); err != nil || len(ids) > 0 {
-					return errors.New("download category rules are only supported for the favorites subscription")
-				}
+	if _, ok := c.Query["favorite_categories"]; ok {
+		return errors.New("favorite_categories is no longer supported; choose a favorites preset")
+	}
+	sort := subscriptionString(c.Query["sort"])
+	if sort != "" && sort != "newest" {
+		return errors.New("supported sort is newest")
+	}
+	for _, key := range []string{"categories", "excluded_categories"} {
+		if vals, ok := c.DownloadRules[key]; ok {
+			if ids, err := categoryIDs(vals); err != nil || len(ids) > 0 {
+				return errors.New("download category rules are not supported")
 			}
 		}
-	} else {
-		if sort := subscriptionString(c.Query["sort"]); sort != "" && sort != "newest" {
-			return errors.New("favorites subscriptions support only newest ordering")
-		}
-		ids, err := categoryIDs(c.Query["favorite_categories"])
-		if err != nil {
-			return fmt.Errorf("favorite_categories: %w", err)
-		}
-		c.Query["favorite_categories"] = ids
-		if _, err := categoryIDs(c.DownloadRules["categories"]); err != nil {
-			return err
-		}
-		if _, err := categoryIDs(c.DownloadRules["excluded_categories"]); err != nil {
-			return err
-		}
 	}
-	if c.Source == "search" || c.Source == "preset" {
-		// These sources take one rolling page per fetch. Keep the normalized
-		// representation consistent with worker enforcement and legacy clients.
-		c.Query["max_pages"] = 1
-	} else if n, ok := c.Query["max_pages"]; ok {
-		v := number(n)
-		if v < 1 {
-			v = 1
-		}
-		if v > 50 {
-			v = 50
-		}
-		c.Query["max_pages"] = v
-	}
+	// All subscription sources use the same one-page rolling snapshot model.
+	c.Query["max_pages"] = 1
 	return nil
 }
 

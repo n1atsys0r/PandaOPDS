@@ -125,9 +125,9 @@ func TestRootWebUIUsesEmbeddedAssetFromAnyWorkingDirectory(t *testing.T) {
 func loadTestSettings(base string) config.Settings {
 	return config.Settings{
 		EHSite: "e-hentai", CacheDir: filepath.Join(base, "cache"), ArchiveDir: filepath.Join(base, "archives"), ArchiveStateDir: filepath.Join(base, "archive-state"),
-		HomeConfigPath: filepath.Join(base, "home.toml"), FavoritesSyncState: filepath.Join(base, "favorites.json"),
-		MyTagsState: filepath.Join(base, "mytags.json"), TagTranslationState: filepath.Join(base, "translations.json"),
-		ImageCacheEnabled: false, FavoritesSyncIntervalSeconds: 0,
+		HomeConfigPath: filepath.Join(base, "home.toml"),
+		MyTagsState:    filepath.Join(base, "mytags.json"), TagTranslationState: filepath.Join(base, "translations.json"),
+		ImageCacheEnabled: false,
 	}
 }
 

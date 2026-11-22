@@ -37,11 +37,6 @@ type Settings struct {
 	ArchiveDownloadConcurrency                                                        int
 	ArchiveUpdateIntervalSeconds                                                      int
 	ArchiveAutoUpdate                                                                 bool
-	FavoritesSyncIntervalSeconds                                                      float64
-	FavoritesSyncArchive                                                              bool
-	FavoritesSyncCategories, FavoritesSyncExcludes                                    []int
-	FavoritesSyncState                                                                string
-	FavoritesSyncMatchThreshold, FavoritesSyncMaxPages                                int
 	MyTagsTTLSeconds                                                                  float64
 	MyTagsState                                                                       string
 	TagTranslationEnabled                                                             bool
@@ -124,10 +119,7 @@ func loadWithEditableValues(fileValues map[string]any) Settings {
 		HomeConfigPath: base("HOME_CONFIG", "./config/home.toml"), Facets: parseFacets(os.Getenv("FACETS")),
 		ArchiveDir: base("ARCHIVE_DIR", "./archives"), ArchiveStateDir: defaultString(base("ARCHIVE_STATE_DIR", defaultArchiveStatePath()), defaultArchiveStatePath()), ArchiveQuality: defaultString(strings.ToLower(base("ARCHIVE_QUALITY", "original")), "original"), ArchiveDownloadConcurrency: intEnv("ARCHIVE_DOWNLOAD_CONCURRENCY", 5), DatabasePath: defaultString(base("DATABASE_PATH", defaultDatabasePath()), defaultDatabasePath()),
 		ArchiveUpdateIntervalSeconds: 7 * 86400,
-		FavoritesSyncIntervalSeconds: floatEnv("FAVORITES_SYNC_INTERVAL_SECONDS", 3600), FavoritesSyncArchive: boolEnv("FAVORITES_SYNC_ARCHIVE", false),
-		FavoritesSyncCategories: parseIDs(os.Getenv("FAVORITES_SYNC_CATEGORIES"), false), FavoritesSyncExcludes: parseIDs(os.Getenv("FAVORITES_SYNC_CATEGORIES"), true),
-		FavoritesSyncState: base("FAVORITES_SYNC_STATE", defaultStatePath("favorites_sync.json")), FavoritesSyncMatchThreshold: intEnv("FAVORITES_SYNC_MATCH_THRESHOLD", 5), FavoritesSyncMaxPages: intEnv("FAVORITES_SYNC_MAX_PAGES", 50),
-		MyTagsTTLSeconds: floatEnv("MYTAGS_TTL_SECONDS", 21600), MyTagsState: base("MYTAGS_STATE", defaultStatePath("mytags.json")),
+		MyTagsTTLSeconds:             floatEnv("MYTAGS_TTL_SECONDS", 21600), MyTagsState: base("MYTAGS_STATE", defaultStatePath("mytags.json")),
 		TagTranslationEnabled: boolEnv("TAG_TRANSLATION_ENABLED", false), TagTranslationURL: base("TAG_TRANSLATION_URL", "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"),
 		TagTranslationIntervalSeconds: floatEnv("TAG_TRANSLATION_INTERVAL_SECONDS", 86400), TagTranslationState: base("TAG_TRANSLATION_STATE", defaultStatePath("tag_translation.json")),
 	}

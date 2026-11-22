@@ -1438,24 +1438,6 @@ async function deleteArchive() {
     await loadArchives();
   });
 }
-async function syncFavorites(full = false) {
-  await run(async () => {
-    const query = full ? "?full=1" : "";
-    const result = (
-      await api("/api/favorites/sync/run" + query, { method: "POST" })
-    ).data;
-    if (result.skipped) {
-      state.notice = result.error || t("notice.sync_skipped");
-    } else {
-      state.notice = t("notice.sync_complete", {
-        scanned: result.scanned_pages ?? 0,
-        newCount: result.new_count ?? 0,
-        cataloged: result.cataloged_count ?? 0,
-      });
-    }
-    await Promise.all([loadArchives(), loadCategories(), loadStatus()]);
-  });
-}
 function askClearCache() {
   state.confirmCache = true;
 }
@@ -1792,7 +1774,6 @@ export function useApp() {
     hasActiveArchives,
     requestFavoriteRemove,
     confirmFavoriteRemoval,
-    syncFavorites,
     init,
     destroy,
     api,

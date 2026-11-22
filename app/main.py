@@ -22,8 +22,6 @@ from .eh.service import EHService
 from .eh.tag_translation import TagTranslator
 from .favorites.router import router as favorites_router
 from .rating.router import router as rating_router
-from .favorites.state import FavoritesSyncState
-from .favorites.sync import FavoritesSyncer
 from .opds.router import router as opds_router
 from .opds2.router import router as opds2_router
 from .stream.router import router as stream_router
@@ -84,16 +82,6 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - recovery must not block startup
         logger.warning("archive startup recovery failed (%s)", exc)
 
-    # Favorites syncer: periodic incremental scan (+ optional auto-archive).
-    favorites_syncer = FavoritesSyncer(
-        settings,
-        service=service,
-        archive=archive_manager,
-        state=FavoritesSyncState(settings.favorites_sync_state),
-    )
-    app.state.favorites = favorites_syncer
-    favorites_syncer.start()
-
     # Tag translation (EhTagTranslation dictionary; opt-in). Injected into the
     # service for search-query rewriting and exposed on app.state so the OPDS
     # feed layer can translate subject entries.
@@ -135,9 +123,6 @@ async def lifespan(app: FastAPI):
     tag_translator = getattr(app.state, "tag_translation", None)
     if tag_translator is not None:
         await tag_translator.stop()
-    favorites_syncer = getattr(app.state, "favorites", None)
-    if favorites_syncer is not None:
-        await favorites_syncer.stop()
     await service.close()
 
 

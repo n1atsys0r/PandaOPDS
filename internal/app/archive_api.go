@@ -40,8 +40,8 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 	}
 	known := map[string]bool{}
 	favcats := map[string]int{}
-	if s.Subscriptions != nil && s.FavoriteSubscriptionID != "" {
-		if members, e := s.Subscriptions.Store.FavoriteMemberships(r.Context(), s.FavoriteSubscriptionID); e == nil {
+	if s.Subscriptions != nil {
+		if members, e := s.Subscriptions.Store.FavoritePresetMemberships(r.Context()); e == nil {
 			for key, cat := range members {
 				known[key] = true
 				if cat >= 0 {
@@ -49,10 +49,6 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-	}
-	names := map[string]string{}
-	for id, name := range s.Favorites.State.FavcatMap() {
-		names[fmt.Sprint(id)] = name
 	}
 	enriched := make([]map[string]any, 0, len(docs))
 	for _, d := range docs {
@@ -80,7 +76,6 @@ func (s *Server) archiveList(w http.ResponseWriter, r *http.Request) {
 		var favcatName any
 		if n, ok := favcats[key]; ok {
 			favcat = n
-			favcatName = names[fmt.Sprint(n)]
 		}
 		entry["is_favorited"] = gid > 0 && known[key]
 		entry["favcat"] = favcat

@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pandaopds/internal/eh"
+	"pandaopds/internal/subscription"
 )
 
 func TestArchiveListCoverUsesDecimalGalleryID(t *testing.T) {
@@ -21,14 +23,12 @@ func TestArchiveListCoverUsesDecimalGalleryID(t *testing.T) {
 	settings := loadTestSettings(base)
 	const gid = 1234567
 	const token = "abcdef1234"
-	if err := os.WriteFile(settings.FavoritesSyncState, []byte(`{"known":["1234567:abcdef1234"]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	server, err := New(settings, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
+	seedFavoritePresetMembership(t, server, gid, token, 2)
 	if _, err := server.Store.Upsert(gid, token, map[string]any{"status": "ready"}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,9 +88,6 @@ func TestUnarchivedEntryStatusAndFavoriteRemoveCleanup(t *testing.T) {
 	settings := loadTestSettings(base)
 	settings.IPBMemberID = "1"
 	settings.IPBPassHash = "hash"
-	if err := os.WriteFile(settings.FavoritesSyncState, []byte(`{"known":["7001:aa7001","7002:bb7002"]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	server, err := New(settings, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -226,14 +223,12 @@ func TestFavoriteRemovalDoesNotDeleteArchiveAndArchiveDeleteDoesNotUnsubscribe(t
 	settings := loadTestSettings(base)
 	settings.IPBMemberID = "1"
 	settings.IPBPassHash = "hash"
-	if err := os.WriteFile(settings.FavoritesSyncState, []byte(`{"known":["9001:aa9001"]}`), 0600); err != nil {
-		t.Fatal(err)
-	}
 	server, err := New(settings, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
+	favoriteSubID := seedFavoritePresetMembership(t, server, 9001, "aa9001", 0)
 	zipPath := filepath.Join(settings.ArchiveDir, "9001.zip")
 	writeTestArchiveZIP(t, zipPath)
 	if _, err = server.Documents.Scan(t.Context()); err != nil {
@@ -267,21 +262,21 @@ func TestFavoriteRemovalDoesNotDeleteArchiveAndArchiveDeleteDoesNotUnsubscribe(t
 	if err = server.Database.QueryRow(`SELECT COUNT(*) FROM download_suppressions WHERE provider='eh' AND gid=9001 AND token='aa9001'`).Scan(&suppressed); err != nil || suppressed != 1 {
 		t.Fatalf("suppression=%d err=%v", suppressed, err)
 	}
-	memberships, err := server.Subscriptions.Store.FavoriteMemberships(t.Context(), server.FavoriteSubscriptionID)
+	memberships, err := server.Subscriptions.Store.FavoritePresetMemberships(t.Context())
 	_, stillMember := memberships["9001:aa9001"]
 	if err != nil || !stillMember {
 		t.Fatalf("favorite membership lost after archive delete: memberships=%v err=%v", memberships, err)
 	}
+	if favoriteSubID == "" {
+		t.Fatal("favorite preset subscription was not created")
+	}
 }
 
-func TestFavoriteCategoriesParsesAfterNavbarNoselAndFallsBackToSyncState(t *testing.T) {
+func TestFavoriteCategoriesParsesAfterNavbarNoselWithoutCachedFallback(t *testing.T) {
 	base := t.TempDir()
 	settings := loadTestSettings(base)
 	settings.IPBMemberID = "1"
 	settings.IPBPassHash = "hash"
-	if err := os.WriteFile(settings.FavoritesSyncState, []byte(`{"favcat_map":{"0":"SavedZero","1":"SavedOne"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	server, err := New(settings, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -303,14 +298,32 @@ func TestFavoriteCategoriesParsesAfterNavbarNoselAndFallsBackToSyncState(t *test
 		t.Fatalf("categories=%d body=%s", res.Code, res.Body.String())
 	}
 
-	// When upstream returns empty categories (no picker), fall back to Favorites.State.FavcatMap().
+	// Empty upstream data stays empty; no retired synchronization snapshot is consulted.
 	_ = server.Service.ClearCache()
 	server.Service.Client = eh.NewClient(settings, staticRoundTripper(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(`<html><body><div id="nb" class="nosel"></div></body></html>`)), Request: r}, nil
 	}), server.Service.Throttle)
 	fallbackRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(fallbackRes, httptest.NewRequest(http.MethodGet, "/api/favorites/categories", nil))
-	if fallbackRes.Code != 200 || !strings.Contains(fallbackRes.Body.String(), `"SavedZero"`) {
-		t.Fatalf("fallback categories=%d body=%s", fallbackRes.Code, fallbackRes.Body.String())
+	if fallbackRes.Code != 200 || !strings.Contains(fallbackRes.Body.String(), `"categories":[]`) {
+		t.Fatalf("empty categories=%d body=%s", fallbackRes.Code, fallbackRes.Body.String())
 	}
+}
+
+func seedFavoritePresetMembership(t *testing.T, server *Server, gid int, token string, favcat int) string {
+	t.Helper()
+	c, err := server.Subscriptions.Store.Create(t.Context(), subscription.Config{
+		Name: "Favorites", Source: "preset", Query: map[string]any{"preset": "favorites"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := server.Database.Exec(`INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',?,?,'{}',?,?)`, gid, token, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Database.Exec(`INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at,first_seen_revision,baseline_item,favcat) SELECT ?,id,?,?,1,1,? FROM publications WHERE provider='eh' AND gid=? AND token=?`, c.ID, now, now, favcat, gid, token); err != nil {
+		t.Fatal(err)
+	}
+	return c.ID
 }

@@ -38,8 +38,6 @@ Go 版首页链接将 `PUBLIC_BASE_URL` 只拼接一次。对照脚本按这个�
      --env CACHE_DIR=/data/cache \
      --env ARCHIVE_DIR=/data/archives \
      --env HOME_CONFIG=/config/home.toml \
-     --env FAVORITES_SYNC_ARCHIVE=0 \
-     --env FAVORITES_SYNC_INTERVAL_SECONDS=0 \
      --mount "type=bind,source=$acceptance_dir/cache,target=/data/cache" \
      --mount "type=bind,source=$acceptance_dir/archives,target=/data/archives" \
      --mount "type=bind,source=$acceptance_dir/config,target=/config" \

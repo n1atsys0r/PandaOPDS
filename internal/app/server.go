@@ -26,7 +26,6 @@ import (
 	"pandaopds/internal/config"
 	"pandaopds/internal/document"
 	"pandaopds/internal/eh"
-	"pandaopds/internal/favorites"
 	"pandaopds/internal/migration"
 	"pandaopds/internal/progression"
 	"pandaopds/internal/recorder"
@@ -37,24 +36,22 @@ import (
 )
 
 type Server struct {
-	Settings               config.Settings
-	Service                *eh.Service
-	Store                  *archive.Store
-	Archives               *archive.Manager
-	Favorites              *favorites.Syncer
-	Progression            *progression.Store
-	Database               *storage.DB
-	Documents              *document.Store
-	Subscriptions          *subscription.Worker
-	FavoriteSubscriptionID string
-	Tracker                *recorder.Tracker
-	Logger                 *log.Logger
-	mux                    *http.ServeMux
-	configOK               bool
-	configError            any
-	settingsPath           string
-	editMu                 sync.Mutex
-	editKey                []byte
+	Settings      config.Settings
+	Service       *eh.Service
+	Store         *archive.Store
+	Archives      *archive.Manager
+	Progression   *progression.Store
+	Database      *storage.DB
+	Documents     *document.Store
+	Subscriptions *subscription.Worker
+	Tracker       *recorder.Tracker
+	Logger        *log.Logger
+	mux           *http.ServeMux
+	configOK      bool
+	configError   any
+	settingsPath  string
+	editMu        sync.Mutex
+	editKey       []byte
 
 	stopArchiveUpdates   context.CancelFunc
 	archiveUpdatesDone   chan struct{}
@@ -204,49 +201,30 @@ func New(settings config.Settings, logger *log.Logger) (*Server, error) {
 		logger.Printf("archive startup: rolled back %d interrupted tier upgrade(s)", rolled)
 	}
 	s.refreshProgressionArchiveIndex()
-	state, err := favorites.NewDBState(database.DB, settings.FavoritesSyncState)
-	if err != nil {
-		s.Archives.Close()
-		store.Close()
-		progressStore.Close()
-		database.Close()
-		_ = service.Close()
-		return nil, fmt.Errorf("import favorites sync state: %w", err)
-	}
-	s.Favorites = favorites.NewSyncer(settings, service, s.Archives, state)
 	subStore := subscription.New(database.DB)
-	favoriteInterval := int(settings.FavoritesSyncIntervalSeconds)
-	favoriteAuto := settings.FavoritesSyncArchive
-	favoriteSub, err := subStore.EnsureFavorites(context.Background(), favoriteInterval, favoriteAuto, settings.FavoritesSyncCategories, settings.FavoritesSyncExcludes, settings.ArchiveQuality)
+	autoArchiveDisabled, err := subStore.MigrateLegacyFavoriteSubscriptions(context.Background())
 	if err != nil {
 		s.Archives.Close()
 		store.Close()
 		progressStore.Close()
 		database.Close()
 		_ = service.Close()
-		return nil, fmt.Errorf("initialize favorites subscription: %w", err)
-	}
-	s.FavoriteSubscriptionID = favoriteSub.ID
-	if err := subStore.SeedKnownFavorites(context.Background(), favoriteSub.ID, state.Known(), state.Favcats()); err != nil {
-		s.Archives.Close()
-		store.Close()
-		progressStore.Close()
-		database.Close()
-		_ = service.Close()
-		return nil, fmt.Errorf("migrate known favorites into subscription: %w", err)
-	}
-	if favoriteSub.ID != "" {
-		baseline, lastRun, lastOK, pages, legacyErrors := state.LegacyDiagnostics()
-		if err := subStore.ImportLegacyFavoriteDiagnostics(context.Background(), favoriteSub.ID, baseline, lastRun, lastOK, pages, legacyErrors); err != nil {
-			s.Archives.Close()
-			store.Close()
-			progressStore.Close()
-			database.Close()
-			_ = service.Close()
-			return nil, fmt.Errorf("migrate favorite sync diagnostics: %w", err)
-		}
+		return nil, fmt.Errorf("migrate legacy favorites subscriptions: %w", err)
 	}
 	s.Subscriptions = subscription.NewWorker(database.DB, service, s.Archives, documents, settings)
+	for _, id := range autoArchiveDisabled {
+		if err := s.Subscriptions.CancelSubscription(context.Background(), id); err != nil {
+			s.Archives.Close()
+			_ = s.Store.Close()
+			_ = s.Progression.Close()
+			_ = s.Database.Close()
+			_ = service.Close()
+			return nil, fmt.Errorf("cancel legacy favorite auto-archive jobs: %w", err)
+		}
+		if logger != nil {
+			logger.Printf("subscription %s: disabled legacy auto-archive because its favorite-folder rules are no longer supported", id)
+		}
+	}
 	if err := s.Subscriptions.Start(); err != nil {
 		s.Subscriptions.Stop()
 		s.Archives.Close()
@@ -274,9 +252,6 @@ func (s *Server) Close() error {
 	if s.stopArchiveUpdates != nil {
 		s.stopArchiveUpdates()
 		<-s.archiveUpdatesDone
-	}
-	if s.Favorites != nil {
-		s.Favorites.Stop()
 	}
 	s.archiveScanMu.RLock()
 	scanDone := s.archiveScanDone
@@ -357,8 +332,6 @@ func (s *Server) register() {
 	m.HandleFunc("POST /api/favorites", s.favoriteAction)
 	m.HandleFunc("GET /api/favorites/categories", s.favoriteCategories)
 	m.HandleFunc("GET /api/favorites/favcats", s.favoriteFavcats)
-	m.HandleFunc("GET /api/favorites/sync", s.favoriteSyncStatus)
-	m.HandleFunc("POST /api/favorites/sync/run", s.favoriteSyncRun)
 	m.HandleFunc("POST /api/rating", s.rateGallery)
 	m.HandleFunc("GET /api/status", s.apiStatus)
 	m.HandleFunc("GET /api/tags/suggestions", s.tagSuggestions)
@@ -521,9 +494,6 @@ func isUpstreamRelated(uri string) bool {
 	}
 
 	if strings.HasPrefix(path, "/api/favorites") {
-		if path == "/api/favorites/sync" {
-			return false
-		}
 		return true
 	}
 

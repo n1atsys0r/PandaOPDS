@@ -23,7 +23,6 @@ import httpx
 from app.archive.store import ArchiveStore
 from app.cache.disk import DiskImageCache
 from app.eh.models import GalleryMetadata, GalleryTag
-from app.favorites.state import FavoritesSyncState
 from app.main import app
 
 
@@ -61,7 +60,6 @@ CASES = [
     ("/api/config", True),
     ("/api/home", True),
     ("/api/favorites/categories", True),
-    ("/api/favorites/sync", True),
     ("/api/archive", True),
     (ARCHIVE, True),
     (f"{ARCHIVE}/metadata", True),
@@ -109,8 +107,6 @@ async def seed(directory: Path) -> None:
     await store.write_metadata_snapshot(GID, TOKEN, {
         **asdict(metadata), "saved_at": 1700000000, "cover_mime": "image/jpeg",
     })
-    state = FavoritesSyncState(directory / "favorites_sync.json")
-    await state.update(known={KEY}, favcats={KEY: 2}, baseline=True)
     (directory / "home.toml").write_text(
         '[[section]]\nkind = "navigation"\ntype = "preset"\nquery = "archives"\n',
         encoding="utf-8",
@@ -131,12 +127,9 @@ def environment(directory: Path) -> dict[str, str]:
         "ARCHIVE_DIR": str(directory / "archives"),
         "CACHE_DIR": str(directory / "cache"),
         "HOME_CONFIG": str(directory / "home.toml"),
-        "FAVORITES_SYNC_STATE": str(directory / "favorites_sync.json"),
         "MYTAGS_STATE": str(directory / "mytags.json"),
         "TAG_TRANSLATION_STATE": str(directory / "tag_translation.json"),
         "TAG_TRANSLATION_ENABLED": "0",
-        "FAVORITES_SYNC_INTERVAL_SECONDS": "0",
-        "FAVORITES_SYNC_ARCHIVE": "0",
         "PUBLIC_BASE_URL": PUBLIC_BASE,
         "PSE_PAGE_BASE": "0",
         "TIMEOUT_SECONDS": "0.5",

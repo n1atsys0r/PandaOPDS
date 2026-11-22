@@ -69,7 +69,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 			groupCount++
 		}
 	}
-	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "cache_stats": cacheStats, "archive": s.Archives.Stats(), "favorites": s.Favorites.Status(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": groupCount, "sections": len(homeCfg.Sections)}})
+	writeJSON(w, 200, map[string]any{"app": map[string]any{"config_ok": s.configOK, "config_error": s.configError, "version": appVersion, "auth_enabled": s.Settings.AuthEnabled()}, "site": site, "throttle": th, "circuit": s.Service.Throttle.Circuit.Snapshot(), "memory_cache": mem, "disk_cache": disk, "cache_stats": cacheStats, "archive": s.Archives.Stats(), "home": map[string]any{"path": s.Settings.HomeConfigPath, "using_file": homeUsing, "error": homeErr, "groups": groupCount, "sections": len(homeCfg.Sections)}})
 }
 func apiURL(site string) string {
 	if site == "exhentai" {
@@ -163,15 +163,15 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, 200, map[string]any{
-		"path":       s.Settings.HomeConfigPath,
-		"using_file": using,
-		"error":      err,
-		"mode":       cfg.HomePage().Mode,
-		"sections":   formatSectionMaps(cfg, cfg.HomePage().Sections),
+		"path":          s.Settings.HomeConfigPath,
+		"using_file":    using,
+		"error":         err,
+		"mode":          cfg.HomePage().Mode,
+		"sections":      formatSectionMaps(cfg, cfg.HomePage().Sections),
 		"navigation":    formatSectionMaps(cfg, cfg.GlobalNavigation()),
 		"search_facets": formatSearchFacets(cfg.GetSearchFacets()),
 		"facet_sets":    formatFacetSets(cfg.FacetSets),
-		"pages":      pages,
+		"pages":         pages,
 	})
 }
 func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
@@ -238,17 +238,11 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 			field("archive_auto_update", "自动更新归档", cfg.ArchiveAutoUpdate, false, true, "启用后可能消耗 GP"),
 			field("archive_enabled", "启用条件", choose(cfg.HasIPB(), "开（已配置 IPB 登录态）", "关（需 IPB_MEMBER_ID + IPB_PASS_HASH）"), false, true, "archiver 为会员服务（星会员 + GP）；无登录态时归档 API 返回 403"),
 		}},
-		{"id": "favorites", "title": "收藏夹（操作与同步）", "fields": []map[string]any{
+		{"id": "favorites", "title": "收藏夹操作", "fields": []map[string]any{
 			field("favorites_enabled", "启用条件", choose(cfg.HasIPB(), "开（已配置 IPB 登录态）", "关（需 IPB_MEMBER_ID + IPB_PASS_HASH）"), false, true, "写操作（add/move/remove）与目录列表需要登录态；无登录态时 API 返回 403"),
-			field("favorites_sync_interval_seconds", "同步周期（秒）", cfg.FavoritesSyncIntervalSeconds, false, true, "默认 3600=每小时；0 = 关闭周期扫描（写操作后的防抖触发 + 手动 sync/run 仍生效）"),
-			field("favorites_sync_archive", "自动归档新增项", choose(cfg.FavoritesSyncArchive, "开（消耗 GP！）", "关（仅扫描建档）"), false, true, "必须显式开启；所有同步收藏都会在 ARCHIVE_STATE_DIR 建档，开启后会对每次扫描发现的新增收藏项调用 archiver start（首次运行仅建档不归档，自第二次起生效）"),
-			field("favorites_sync_categories", "自动归档范围", favScope(cfg), false, true, "FAVORITES_SYNC_CATEGORIES：只决定哪些新增收藏会被自动归档；扫描恒全量。逗号分隔的收藏夹 ID；留空 = 全归档；-ID = 排除该分区（如 -0）"),
-			field("favorites_sync_state", "同步状态文件", cfg.FavoritesSyncState, false, true, "记录已扫描/已归档 gid；删除可重置增量扫描基线"),
-			field("favorites_sync_match_threshold", "增量停止阈值", cfg.FavoritesSyncMatchThreshold, false, true, "连续 N 个已知 gid 即停止翻页"),
-			field("favorites_sync_max_pages", "单轮扫描页数上限", cfg.FavoritesSyncMaxPages, false, true, "硬上限，防止异常时无限翻页"),
 		}},
 	}
-	derived := map[string]any{"site_host": cfg.SiteHost(), "http_origin": "https://" + cfg.SiteHost(), "api_url": apiURL(cfg.EHSite), "ehentai_host": ehentaiHost, "is_exhentai": cfg.EHSite == "exhentai", "has_ipb": cfg.HasIPB(), "auth_enabled": cfg.AuthEnabled(), "auth_exempt_paths": sorted(cfg.AuthExemptPaths), "auth_exempt_prefixes": sorted(cfg.AuthExemptPrefixes), "image_proxy_hosts": sorted(cfg.ImageProxyHosts), "archive_enabled": cfg.HasIPB(), "favorites_sync_interval_seconds": cfg.FavoritesSyncIntervalSeconds, "favorites_sync_archive": cfg.FavoritesSyncArchive, "favorites_sync_categories": intList(cfg.FavoritesSyncCategories), "favorites_sync_excludes": intList(cfg.FavoritesSyncExcludes)}
+	derived := map[string]any{"site_host": cfg.SiteHost(), "http_origin": "https://" + cfg.SiteHost(), "api_url": apiURL(cfg.EHSite), "ehentai_host": ehentaiHost, "has_ipb": cfg.HasIPB(), "is_exhentai": cfg.EHSite == "exhentai", "auth_enabled": cfg.AuthEnabled(), "auth_exempt_paths": sorted(cfg.AuthExemptPaths), "auth_exempt_prefixes": sorted(cfg.AuthExemptPrefixes), "image_proxy_hosts": sorted(cfg.ImageProxyHosts), "archive_enabled": cfg.HasIPB()}
 	writeJSON(w, 200, map[string]any{"derived": derived, "groups": groups})
 }
 func (s *Server) cacheClear(w http.ResponseWriter, r *http.Request) {
@@ -297,26 +291,7 @@ func facetText(in []config.Facet) string {
 	}
 	return strings.Join(out, ", ")
 }
-func favScope(c config.Settings) string {
-	base := "全部"
-	if len(c.FavoritesSyncCategories) > 0 {
-		parts := []string{}
-		for _, v := range c.FavoritesSyncCategories {
-			parts = append(parts, fmt.Sprint(v))
-		}
-		base = strings.Join(parts, ", ")
-	}
-	if len(c.FavoritesSyncExcludes) > 0 {
-		parts := []string{}
-		for _, v := range c.FavoritesSyncExcludes {
-			parts = append(parts, fmt.Sprintf("-%d", v))
-		}
-		return base + "（排除 " + strings.Join(parts, ", ") + "）"
-	}
-	return base
-}
 func sorted(a []string) []string { b := append([]string(nil), a...); sort.Strings(b); return b }
-func intList(a []int) []int      { return append([]int{}, a...) }
 func firstNonEmpty(a, b string) string {
 	if a != "" {
 		return a

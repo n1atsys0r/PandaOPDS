@@ -2717,9 +2717,10 @@ func (s *Store) Entries() []map[string]any {
 	return out
 }
 
-// Catalog records a discovered gallery (e.g. from favorites sync) in the
-// durable archive state directory without marking it archived or touching ZIP
-// storage. Existing shelves (ready, active, or failed) are never downgraded.
+// Catalog records a discovered gallery (e.g. from an ordinary subscription)
+// in the durable archive state directory without marking it archived or
+// touching ZIP storage. Existing shelves (ready, active, or failed) are never
+// downgraded.
 func (s *Store) Catalog(gid int, token string, metaPatch, galleryPayload map[string]any) (bool, error) {
 	if gid <= 0 || token == "" {
 		return false, errors.New("invalid archive identity")

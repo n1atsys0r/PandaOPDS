@@ -214,11 +214,6 @@ const labels = new Proxy(
         comments_enabled: t("config.label_comments_enabled"),
         image_cache_enabled: t("config.label_image_cache_enabled"),
         cache_max_gb: t("config.label_cache_max_gb"),
-        favorites_sync_interval_seconds: t(
-          "config.label_favorites_sync_interval_seconds",
-        ),
-        favorites_sync_categories: t("config.label_favorites_sync_categories"),
-        favorites_sync_archive: t("config.label_favorites_sync_archive"),
         archive_update_interval_days: t(
           "config.label_archive_update_interval_days",
         ),
@@ -251,8 +246,6 @@ const lockedReason = (key) => {
       comments_enabled: "COMMENTS_ENABLED",
       image_cache_enabled: "IMAGE_CACHE_ENABLED",
       cache_max_gb: "CACHE_MAX_GB",
-      favorites_sync_interval_seconds: "FAVORITES_SYNC_INTERVAL_SECONDS",
-      favorites_sync_categories: "FAVORITES_SYNC_CATEGORIES",
     }[key] || key.toUpperCase();
   return t("config.locked_reason_env", { env });
 };
@@ -1166,15 +1159,6 @@ async function handleQuoteArchive(a) {
                   <small v-if="key === 'archive_auto_update'">{{
                     t("config.hint_archive_auto_update")
                   }}</small>
-                  <small v-if="key === 'favorites_sync_interval_seconds'">{{
-                    t("config.hint_favorites_sync_interval_seconds")
-                  }}</small>
-                  <small v-if="key === 'favorites_sync_categories'">{{
-                    t("config.hint_favorites_sync_categories")
-                  }}</small>
-                  <small v-if="key === 'favorites_sync_archive'">{{
-                    t("config.hint_favorites_sync_archive")
-                  }}</small>
                 </div>
                 <div class="control">
                   <label v-if="boolean(key)" class="switch"
@@ -1257,25 +1241,19 @@ async function handleQuoteArchive(a) {
                       secret(key)
                         ? 'password'
                         : key === 'cache_max_gb' ||
-                            key === 'archive_update_interval_days' ||
-                            key === 'favorites_sync_interval_seconds'
+                            key === 'archive_update_interval_days'
                           ? 'number'
                           : 'text'
                     "
                     :min="
                       [
                         'archive_update_interval_days',
-                        'favorites_sync_interval_seconds',
                       ].includes(key)
                         ? 0
                         : undefined
                     "
                     :step="
-                      key === 'archive_update_interval_days'
-                        ? 1
-                        : key === 'favorites_sync_interval_seconds'
-                          ? 'any'
-                          : undefined
+                      key === 'archive_update_interval_days' ? 1 : undefined
                     "
                     :model-value="s.form.value[key] ?? ''"
                     :placeholder="

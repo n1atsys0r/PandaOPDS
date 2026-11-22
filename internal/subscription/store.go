@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +37,19 @@ var ErrStaleRevision = errors.New("subscription query revision changed during ru
 
 func New(db *sql.DB) *Store  { return &Store{db: db} }
 func (s *Store) DB() *sql.DB { return s.db }
+func IsFavoritesPreset(preset string) bool {
+	if preset == "favorites" {
+		return true
+	}
+	if !strings.HasPrefix(preset, "favorites:") {
+		return false
+	}
+	cat := strings.TrimPrefix(preset, "favorites:")
+	return len(cat) == 1 && cat[0] >= '0' && cat[0] <= '9'
+}
+func IsFavoritesSubscription(c Config) bool {
+	return c.Source == "preset" && IsFavoritesPreset(stringVal(c.Query["preset"]))
+}
 func randomID() (string, error) {
 	b := make([]byte, 16)
 	if _, e := rand.Read(b); e != nil {
@@ -54,8 +66,8 @@ func boolInt(b bool) int {
 func marshal(v any) string       { b, _ := json.Marshal(v); return string(b) }
 func decode(raw string, out any) { _ = json.Unmarshal([]byte(raw), out) }
 func (s *Store) Create(ctx context.Context, c Config) (Config, error) {
-	if c.Source != "favorites" && c.Source != "search" && c.Source != "preset" {
-		return c, errors.New("source must be favorites, search, or preset")
+	if c.Source != "search" && c.Source != "preset" {
+		return c, errors.New("source must be search or preset")
 	}
 	if c.Name == "" {
 		return c, errors.New("name is required")
@@ -74,9 +86,6 @@ func (s *Store) Create(ctx context.Context, c Config) (Config, error) {
 	}
 	if c.Source == "preset" && c.Query["preset"] == nil {
 		c.Query["preset"] = "latest"
-	}
-	if c.Source == "favorites" {
-		return c, errors.New("favorites is a built-in subscription")
 	}
 	id, e := randomID()
 	if e != nil {
@@ -122,7 +131,7 @@ func (s *Store) Get(ctx context.Context, id string) (Config, error) {
 	return c, nil
 }
 func (s *Store) List(ctx context.Context) ([]Config, error) {
-	rows, e := s.db.QueryContext(ctx, `SELECT id FROM subscriptions ORDER BY CASE source WHEN 'favorites' THEN 0 ELSE 1 END,created_at,id`)
+	rows, e := s.db.QueryContext(ctx, `SELECT id FROM subscriptions ORDER BY created_at,id`)
 	if e != nil {
 		return nil, e
 	}
@@ -150,40 +159,81 @@ func (s *Store) List(ctx context.Context) ([]Config, error) {
 	}
 	return out, nil
 }
-func (s *Store) EnsureFavorites(ctx context.Context, interval int, auto bool, cats, excludes []int, qualities ...string) (Config, error) {
-	var id string
-	e := s.db.QueryRowContext(ctx, `SELECT id FROM subscriptions WHERE id='builtin-favorites' AND source='favorites'`).Scan(&id)
-	if e == nil {
-		return s.Get(ctx, id)
+
+// MigrateLegacyFavoriteSubscriptions turns the old auto-created favorites
+// subscription into an ordinary rolling preset, preserving its cached history.
+// Multi-folder tracking scopes become the all-favorites preset because folder
+// subscriptions are represented by the individual favorites:N presets.
+func (s *Store) MigrateLegacyFavoriteSubscriptions(ctx context.Context) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
 	}
-	if e != sql.ErrNoRows {
-		return Config{}, e
+	defer tx.Rollback()
+	type legacy struct {
+		id, queryJSON, rulesJSON string
+		autoDownload             int
 	}
-	var deleted string
-	if err := s.db.QueryRowContext(ctx, `SELECT value_json FROM app_state WHERE state_key='builtin_favorites_deleted'`).Scan(&deleted); err == nil && deleted == "true" {
-		return Config{}, nil
-	} else if err != nil && err != sql.ErrNoRows {
-		return Config{}, err
+	rows, err := tx.QueryContext(ctx, `SELECT id,query_json,download_rules_json,auto_download FROM subscriptions WHERE source='favorites' ORDER BY id`)
+	if err != nil {
+		return nil, err
 	}
-	// The built-in source mirrors the complete favorites collection. Auto-download
-	// scope is enforced by download_rules against each membership's favcat.
-	query := map[string]any{"max_pages": 50, "favorite_categories": []int{}}
-	quality := "original"
-	if len(qualities) > 0 && qualities[0] != "" {
-		quality = qualities[0]
+	items := []legacy{}
+	for rows.Next() {
+		var item legacy
+		if err := rows.Scan(&item.id, &item.queryJSON, &item.rulesJSON, &item.autoDownload); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		items = append(items, item)
 	}
-	rules := map[string]any{"quality": quality, "categories": cats, "excluded_categories": excludes}
-	c := Config{ID: "builtin-favorites", Name: "EH 收藏", Source: "favorites", Query: query, IntervalSeconds: interval, Enabled: interval > 0, AutoDownload: auto, DownloadRules: rules, Revision: 1}
-	if e = s.insertConfig(ctx, c); e != nil {
-		return Config{}, e
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
-	return s.Get(ctx, c.ID)
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	disabledArchive := []string{}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, item := range items {
+		query := map[string]any{}
+		rules := map[string]any{}
+		decode(item.queryJSON, &query)
+		decode(item.rulesJSON, &rules)
+		preset := "favorites"
+		if ids, ok := intSlice(query["favorite_categories"]); ok && len(ids) == 1 && ids[0] >= 0 && ids[0] <= 9 {
+			preset = fmt.Sprintf("favorites:%d", ids[0])
+		}
+		delete(query, "favorite_categories")
+		query["preset"] = preset
+		query["max_pages"] = 1
+		hasFolderArchiveRules := hasAny(rules["categories"]) || hasAny(rules["excluded_categories"])
+		delete(rules, "categories")
+		delete(rules, "excluded_categories")
+		autoDownload := item.autoDownload
+		if hasFolderArchiveRules {
+			autoDownload = 0
+			disabledArchive = append(disabledArchive, item.id)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE subscriptions SET source='preset',query_json=?,download_rules_json=?,auto_download=?,revision=revision+1,updated_at=? WHERE id=? AND source='favorites'`, marshal(query), marshal(rules), autoDownload, now, item.id); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE subscription_items SET pending_auto=0 WHERE subscription_id=?`, item.id); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return disabledArchive, nil
 }
 
-// FavoriteMemberships returns the cached local membership facts. The legacy
-// favorites state file is an import source only and must not shadow live rows.
-func (s *Store) FavoriteMemberships(ctx context.Context, subscriptionID string) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.gid,p.token,si.favcat FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND si.remote_member=1`, subscriptionID)
+// FavoritePresetMemberships returns last-seen membership data from user-owned
+// favorites presets. It is a display cache only; it is not reconciled against
+// the full remote favorites collection.
+func (s *Store) FavoritePresetMemberships(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.gid,p.token,si.favcat FROM subscription_items si JOIN publications p ON p.id=si.publication_id JOIN subscriptions s ON s.id=si.subscription_id WHERE s.source='preset' AND (json_extract(s.query_json,'$.preset')='favorites' OR json_extract(s.query_json,'$.preset') GLOB 'favorites:[0-9]') AND si.remote_member=1`)
 	if err != nil {
 		return nil, err
 	}
@@ -196,184 +246,13 @@ func (s *Store) FavoriteMemberships(ctx context.Context, subscriptionID string) 
 		if err := rows.Scan(&gid, &token, &cat); err != nil {
 			return nil, err
 		}
+		value := -1
 		if cat.Valid {
-			out[fmt.Sprintf("%d:%s", gid, token)] = int(cat.Int64)
-		} else {
-			out[fmt.Sprintf("%d:%s", gid, token)] = -1
+			value = int(cat.Int64)
 		}
+		out[fmt.Sprintf("%d:%s", gid, token)] = value
 	}
 	return out, rows.Err()
-}
-
-// SeedKnownFavorites migrates the old favorites-sync identity cache as
-// baseline placeholders. They never create automatic download intents.
-func (s *Store) SeedKnownFavorites(ctx context.Context, subscriptionID string, known map[string]bool, favcats map[string]int) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var done int
-	err = tx.QueryRowContext(ctx, `SELECT 1 FROM legacy_imports WHERE name='favorites-known-to-subscription'`).Scan(&done)
-	if err == nil {
-		return nil
-	}
-	if err != sql.ErrNoRows {
-		return err
-	}
-	if subscriptionID != "" {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		for key := range known {
-			parts := strings.SplitN(key, ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			gid, e := strconv.Atoi(parts[0])
-			if e != nil || gid < 1 || parts[1] == "" {
-				continue
-			}
-			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications(provider,gid,token,metadata_json,created_at,updated_at)VALUES('eh',?,?,'{}',?,?)`, gid, strings.ToLower(parts[1]), now, now); err != nil {
-				return err
-			}
-			var pubID int64
-			if err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, strings.ToLower(parts[1])).Scan(&pubID); err != nil {
-				return err
-			}
-			var favcat any
-			if value, ok := favcats[key]; ok {
-				favcat = value
-			}
-			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at,remote_member,first_seen_revision,baseline_item,pending_auto,favcat)VALUES(?,?,?, ?,1,1,1,0,?)`, subscriptionID, pubID, now, now, favcat); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO legacy_imports(name,completed_at,details_json)VALUES('favorites-known-to-subscription',?,'{}')`, time.Now().UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// ImportLegacyFavoriteDiagnostics preserves the old sync checkpoint as one
-// explicitly unknown-coverage run and turns per-gallery errors into visible,
-// non-retriable historical jobs. It never creates queued work.
-func (s *Store) ImportLegacyFavoriteDiagnostics(ctx context.Context, subscriptionID string, baseline bool, lastRun float64, lastOK bool, pages int, errs map[string]string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var marker int
-	err = tx.QueryRowContext(ctx, `SELECT 1 FROM legacy_imports WHERE name='favorites-legacy-diagnostics'`).Scan(&marker)
-	if err == nil {
-		return tx.Commit()
-	}
-	if err != sql.ErrNoRows {
-		return err
-	}
-	if baseline {
-		if _, err = tx.ExecContext(ctx, `UPDATE subscriptions SET baseline_complete=1,updated_at=? WHERE id=? AND source='favorites'`, time.Now().UTC().Format(time.RFC3339Nano), subscriptionID); err != nil {
-			return err
-		}
-	}
-	if lastRun > 0 {
-		at := time.Unix(int64(lastRun), 0).UTC().Format(time.RFC3339Nano)
-		status, message := "complete", ""
-		if !lastOK {
-			status, message = "failed", "legacy favorites sync reported an unsuccessful run"
-		}
-		if pages < 0 {
-			pages = 0
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO subscription_runs(id,subscription_id,started_at,finished_at,status,revision,pages,results,error,complete,coverage) VALUES('legacy-favorites-diagnostics',?,?,?, ?,1,?,0,?,0,'unknown')`, subscriptionID, at, at, status, pages, nullableText(message)); err != nil {
-			return err
-		}
-	}
-	quality := "original"
-	for identity, message := range errs {
-		parts := strings.SplitN(identity, ":", 2)
-		if len(parts) != 2 || parts[1] == "" {
-			continue
-		}
-		gid, parseErr := strconv.Atoi(parts[0])
-		if parseErr != nil || gid < 1 {
-			continue
-		}
-		jobID, idErr := randomID()
-		if idErr != nil {
-			return idErr
-		}
-		at := time.Now().UTC().Format(time.RFC3339Nano)
-		if lastRun > 0 {
-			at = time.Unix(int64(lastRun), 0).UTC().Format(time.RFC3339Nano)
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO download_jobs(id,provider,gid,token,quality,status,stage,automatic,error,created_at,updated_at) VALUES(?,'eh',?,?,?,'failed','legacy_favorites_error',1,?,?,?)`, jobID, gid, strings.ToLower(parts[1]), quality, message, at, at); err != nil {
-			return err
-		}
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO legacy_imports(name,completed_at,details_json) VALUES('favorites-legacy-diagnostics',?,?)`, time.Now().UTC().Format(time.RFC3339Nano), marshal(map[string]any{"baseline": baseline, "last_run": lastRun, "last_ok": lastOK, "scanned_pages": pages, "errors": len(errs)})); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func nullableText(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func (s *Store) RecordFavoriteAction(ctx context.Context, subscriptionID string, gid int, token string, favcat *int, remove bool) error {
-	if subscriptionID == "" || gid < 1 || token == "" {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var source string
-	if err = tx.QueryRowContext(ctx, `SELECT source FROM subscriptions WHERE id=?`, subscriptionID).Scan(&source); err != nil {
-		return err
-	}
-	if source != "favorites" {
-		return errors.New("favorites subscription is unavailable")
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications(provider,gid,token,metadata_json,created_at,updated_at)VALUES('eh',?,?,'{}',?,?)`, gid, strings.ToLower(token), now, now); err != nil {
-		return err
-	}
-	var pubID int64
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE provider='eh' AND gid=? AND token=?`, gid, strings.ToLower(token)).Scan(&pubID); err != nil {
-		return err
-	}
-	var baseline, auto, revision int
-	if err = tx.QueryRowContext(ctx, `SELECT baseline_complete,auto_download,revision FROM subscriptions WHERE id=?`, subscriptionID).Scan(&baseline, &auto, &revision); err != nil {
-		return err
-	}
-	if remove {
-		_, err = tx.ExecContext(ctx, `UPDATE subscription_items SET remote_member=0,pending_auto=0,last_seen_at=? WHERE subscription_id=? AND publication_id=?`, now, subscriptionID, pubID)
-	} else {
-		var cat any
-		if favcat != nil {
-			cat = *favcat
-		}
-		baseItem := 0
-		pending := 0
-		if baseline == 0 {
-			baseItem = 1
-		}
-		if baseline != 0 && auto != 0 {
-			pending = 1
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at,remote_member,first_seen_revision,baseline_item,pending_auto,favcat)VALUES(?,?,?,?,1,?,?,?,?) ON CONFLICT(subscription_id,publication_id)DO UPDATE SET remote_member=1,last_seen_at=excluded.last_seen_at,favcat=COALESCE(excluded.favcat,subscription_items.favcat),pending_auto=MAX(subscription_items.pending_auto,excluded.pending_auto)`, subscriptionID, pubID, now, now, revision, baseItem, pending, cat)
-	}
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 func (s *Store) Update(ctx context.Context, id string, c Config) (Config, error) {
 	old, e := s.Get(ctx, id)
@@ -424,21 +303,7 @@ func (s *Store) Update(ctx context.Context, id string, c Config) (Config, error)
 	return s.Get(ctx, id)
 }
 func (s *Store) Delete(ctx context.Context, id string) error {
-	tx, e := s.db.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	var source string
-	if e = tx.QueryRowContext(ctx, `SELECT source FROM subscriptions WHERE id=?`, id).Scan(&source); e != nil {
-		return e
-	}
-	if source == "favorites" {
-		if _, e = tx.ExecContext(ctx, `INSERT INTO app_state(state_key,value_json,updated_at)VALUES('builtin_favorites_deleted','true',?)ON CONFLICT(state_key)DO UPDATE SET value_json='true',updated_at=excluded.updated_at`, time.Now().UTC().Format(time.RFC3339Nano)); e != nil {
-			return e
-		}
-	}
-	res, e := tx.ExecContext(ctx, `DELETE FROM subscriptions WHERE id=?`, id)
+	res, e := s.db.ExecContext(ctx, `DELETE FROM subscriptions WHERE id=?`, id)
 	if e != nil {
 		return e
 	}
@@ -446,7 +311,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return tx.Commit()
+	return nil
 }
 
 type ItemQuery struct {

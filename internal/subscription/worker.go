@@ -161,7 +161,7 @@ func (w *Worker) Run(id string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Source == "favorites" && !w.Settings.HasIPB() {
+	if IsFavoritesSubscription(cfg) && !w.Settings.HasIPB() {
 		return ErrFavoritesAuthUnavailable
 	}
 	runID, err := randomID()
@@ -200,20 +200,6 @@ func (w *Worker) Run(id string) error {
 		return ErrAlreadyRunning
 	}
 	resumeCursor := ""
-	if cfg.Source == "favorites" && !cfg.BaselineComplete {
-		var priorPages int
-		resumeErr := tx.QueryRow(`SELECT cursor,pages FROM subscription_runs WHERE subscription_id=? AND revision=? AND status IN ('partial','interrupted','failed') ORDER BY started_at DESC LIMIT 1`, id, cfg.Revision).Scan(&resumeCursor, &priorPages)
-		if resumeErr != nil && resumeErr != sql.ErrNoRows {
-			_ = tx.Rollback()
-			return resumeErr
-		}
-		// If the continuation cursor failed before yielding a page, discard it
-		// for the next attempt and restart at the head. Page membership is
-		// durable/idempotent, and baseline items can never trigger auto-download.
-		if resumeErr == nil && priorPages == 0 {
-			resumeCursor = ""
-		}
-	}
 	if _, err = tx.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision,cursor) VALUES(?,?,?,'running',?,?)`, runID, id, started, cfg.Revision, resumeCursor); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -238,7 +224,7 @@ func (w *Worker) scheduleDue() {
 	}
 	now := time.Now().UTC()
 	for _, s := range subs {
-		if s.Source == "favorites" && !w.Settings.HasIPB() {
+		if IsFavoritesSubscription(s) && !w.Settings.HasIPB() {
 			continue
 		}
 		if !s.Enabled || s.IntervalSeconds <= 0 {
@@ -253,56 +239,13 @@ func (w *Worker) scheduleDue() {
 func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 	var e error
 	var pages, count int
-	complete, reachedEnd, windowEnded := false, false, false
+	complete, windowEnded := false, false
 	baseComplete := c.BaselineComplete
 	var cursor string
 	if err := w.db.QueryRowContext(ctx, `SELECT cursor FROM subscription_runs WHERE id=?`, runID).Scan(&cursor); err != nil {
 		return err
 	}
-	resumeBaseline := c.Source == "favorites" && !baseComplete && cursor != ""
-	maxPages := 50
-	if c.Source == "search" || c.Source == "preset" {
-		// Search subscriptions are rolling snapshots. Fetch one upstream page per
-		// run; the upstream determines page size, and older stored page budgets
-		// must not trigger a deep crawl on an upgraded server.
-		maxPages = 1
-	} else {
-		if n := intNumber(c.Query["max_pages"]); n > 0 && n <= 50 {
-			maxPages = n
-		}
-		if c.Source == "favorites" && w.Settings.FavoritesSyncMaxPages > 0 && w.Settings.FavoritesSyncMaxPages < maxPages {
-			maxPages = w.Settings.FavoritesSyncMaxPages
-		}
-	}
-	favScope, err := favoriteScope(c)
-	if err != nil {
-		e = err
-	}
-	known := map[string]bool{}
-	if e == nil && c.Source == "favorites" && baseComplete {
-		rows, x := w.db.QueryContext(ctx, `SELECT p.gid,p.token FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=?`, id)
-		if x != nil {
-			e = x
-		} else {
-			for rows.Next() {
-				var gid int
-				var token string
-				if x = rows.Scan(&gid, &token); x != nil {
-					break
-				}
-				known[fmt.Sprintf("%d:%s", gid, strings.ToLower(token))] = true
-			}
-			if x == nil {
-				x = rows.Err()
-			}
-			_ = rows.Close()
-			if x != nil {
-				e = x
-			}
-		}
-	}
-	threshold := w.Settings.FavoritesSyncMatchThreshold
-	knownStreak := 0
+	maxPages := 1
 	for e == nil && pages < maxPages {
 		if err := ctx.Err(); err != nil {
 			e = err
@@ -313,42 +256,13 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 		if e != nil {
 			break
 		}
-		if c.Source == "favorites" && len(page.Galleries) == 0 && (page.NextGID != "" || !page.FavoritesPageVerified) {
-			e = eh.ErrUnverifiedFavoritesPage
-			break
-		}
 		pages++
 		cursor = page.NextGID
-		items := page.Galleries
-		if c.Source == "favorites" {
-			items = make([]eh.GalleryListItem, 0, len(page.Galleries))
-			for _, item := range page.Galleries {
-				if !favoriteInScope(item, favScope) {
-					continue
-				}
-				items = append(items, item)
-				if baseComplete && threshold > 0 && page.NextGID != "" {
-					key := fmt.Sprintf("%d:%s", item.GID, strings.ToLower(item.Token))
-					if known[key] {
-						knownStreak++
-					} else {
-						knownStreak = 0
-					}
-					if knownStreak >= threshold {
-						windowEnded = true
-						break
-					}
-				}
-			}
+		var items []eh.GalleryListItem
+		items, e = filterSubscriptionCategories(page.Galleries, c.Query, w.Settings)
+		if e != nil {
+			break
 		}
-		if c.Source != "favorites" {
-			items, e = filterSubscriptionCategories(items, c.Query, w.Settings)
-			if e != nil {
-				break
-			}
-		}
-		// AddPage even when the selected favorites scope is empty: the cursor
-		// checkpoint must be revision-checked and durable on every fetched page.
 		_, e = w.Store.AddPage(ctx, id, runID, c.Revision, pages, cursor, baseComplete, c.AutoDownload, items)
 		if e != nil {
 			break
@@ -359,23 +273,18 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 			break
 		}
 		if cursor == "" || len(page.Galleries) == 0 {
-			reachedEnd = true
 			complete = true
 			break
 		}
-		if c.Source != "favorites" && pages >= maxPages {
+		if pages >= maxPages {
 			complete = true
-			if cursor != "" {
-				windowEnded = true
-			}
+			windowEnded = cursor != ""
 			break
 		}
 	}
-	if e == nil && c.Source != "favorites" && pages >= maxPages {
+	if e == nil && pages >= maxPages {
 		complete = true
-		if cursor != "" {
-			windowEnded = true
-		}
+		windowEnded = cursor != ""
 	}
 	if ctx.Err() != nil {
 		e = ctx.Err()
@@ -397,16 +306,10 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 	if pages > 0 {
 		coverage = "partial"
 	}
-	if c.Source == "favorites" && reachedEnd && !resumeBaseline {
+	if complete && !windowEnded {
 		coverage = "full"
 	}
-	if c.Source == "favorites" && (windowEnded || (reachedEnd && resumeBaseline)) {
-		coverage = "window"
-	}
-	if c.Source != "favorites" && complete && !windowEnded {
-		coverage = "full"
-	}
-	if c.Source != "favorites" && windowEnded {
+	if windowEnded {
 		coverage = "window"
 	}
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -441,9 +344,6 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 		}
 		if txErr == nil && complete {
 			_, txErr = tx.ExecContext(finalCtx, `UPDATE subscriptions SET baseline_complete=1,updated_at=? WHERE id=? AND revision=?`, finished, id, c.Revision)
-			if txErr == nil && c.Source == "favorites" && reachedEnd && !resumeBaseline {
-				_, txErr = tx.ExecContext(finalCtx, `UPDATE subscription_items SET remote_member=0 WHERE subscription_id=? AND last_seen_run<>?`, id, runID)
-			}
 		}
 		if txErr == nil {
 			txErr = tx.Commit()
@@ -547,29 +447,6 @@ func (w *Worker) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, 
 	return w.Store.ListItems(ctx, q)
 }
 
-func favoriteScope(c Config) ([]int, error) {
-	raw, ok := c.Query["favorite_categories"]
-	if !ok || raw == nil {
-		return nil, nil
-	}
-	cats, ok := intSlice(raw)
-	if !ok {
-		return nil, errors.New("favorite_categories must be numeric categories 0..9")
-	}
-	for _, n := range cats {
-		if n < 0 || n > 9 {
-			return nil, errors.New("favorite_categories must be numeric categories 0..9")
-		}
-	}
-	return cats, nil
-}
-func favoriteInScope(item eh.GalleryListItem, scope []int) bool {
-	if len(scope) == 0 {
-		return true
-	}
-	return item.Favcat != nil && containsInt(scope, *item.Favcat)
-}
-
 func intNumber(v any) int {
 	switch x := v.(type) {
 	case float64:
@@ -588,7 +465,7 @@ func (w *Worker) DispatchPending(subscriptionID string) {
 	if err != nil || !c.Enabled || !c.AutoDownload || !c.BaselineComplete || ctx.Err() != nil {
 		return
 	}
-	if c.Source == "favorites" && !w.Settings.HasIPB() {
+	if IsFavoritesSubscription(c) && !w.Settings.HasIPB() {
 		return
 	}
 	rows, err := w.db.QueryContext(ctx, `SELECT p.gid,p.token,si.publication_id FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND si.pending_auto=1 AND si.baseline_item=0 AND si.first_seen_revision=?`, c.ID, c.Revision)
@@ -696,10 +573,9 @@ func (w *Worker) autoCandidate(ctx context.Context, c Config, gid int, token str
 	if priorFailure > 0 {
 		return false, quality, false, nil
 	}
-	var source, galleryCategory string
-	var favcat sql.NullInt64
-	var revision, baseline, remoteMember int
-	e := w.db.QueryRowContext(ctx, `SELECT s.source,si.favcat,si.first_seen_revision,si.baseline_item,si.remote_member,p.category FROM subscription_items si JOIN subscriptions s ON s.id=si.subscription_id JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND si.publication_id=? AND s.enabled=1 AND s.auto_download=1 AND s.baseline_complete=1`, c.ID, pubID).Scan(&source, &favcat, &revision, &baseline, &remoteMember, &galleryCategory)
+	var galleryCategory string
+	var revision, baseline int
+	e := w.db.QueryRowContext(ctx, `SELECT si.first_seen_revision,si.baseline_item,p.category FROM subscription_items si JOIN subscriptions s ON s.id=si.subscription_id JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND si.publication_id=? AND s.enabled=1 AND s.auto_download=1 AND s.baseline_complete=1`, c.ID, pubID).Scan(&revision, &baseline, &galleryCategory)
 	if e != nil {
 		return false, "", false, e
 	}
@@ -713,30 +589,7 @@ func (w *Worker) autoCandidate(ctx context.Context, c Config, gid int, token str
 	if categoryMask != 0 && !galleryCategoryMatches(galleryCategory, categoryMask, w.Settings) {
 		return false, quality, false, nil
 	}
-	if source == "favorites" && remoteMember != 1 {
-		return false, quality, false, nil
-	}
-	if source == "favorites" && favcat.Valid {
-		if raw, exists := c.DownloadRules["categories"]; exists && raw != nil {
-			allow, ok := intSlice(raw)
-			if !ok {
-				return false, "", false, errors.New("invalid favorites category rule")
-			}
-			if len(allow) > 0 && !containsInt(allow, int(favcat.Int64)) {
-				return false, quality, false, nil
-			}
-		}
-		if raw, exists := c.DownloadRules["excluded_categories"]; exists && raw != nil {
-			ex, ok := intSlice(raw)
-			if !ok {
-				return false, "", false, errors.New("invalid favorites excluded category rule")
-			}
-			if containsInt(ex, int(favcat.Int64)) {
-				return false, quality, false, nil
-			}
-		}
-	}
-	if source != "favorites" && (hasAny(c.DownloadRules["categories"]) || hasAny(c.DownloadRules["excluded_categories"])) {
+	if hasAny(c.DownloadRules["categories"]) || hasAny(c.DownloadRules["excluded_categories"]) {
 		return false, quality, false, nil
 	}
 	rows, e := w.db.QueryContext(ctx, `SELECT id FROM documents WHERE publication_id=? AND status='available'`, pubID)
@@ -992,7 +845,7 @@ func (w *Worker) DispatchQueued() {
 }
 
 func (w *Worker) validateQueuedSources(ctx context.Context, tx *sql.Tx, j downloadJob) (manual, valid bool, selectedQuality string, err error) {
-	rows, err := tx.QueryContext(ctx, `SELECT d.source,d.source_key,d.subscription_id,d.requested_quality,s.source,s.enabled,s.auto_download,s.revision,si.first_seen_revision,si.baseline_item,si.favcat,si.remote_member,s.download_rules_json,s.query_json,p.category FROM download_job_sources d LEFT JOIN subscriptions s ON s.id=d.subscription_id LEFT JOIN publications p ON p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?) LEFT JOIN subscription_items si ON si.subscription_id=d.subscription_id AND si.publication_id=p.id WHERE d.job_id=?`, j.gid, strings.ToLower(j.token), j.id)
+	rows, err := tx.QueryContext(ctx, `SELECT d.source,d.source_key,d.subscription_id,d.requested_quality,s.enabled,s.auto_download,s.revision,si.first_seen_revision,si.baseline_item,s.download_rules_json,s.query_json,p.category FROM download_job_sources d LEFT JOIN subscriptions s ON s.id=d.subscription_id LEFT JOIN publications p ON p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?) LEFT JOIN subscription_items si ON si.subscription_id=d.subscription_id AND si.publication_id=p.id WHERE d.job_id=?`, j.gid, strings.ToLower(j.token), j.id)
 	if err != nil {
 		return false, false, "", err
 	}
@@ -1000,12 +853,11 @@ func (w *Worker) validateQueuedSources(ctx context.Context, tx *sql.Tx, j downlo
 	for rows.Next() {
 		var source, sourceKey string
 		var requested sql.NullString
-		var subscriptionID, kind sql.NullString
-		var enabled, auto, subRev, firstRev, baseline, remoteMember sql.NullInt64
-		var favcat sql.NullInt64
+		var subscriptionID sql.NullString
+		var enabled, auto, subRev, firstRev, baseline sql.NullInt64
 		var rawRules sql.NullString
 		var rawQuery, galleryCategory sql.NullString
-		if err = rows.Scan(&source, &sourceKey, &subscriptionID, &requested, &kind, &enabled, &auto, &subRev, &firstRev, &baseline, &favcat, &remoteMember, &rawRules, &rawQuery, &galleryCategory); err != nil {
+		if err = rows.Scan(&source, &sourceKey, &subscriptionID, &requested, &enabled, &auto, &subRev, &firstRev, &baseline, &rawRules, &rawQuery, &galleryCategory); err != nil {
 			return manual, valid, selectedQuality, err
 		}
 		if source == "manual" && sourceKey == "manual" && !subscriptionID.Valid {
@@ -1041,32 +893,7 @@ func (w *Worker) validateQueuedSources(ctx context.Context, tx *sql.Tx, j downlo
 		if rawRules.Valid && json.Unmarshal([]byte(rawRules.String), &rules) != nil {
 			return manual, valid, selectedQuality, errors.New("invalid subscription download rules")
 		}
-		if kind.String == "favorites" {
-			if !remoteMember.Valid || remoteMember.Int64 != 1 {
-				continue
-			}
-			if favcat.Valid {
-				if raw, exists := rules["categories"]; exists && raw != nil {
-					cats, ok := intSlice(raw)
-					if !ok {
-						return manual, valid, selectedQuality, errors.New("invalid favorites category rule")
-					}
-					if len(cats) > 0 && !containsInt(cats, int(favcat.Int64)) {
-						continue
-					}
-				}
-				if raw, exists := rules["excluded_categories"]; exists && raw != nil {
-					cats, ok := intSlice(raw)
-					if !ok {
-						return manual, valid, selectedQuality, errors.New("invalid favorites excluded category rule")
-					}
-					if containsInt(cats, int(favcat.Int64)) {
-						continue
-					}
-				}
-			}
-		}
-		if kind.String != "favorites" && (hasAny(rules["categories"]) || hasAny(rules["excluded_categories"])) {
+		if hasAny(rules["categories"]) || hasAny(rules["excluded_categories"]) {
 			continue
 		}
 		q := stringVal(rules["quality"])
@@ -1700,9 +1527,6 @@ func (w *Worker) QueueManualForce(ctx context.Context, gid int, token, quality s
 }
 
 func (w *Worker) fetchSubscriptionPage(ctx context.Context, c Config, cursor string, pageNumber int) (eh.GalleryPageInfo, error) {
-	if c.Source == "favorites" {
-		return w.Service.FavoritesSyncPage(ctx, cursor)
-	}
 	extra := url.Values{}
 	if q := QueryFromConfig(c); q != nil {
 		extra = q

@@ -43,27 +43,19 @@ function autoArchiveMode(draft) {
 }
 
 export function createSubscriptionPayload(draft) {
-  const source = draft.source === "search" ? "search" : draft.source === "favorites" ? "favorites" : "preset";
+  const source = draft.source === "search" ? "search" : "preset";
   const preset = draft.preset || "latest";
   const query =
-    source === "favorites"
-      ? applyGalleryCategorySelection({
-          max_pages: 10,
-          favorite_categories: parseCategoryIDs(draft.favorite_categories),
-        }, draft.query_categories)
-      : source === "preset"
-        ? applyGalleryCategorySelection({
-            preset,
-            max_pages: 1,
-          }, draft.query_categories)
-        : {
-            keywords: String(draft.keywords || "").trim(),
-            categories: parseCategoryIDs(
-              draft.query_categories ?? draft.categories,
-            ),
-            sort: "newest",
-            max_pages: 1,
-          };
+    source === "preset"
+      ? applyGalleryCategorySelection({ preset, max_pages: 1 }, draft.query_categories)
+      : {
+          keywords: String(draft.keywords || "").trim(),
+          categories: parseCategoryIDs(
+            draft.query_categories ?? draft.categories,
+          ),
+          sort: "newest",
+          max_pages: 1,
+        };
   const archiveMode = autoArchiveMode(draft);
   const autoDownload = archiveMode !== "disabled";
   return {
@@ -79,34 +71,22 @@ export function createSubscriptionPayload(draft) {
 
 export function createSubscriptionUpdate(subscription, draft) {
   const query =
-    subscription.source === "favorites"
+    subscription.source === "preset"
       ? applyGalleryCategorySelection({
           ...subscription.query,
-          max_pages: Number(draft.max_pages),
-          favorite_categories: parseCategoryIDs(draft.favorite_categories),
+          preset: draft.preset || subscription.query?.preset || "latest",
+          max_pages: 1,
         }, draft.query_categories)
-      : subscription.source === "preset"
-        ? applyGalleryCategorySelection({
-            ...subscription.query,
-            preset: draft.preset || subscription.query?.preset || "latest",
-            max_pages: 1,
-          }, draft.query_categories)
-        : {
-            ...subscription.query,
-            keywords: String(draft.keywords || "").trim(),
-            categories: parseCategoryIDs(draft.query_categories),
-            sort: "newest",
-            max_pages: 1,
-          };
+      : {
+          ...subscription.query,
+          keywords: String(draft.keywords || "").trim(),
+          categories: parseCategoryIDs(draft.query_categories),
+          sort: "newest",
+          max_pages: 1,
+        };
   const archiveMode = autoArchiveMode(draft);
   const autoDownload = archiveMode !== "disabled";
   const downloadRules = autoDownload ? { quality: archiveMode } : {};
-  if (subscription.source === "favorites") {
-    downloadRules.categories = parseCategoryIDs(draft.categories);
-    downloadRules.excluded_categories = parseCategoryIDs(
-      draft.excluded_categories,
-    );
-  }
   return {
     name: String(draft.name || "").trim(),
     query,
@@ -411,6 +391,10 @@ export const SUBSCRIPTION_PRESET_GROUPS = [
     })),
   },
 ];
+
+export function isFavoritesPreset(preset) {
+  return preset === "favorites" || /^favorites:[0-9]$/.test(preset || "");
+}
 
 export function getPresetLabel(presetId, t) {
   if (!presetId) return "";

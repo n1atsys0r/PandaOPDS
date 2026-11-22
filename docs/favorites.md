@@ -1,7 +1,7 @@
 # 收藏夹
 
-收藏读取和写入需要成对配置 IPB 登录 cookie。添加、移动和移除操作由 `/api/favorites` 代理到上游；成功后同步更新内置「EH 收藏」订阅的本地成员关系。若上游写入成功但本地 SQLite 更新失败，响应会附带 `local_warnings`，下一轮订阅抓取可重新校准本地缓存。
+收藏目录读取和添加、移动、移除操作需要成对配置 IPB 登录 Cookie。写操作由 `/api/favorites` 代理到上游；目录列表通过 `/api/favorites/categories` 或 `/api/favorites/favcats` 读取。
 
-收藏夹的定期扫描、增量状态和缓存条目现在由 SQLite 订阅管理。旧 `/api/favorites/sync` 与 `/api/favorites/sync/run` 路径保留兼容，新的订阅接口和行为见[订阅与下载任务](subscriptions.md)。旧 favorites JSON 只在迁移期间作为导入来源，不再是运行期权威数据。
+收藏追踪由用户在「订阅」中自行创建，选择「全部收藏」或某个收藏夹分类预设。收藏预设与热门、排行榜等预设使用相同的追新流程：每轮读取上游最新一页、在本地按作品分类过滤，并累积已发现记录。它不会遍历收藏历史，也不会在收藏变动后触发后台同步。移除上游收藏不会删除订阅缓存。
 
-第一次同步建立基线，不会自动下载已有收藏。收藏来源范围由订阅的 `query.favorite_categories` 控制；自动下载的 `download_rules.categories` 与 `excluded_categories` 独立限制哪些新收藏允许排队。自动下载默认关闭，开启后可能产生账户费用；详见[归档](archive.md)中的购买安全规则。
+自动归档沿用普通订阅策略，默认禁用。启用后可能产生账户 GP 费用；首次抓取建立缓存基线，不会归档基线中的既有作品。详见[归档](archive.md)中的购买安全规则。

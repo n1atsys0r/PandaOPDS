@@ -15,6 +15,7 @@ import {
   createSubscriptionPoller,
   EH_CATEGORIES,
   getCategoryColor,
+  isFavoritesPreset,
   SUBSCRIPTION_PRESET_GROUPS,
   getPresetLabel,
 } from "@/subscription-view.js";
@@ -105,10 +106,8 @@ const draft = ref({
   source: "preset",
   preset: "latest",
   keywords: "",
-  categories: "",
   query_categories: [],
   auto_archive: "disabled",
-  favorite_categories: "",
   interval: 3600,
 });
 
@@ -123,22 +122,20 @@ watch(
 );
 
 function openAddModal() {
+  editingSubscription.value = null;
   draft.value = {
     name: getPresetLabel("latest", t),
     source: "preset",
     preset: "latest",
     keywords: "",
-    categories: "",
     query_categories: [],
     auto_archive: "disabled",
-    favorite_categories: "",
     interval: 3600,
   };
   addModalOpen.value = true;
 }
 
 function iconForSub(sub) {
-  if (sub.source === "favorites") return Bookmark;
   if (sub.source === "search") return Search;
   const p = sub.query?.preset || "latest";
   if (p === "popular") return Flame;
@@ -149,7 +146,6 @@ function iconForSub(sub) {
 }
 
 function subtitleForSub(sub) {
-  if (sub.source === "favorites") return t("subscription.source_favorites");
   if (sub.source === "search") {
     return sub.query?.keywords
       ? `“${sub.query.keywords}”`
@@ -179,6 +175,17 @@ const running = computed(() =>
 const targets = computed(() =>
   allSelected.value ? subscriptions.value : [selected.value].filter(Boolean),
 );
+const presetGroups = computed(() => {
+  const allowFavorites = Boolean(s.status.value?.site?.has_ipb) ||
+    (editingSubscription.value?.source === "preset" &&
+      isFavoritesPreset(settingsDraft.value.preset));
+  return SUBSCRIPTION_PRESET_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => allowFavorites || !isFavoritesPreset(item.id),
+    ),
+  })).filter((group) => group.items.length > 0);
+});
 
 function openSettingsModal(sub) {
   editingSubscription.value = sub;
@@ -186,10 +193,8 @@ function openSettingsModal(sub) {
     name: sub.name || "",
     keywords: sub.query?.keywords || "",
     query_categories: [...(sub.query?.categories || [])],
-    favorite_categories: (sub.query?.favorite_categories || []).join(","),
     sort: sub.query?.sort || "newest",
     preset: sub.query?.preset || "latest",
-    max_pages: sub.source === "favorites" ? sub.query?.max_pages || 10 : 1,
     interval_seconds:
       sub.enabled === false ? 0 : (sub.interval_seconds ?? 3600),
     auto_archive: sub.auto_download
@@ -197,10 +202,6 @@ function openSettingsModal(sub) {
         ? "org"
         : "res"
       : "disabled",
-    categories: (sub.download_rules?.categories || []).join(","),
-    excluded_categories: (sub.download_rules?.excluded_categories || []).join(
-      ",",
-    ),
   };
   settingsModalOpen.value = true;
 }
@@ -314,10 +315,8 @@ async function createSubscription() {
       source: "preset",
       preset: "latest",
       keywords: "",
-      categories: "",
       query_categories: [],
       auto_archive: "disabled",
-      favorite_categories: "",
       interval: 3600,
     };
   } catch (e) {
@@ -679,7 +678,6 @@ function onDetailCategory(cat) {
                   :is="iconForSub(sub)"
                   class="size-4 shrink-0"
                   :class="
-                    sub.source === 'favorites' ||
                     sub.query?.preset?.startsWith('favorites')
                       ? 'text-primary'
                       : sub.source === 'preset'
@@ -1123,7 +1121,7 @@ function onDetailCategory(cat) {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent class="max-h-72">
                 <SelectGroup
-                  v-for="grp in SUBSCRIPTION_PRESET_GROUPS"
+                  v-for="grp in presetGroups"
                   :key="grp.group"
                 >
                   <SelectLabel
@@ -1240,33 +1238,6 @@ function onDetailCategory(cat) {
             v-model="settingsDraft.auto_archive"
             name="settings-auto-archive"
           />
-          <div
-            v-if="
-              settingsDraft.auto_archive !== 'disabled' &&
-              editingSubscription.source === 'favorites'
-            "
-            class="space-y-2"
-          >
-            <div class="space-y-1">
-              <label class="text-xs text-muted-foreground">{{
-                t("subscription.categories")
-              }}</label>
-              <Input
-                v-model="settingsDraft.categories"
-                class="h-8 text-xs"
-              />
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs text-muted-foreground">{{
-                t("subscription.excluded_categories")
-              }}</label>
-              <Input
-                v-model="settingsDraft.excluded_categories"
-                class="h-8 text-xs"
-              />
-            </div>
-          </div>
-
           <!-- Preset selector when editing a preset subscription -->
           <div
             v-if="editingSubscription.source === 'preset'"
@@ -1279,7 +1250,7 @@ function onDetailCategory(cat) {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent class="max-h-72">
                 <SelectGroup
-                  v-for="grp in SUBSCRIPTION_PRESET_GROUPS"
+                  v-for="grp in presetGroups"
                   :key="grp.group"
                 >
                   <SelectLabel
@@ -1325,33 +1296,6 @@ function onDetailCategory(cat) {
             />
           </div>
 
-          <div
-            v-if="editingSubscription.source === 'favorites'"
-            class="space-y-3"
-          >
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold">{{
-                t("subscription.favorite_categories")
-              }}</label>
-              <Input v-model="settingsDraft.favorite_categories" />
-            </div>
-            <GalleryCategoryPicker
-              v-model="settingsDraft.query_categories"
-              :label="t('subscription.gallery_categories')"
-              :description="t('subscription.favorites_gallery_category_filter_desc')"
-            />
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold">{{
-                t("subscription.max_pages")
-              }}</label>
-              <Input
-                v-model.number="settingsDraft.max_pages"
-                type="number"
-                min="1"
-                max="50"
-              />
-            </div>
-          </div>
 
           <DialogFooter
             class="pt-2 flex items-center justify-between sm:justify-between w-full"

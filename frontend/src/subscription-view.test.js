@@ -66,18 +66,22 @@ test("a late request from the previous subscription is discarded", async () => {
   assert.equal(await oldRequest, null);
 });
 
-test("new subscription payloads start with automatic downloads disabled", () => {
+test("favorites are ordinary preset subscriptions with automatic downloads disabled", () => {
   const payload = createSubscriptionPayload({
     name: "Favorites",
-    source: "favorites",
+    source: "preset",
+    preset: "favorites",
     interval: 1800,
   });
   assert.equal(payload.name, "Favorites");
+  assert.equal(payload.source, "preset");
+  assert.equal(payload.query.preset, "favorites");
+  assert.equal(payload.query.max_pages, 1);
   assert.equal(payload.auto_download, false);
   assert.equal(payload.enabled, true);
 });
 
-test("search and preset subscriptions fetch one page while favorites keep their budget", () => {
+test("search and all preset subscriptions fetch one page", () => {
   for (const source of ["search", "preset"]) {
     const payload = createSubscriptionPayload({
       name: source,
@@ -91,42 +95,29 @@ test("search and preset subscriptions fetch one page while favorites keep their 
     );
     assert.equal(update.query.max_pages, 1);
   }
-  assert.equal(
-    createSubscriptionPayload({ name: "Favorites", source: "favorites" }).query
-      .max_pages,
-    10,
-  );
-  const favoriteUpdate = createSubscriptionUpdate(
-    { source: "favorites", query: { max_pages: 10 } },
-    { name: "Favorites", max_pages: 4, interval_seconds: 3600 },
-  );
-  assert.equal(favoriteUpdate.query.max_pages, 4);
 });
 
-test("favorite fetch scope is separate from automatic-download rules", () => {
+test("favorites preset category selection uses shared post-fetch filters", () => {
   const payload = createSubscriptionPayload({
     name: "Favorites",
-    source: "favorites",
-    favorite_categories: "1, 7",
+    source: "preset",
+    preset: "favorites:2",
+    query_categories: "1, 7",
   });
-  assert.deepEqual(payload.query.favorite_categories, [1, 7]);
+  assert.deepEqual(payload.query.categories, [1, 7]);
   assert.deepEqual(payload.download_rules, {});
   const update = createSubscriptionUpdate(
-    { source: "favorites", query: {} },
+    { source: "preset", query: { preset: "favorites:2" } },
     {
       name: "Favorites",
-      favorite_categories: "2",
-      max_pages: 10,
-      interval_seconds: 0,
-      enabled: false,
-      auto_download: false,
-      quality: "res",
-      categories: "3",
-      excluded_categories: "4",
+      query_categories: "2",
+      interval_seconds: 3600,
+      auto_archive: "disabled",
     },
   );
-  assert.deepEqual(update.query.favorite_categories, [2]);
-  assert.deepEqual(update.download_rules.categories, [3]);
+  assert.deepEqual(update.query.categories, [2]);
+  assert.equal(update.query.max_pages, 1);
+  assert.deepEqual(update.download_rules, {});
 });
 
 test("cleanup, review, and batch actions require explicit acknowledged payloads", () => {
@@ -228,19 +219,15 @@ test("search subscriptions snapshot supported keyword and category filters", () 
   assert.deepEqual(parseCategoryIDs(""), []);
 });
 
-test("subscription updates send favorite category rules only for favorite sources", () => {
+test("subscription updates share automatic archive rules across sources", () => {
   const draft = {
     name: "Search",
     keywords: "cats",
     query_categories: "2, 4",
     sort: "popular",
-    max_pages: 5,
     interval_seconds: 900,
-    enabled: true,
     auto_download: true,
     quality: "org",
-    categories: "1",
-    excluded_categories: "3",
   };
   const search = createSubscriptionUpdate(
     { source: "search", query: {} },
@@ -255,13 +242,11 @@ test("subscription updates send favorite category rules only for favorite source
   assert.deepEqual(search.download_rules, { quality: "org" });
 
   const favorites = createSubscriptionUpdate(
-    { source: "favorites", query: { max_pages: 10 } },
+    { source: "preset", query: { preset: "favorites", max_pages: 1 } },
     draft,
   );
   assert.deepEqual(favorites.download_rules, {
     quality: "org",
-    categories: [1],
-    excluded_categories: [3],
   });
 });
 

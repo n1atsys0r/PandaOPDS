@@ -21,7 +21,6 @@ export default {
     no_subscriptions: "No subscriptions yet.",
     add: "New subscription",
     name: "Subscription name",
-    source_favorites: "EH Favorites",
     source_preset: "Preset Feed",
     source_search: "Keyword Search",
     preset_gallery: "Built-in Presets",
@@ -61,13 +60,9 @@ export default {
     settings: "Subscription settings",
     preset: "Search preset",
     preset_latest: "Latest",
-    max_pages: "Maximum pages per fetch (favorites)",
     single_page:
       "Each fetch reads one upstream page; the upstream determines the number of entries.",
     enabled: "Enable scheduled fetches",
-    categories:
-      "Allowed favorite folder IDs (comma separated; blank means all)",
-    excluded_categories: "Excluded favorite folder IDs (comma separated)",
     delete_confirm:
       "Delete this subscription? Cached publications and local files will remain.",
     first_seen: "First seen",
@@ -75,16 +70,12 @@ export default {
     search_categories: "Limit category IDs (comma separated)",
     gallery_categories: "Gallery categories",
     gallery_category_filter_desc: "Leave blank to include all categories.",
-    favorites_gallery_category_filter_desc:
-      "Filters listed items and automatic downloads while keeping full favorite membership synced.",
     sort_newest: "Newest",
     filter_local: "Filter cached results",
     filter_category: "Filter by category",
     never_run: "Not fetched yet",
     favorite: "Add EH favorite",
     manual_download: "Download archive manually",
-    favorite_categories:
-      "Favorite folders to fetch (IDs 0–9, comma separated; blank means all)",
     last_success: "Last successful fetch",
     run_diagnostics: "Latest fetch",
     run_pages: "pages",
@@ -94,7 +85,7 @@ export default {
     coverage_partial: "Partial results",
     coverage_unknown: "Coverage unknown",
     partial_run:
-      "This run did not finish and will continue from its saved position.",
+      "This run did not finish; the next run will retry from the newest page.",
     window_run:
       "This fetch window completed; scheduled runs will continue updating it.",
     select_page: "Select this page",
@@ -405,17 +396,8 @@ export default {
     downloading_tasks: "Downloading Tasks",
     failed_tasks: "Failed Tasks",
     updates_available: "Updates Available",
-    fav_sync_title: "Favorites Sync",
-    fav_sync_desc: "Two-way consistency with E-Hentai favorites",
-    fav_count: "Cataloged Favorites",
-    sync_interval: "Sync Interval",
-    sync_every_seconds: "Every {sec}s",
-    sync_manual: "Manual Only",
     auto_archive: "Auto Archive",
-    auto_archive_enabled: "Enabled ({cats})",
     auto_archive_disabled: "Disabled",
-    sync_now: "Sync Now",
-    syncing: "Syncing...",
     quick_links_title: "Quick Access Links",
     quick_links_desc: "OPDS feeds and API endpoints",
     external_base: "External Base",
@@ -424,11 +406,6 @@ export default {
     header_small: "Local Archives",
     title: "Archives",
     desc: "Archiving operations may consume account GP; will be explicitly confirmed before starting.",
-    sync_favorites: "Sync Favorites",
-    more_sync_options: "More sync options",
-    full_sync_title: "Full Favorites Calibration…",
-    full_sync_desc:
-      "Traverse all favorite pages and clean up items removed upstream",
     import_local: "Import Local Archives",
     importing: "Importing…",
     scan_searching: "Searching for archive status and gallery data…",
@@ -496,15 +473,11 @@ export default {
     dialog_confirm_update_btn: "Confirm Version Update",
     dialog_fav_remove_title: "Remove Favorite?",
     dialog_fav_remove_desc_unarchived:
-      "This will remove the gallery from your E-Hentai favorites and clean up the unarchived local catalog record.",
+      "This will remove the gallery from your E-Hentai favorites. Subscription cache entries remain.",
     dialog_fav_remove_desc_default:
       "This will remove the gallery from your E-Hentai favorites.",
     dialog_fav_remove_also_delete:
       "Also delete local archive (only executed after successful upstream removal)",
-    dialog_full_sync_title: "Perform Full Favorites Calibration?",
-    dialog_full_sync_desc:
-      "Will scan all E-Hentai favorite pages from start (capped by max scan pages), catalog missing entries and clean up entries un-favorited upstream. Does not trigger paid archiving, but issues multiple page requests.",
-    dialog_full_sync_confirm: "Confirm Full Calibration",
     dialog_new_title: "New Gallery Archive",
     dialog_new_desc:
       "Enter gallery URL or GID/TOKEN. Archiving requires configured IPB login credentials.",
@@ -522,9 +495,6 @@ export default {
       "Archive task will request upstream. Unlocked tiers consume account GP; please check tier and price.",
     dialog_new_confirm: "Confirm",
     new_archive: "New Archive",
-    sync_menu: "Sync Favorites",
-    incremental_sync: "Incremental Sync",
-    full_sync: "Full Sync (Scan All Pages)",
     scan_imports: "Scan Unindexed Archives",
     scanning: "Scanning...",
     scan_banner_running: "Scanning local archives directory...",
@@ -944,12 +914,6 @@ export default {
       "0 disables periodic checks; only written to settings.toml.",
     hint_archive_auto_update:
       "When enabled, automatically purchases new archive versions which may consume GP; only written to settings.toml.",
-    hint_favorites_sync_interval_seconds:
-      "Default 3600s; set to 0 only disables periodic scan, favorite actions and manual scan remain active.",
-    hint_favorites_sync_categories:
-      "Comma-separated favorite IDs (0-9); empty for all, -ID to exclude. Only limits auto-archive scope, not sync scan.",
-    hint_favorites_sync_archive:
-      "When enabled, automatically purchases archives for newly discovered favorites (may consume GP); first scan establishes baseline only. Takes effect after restart.",
     select_site: "Select site",
     select_pse_page_base: "Select page base",
     pse_page_base_1: "1-based (default)",
@@ -986,9 +950,6 @@ export default {
     label_comments_enabled: "Comments",
     label_image_cache_enabled: "Image Cache",
     label_cache_max_gb: "Image Cache Limit (GB)",
-    label_favorites_sync_interval_seconds: "Favorites Sync Interval (seconds)",
-    label_favorites_sync_categories: "Auto Archive Categories",
-    label_favorites_sync_archive: "Auto Archive New Favorites",
     label_archive_update_interval_days: "Archive Version Check Interval (days)",
     label_archive_auto_update: "Auto Update Archives",
     locked_reason_ipb:
@@ -1013,9 +974,6 @@ export default {
       comments_enabled: "Gallery Comments",
       image_cache_enabled: "Image Cache",
       cache_max_gb: "Image Cache Max (GB)",
-      favorites_sync_interval_seconds: "Favorites Sync Interval (seconds)",
-      favorites_sync_categories: "Auto Archive Categories",
-      favorites_sync_archive: "Auto Archive New Favorites",
       archive_update_interval_days: "Archive Update Check Interval (days)",
       archive_auto_update: "Auto Update Archives",
     },
@@ -1056,9 +1014,6 @@ export default {
     orphan_removed: "Orphan record removed",
     cache_cleared: "Cleared {count} cache entries",
     fav_updated: "Favorite category updated",
-    sync_skipped: "Favorites sync skipped",
-    sync_complete:
-      "Favorites sync complete: scanned {scanned} pages, added {newCount} items, cataloged {cataloged} items",
     quote_expired: "Quotation expired because input changed. Please re-query.",
     no_quality_option: "No available quality tier",
     invalid_input:

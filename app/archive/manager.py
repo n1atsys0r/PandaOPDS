@@ -59,7 +59,6 @@ logger = logging.getLogger(__name__)
 
 # Fallback favcat map for archive gallery cards: last successfully fetched
 # mapping (long-lived, survives upstream fetch failures).
-_last_favcat_map: dict[int, str] = {}
 
 _7Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 _ZIP_MAGIC = b"PK\x03\x04"
@@ -562,49 +561,12 @@ class ArchiveManager:
     def list_entries(self) -> list[dict]:
         return self.store.list_entries()
 
-    def list_entries_enriched(
-        self,
-        fav_state: object | None = None,
-        favcat_map: dict[int, str] | None = None,
-    ) -> list[dict]:
-        """Archive entries enriched with local metadata + favorites state for gallery cards.
-
-        fav_state: FavoritesSyncState or None (for is_favorited).
-        favcat_map: id->name mapping for precise "{id}: {name}" badge. Uses
-        module-level fallback + state-persisted map on fetch failure (long-lived cache)."""
-        global _last_favcat_map
-        # merge live map into fallback
-        if favcat_map is not None:
-            _last_favcat_map = {**_last_favcat_map, **dict(favcat_map)}
-        # also merge state-persisted map
-        state_map: dict[int, str] = {}
-        favcats_per_key: dict[str, int] = {}
-        known: set[str] = set()
-        if fav_state is not None:
-            try:
-                known = fav_state.known()  # type: ignore[union-attr]
-            except Exception:
-                known = set()
-            try:
-                favcats_per_key = fav_state.favcats()  # type: ignore[union-attr]
-            except Exception:
-                favcats_per_key = {}
-            try:
-                state_map = fav_state.favcat_map()  # type: ignore[union-attr]
-                if state_map:
-                    _last_favcat_map = {**_last_favcat_map, **state_map}
-            except Exception:
-                state_map = {}
-        if favcat_map is None:
-            favcat_map = _last_favcat_map
-        else:
-            # ensure fallback contains latest
-            favcat_map = {**_last_favcat_map, **favcat_map}
+    def list_entries_enriched(self) -> list[dict]:
+        """Archive entries enriched with persisted local metadata and covers."""
         out: list[dict] = []
         for entry in self.store.list_entries():
             gid = int(entry.get("gid", 0))
             token = str(entry.get("token", ""))
-            key = f"{gid}:{token}"
             snap = self.store.read_metadata_snapshot(gid, token)
             has_cover = self.store.cover_path(gid, token).exists()
             # normalize metadata for the card (ignore missing fields)
@@ -625,9 +587,9 @@ class ArchiveManager:
                     "tags": snap.get("tags"),
                     "thumb": snap.get("thumb"),
                 }
-            is_fav = key in known
-            favcat = favcats_per_key.get(key)
-            favcat_name = favcat_map.get(favcat) if favcat is not None else None
+            is_fav = False
+            favcat = None
+            favcat_name = None
             enriched = {
                 **entry,
                 "metadata": meta,

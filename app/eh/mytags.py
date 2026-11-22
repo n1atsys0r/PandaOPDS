@@ -3,7 +3,7 @@
 The detail-page ``#taglist`` carries no inline styles, so highlight colours
 for detail documents come from this map: /mytags is parsed (``parse_mytags``)
 into a ``namespace:key -> TagStyle`` table, kept in memory behind a TTL and
-persisted to a JSON file (atomic write, same scheme as FavoritesSyncState) so
+persisted to a JSON file (atomic write) so
 a restart doesn't immediately re-hit the upstream.
 
 Refresh is lazy only: the map is re-fetched when a reader asks for it past

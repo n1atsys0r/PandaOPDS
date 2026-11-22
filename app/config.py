@@ -31,35 +31,6 @@ def _default_state_path(filename: str) -> Path:
     return Path(f"./{filename}")
 
 
-def _split_favcat_scope(value: str | None) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Split FAVORITES_SYNC_CATEGORIES into (includes, excludes).
-
-    Comma-separated favcat IDs; a ``-`` prefix marks an exclusion
-    (``-0`` = skip favcat 0, ``-0,-5`` = skip both). Effective scope is
-    ``(includes or ALL) - excludes`` and gates auto-archiving only — the
-    scan itself always walks all favorites. Malformed tokens are ignored,
-    matching the previous leniency. ``-`` is used instead of ``!`` so the
-    value stays safe in shells (no history expansion) and in compose YAML
-    (no tag mark).
-    """
-    includes: list[int] = []
-    excludes: list[int] = []
-    for part in (value or "").split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if part.startswith("-"):
-            try:
-                excludes.append(abs(int(part)))
-            except ValueError:
-                pass
-        else:
-            try:
-                includes.append(int(part))
-            except ValueError:
-                pass
-    return tuple(sorted(set(includes))), tuple(sorted(set(excludes)))
-
 EH_SITE_EHENTAI = "e-hentai"
 EH_SITE_EXHENTAI = "exhentai"
 
@@ -206,40 +177,8 @@ class Settings:
     # disable profiles and rely on the per-request ``inline_set`` override.
     eh_profile: str = "PandaOPDS"
 
-    # --- Favorites operations & sync ---
-    # Favorites write ops (add/move/remove via gallerypopups.php) require IPB
-    # cookies (derived from ipb_member_id+ipb_pass_hash, same as the archiver);
-    # the API returns 403 without them.
-    #
-    # Favorites sync (periodic background scan + optional auto-archive):
-    #   favorites_sync_interval_seconds  interval between scans (default 3600 =
-    #                                    1h; 0 disables the periodic loop). The
-    #                                    incremental stop keeps each scan to
-    #                                    ~1-3 pages, so hourly is cheap. A
-    #                                    manual write op always triggers one
-    #                                    extra debounced background scan.
-    #   favorites_sync_archive           auto-archive newly discovered items
-    #                                    (GP cost! must be enabled manually)
-    #   favorites_sync_categories        auto-archive scope only (the scan
-    #                                    itself always walks all favorites):
-    #                                    plain IDs are a whitelist
-    #                                    (() = archive all); `-ID` entries are
-    #                                    exclusions. Effective scope =
-    #                                    (whitelist or ALL) - excludes
-    #                                    (e.g. `-0` = archive everything but
-    #                                    favcat 0). Out-of-scope items stay
-    #                                    known/favorited, just never archived.
-    #   favorites_sync_state             JSON file persisting scanned gids
-    #   favorites_sync_match_threshold   consecutive known gids that stop an
-    #                                    incremental scan
-    #   favorites_sync_max_pages         hard cap on pages scanned per run
-    favorites_sync_interval_seconds: float = 3600.0
-    favorites_sync_archive: bool = False
-    favorites_sync_categories: tuple[int, ...] = ()
-    favorites_sync_excludes: tuple[int, ...] = ()
-    favorites_sync_state: Path = field(default_factory=lambda: _default_state_path("favorites_sync.json"))
-    favorites_sync_match_threshold: int = 5
-    favorites_sync_max_pages: int = 50
+    # --- Favorites operations ---
+    # Favorite writes and folder lookup require a complete IPB cookie pair.
 
     # --- Tag translation (EhTagTranslation database, opt-in) ---
     # When enabled, OPDS 2.0 subject entries are rendered with Chinese
@@ -467,7 +406,6 @@ def load_settings() -> Settings:
                     pass  # skip malformed entries
         return result or defaults
 
-    _fav_scope = _split_favcat_scope(os.getenv("FAVORITES_SYNC_CATEGORIES"))
     settings = Settings(
         auth_username=os.getenv("AUTH_USERNAME", "").strip(),
         auth_password=os.getenv("AUTH_PASSWORD", "").strip(),
@@ -518,19 +456,6 @@ def load_settings() -> Settings:
         archive_dir=Path(os.getenv("ARCHIVE_DIR", "./archives")),
         archive_quality=(os.getenv("ARCHIVE_QUALITY", "original").strip().lower() or "original"),
         archive_download_concurrency=_int(os.getenv("ARCHIVE_DOWNLOAD_CONCURRENCY"), 5),
-        favorites_sync_interval_seconds=_float(
-            os.getenv("FAVORITES_SYNC_INTERVAL_SECONDS"), 3600.0
-        ),
-        favorites_sync_archive=_bool(os.getenv("FAVORITES_SYNC_ARCHIVE"), False),
-        favorites_sync_categories=_fav_scope[0],
-        favorites_sync_excludes=_fav_scope[1],
-        favorites_sync_state=Path(
-            os.getenv("FAVORITES_SYNC_STATE") or str(_default_state_path("favorites_sync.json"))
-        ),
-        favorites_sync_match_threshold=_int(
-            os.getenv("FAVORITES_SYNC_MATCH_THRESHOLD"), 5
-        ),
-        favorites_sync_max_pages=_int(os.getenv("FAVORITES_SYNC_MAX_PAGES"), 50),
         mytags_ttl_seconds=_float(os.getenv("MYTAGS_TTL_SECONDS"), 21600.0),
         mytags_state=Path(os.getenv("MYTAGS_STATE") or str(_default_state_path("mytags.json"))),
         tag_translation_enabled=_bool(os.getenv("TAG_TRANSLATION_ENABLED"), False),

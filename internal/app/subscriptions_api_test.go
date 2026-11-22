@@ -100,7 +100,7 @@ func TestManualDownloadBatchValidatesWholeBatchBeforeQueueing(t *testing.T) {
 	}
 }
 
-func TestNormalizeSubscriptionUsesSinglePageForSearchButKeepsFavoritesBudget(t *testing.T) {
+func TestNormalizeSubscriptionUsesSinglePageForSearchAndFavoritePresets(t *testing.T) {
 	for _, source := range []string{"search", "preset"} {
 		c := subscription.Config{Source: source, Query: map[string]any{"max_pages": float64(10)}, DownloadRules: map[string]any{}}
 		if err := normalizeSubscription(&c, config.Settings{}); err != nil {
@@ -110,12 +110,12 @@ func TestNormalizeSubscriptionUsesSinglePageForSearchButKeepsFavoritesBudget(t *
 			t.Errorf("%s max_pages=%v, want 1", source, got)
 		}
 	}
-	fav := subscription.Config{Source: "favorites", Query: map[string]any{"max_pages": float64(10)}, DownloadRules: map[string]any{}}
+	fav := subscription.Config{Source: "preset", Query: map[string]any{"preset": "favorites", "max_pages": float64(10)}, DownloadRules: map[string]any{}}
 	if err := normalizeSubscription(&fav, config.Settings{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := fav.Query["max_pages"]; got != 10 {
-		t.Fatalf("favorites max_pages=%v, want 10", got)
+	if got := fav.Query["max_pages"]; got != 1 {
+		t.Fatalf("favorites preset max_pages=%v, want 1", got)
 	}
 }
 

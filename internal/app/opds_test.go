@@ -12,7 +12,6 @@ import (
 	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
-	"pandaopds/internal/favorites"
 )
 
 type favoriteListFixtureTransport string
@@ -26,11 +25,7 @@ func TestGalleryFeedOmitsStaleFavoriteSnapshot(t *testing.T) {
 	settings := config.Settings{EHSite: "e-hentai", TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, PageURLTTLSeconds: 60, ListCacheTTLSeconds: 60, CacheDir: filepath.Join(temp, "cache")}
 	service := eh.NewService(settings, favoriteListFixtureTransport(`<html><body><div class="gl1e"><a href="/g/123/abc/"><div class="glink">Fixture Gallery</div></a><div class="cn">Doujinshi</div><img src="/cover.jpg">12 pages</div></body></html>`))
 	defer service.Close()
-	favoriteState := favorites.NewState(filepath.Join(temp, "favorites.json"))
-	if err := favoriteState.Update(nil, nil, nil, map[string]int{"123:abc": 2}, map[int]string{2: "Stale Folder"}, nil, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	s := &Server{Settings: settings, Service: service, Favorites: &favorites.Syncer{State: favoriteState}}
+	s := &Server{Settings: settings, Service: service}
 	response := httptest.NewRecorder()
 	s.gallery20(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery?query=fixture", nil))
 	if response.Code != http.StatusOK {
@@ -109,11 +104,7 @@ func TestDetailPublicationEmitsLocalNewerVersionNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.AttachArchive(store)
-	favoriteState := favorites.NewState(filepath.Join(temp, "favorites.json"))
-	if err := favoriteState.Update(nil, nil, nil, map[string]int{"123:abc": 2}, map[int]string{2: "Doujinshi"}, nil, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	s := &Server{Settings: settings, Service: service, Store: store, Favorites: &favorites.Syncer{State: favoriteState}}
+	s := &Server{Settings: settings, Service: service, Store: store}
 	pub, detail, err := s.detailPublication(httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery/123/abc/publication", nil), 123, "abc")
 	if err != nil {
 		t.Fatal(err)

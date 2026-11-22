@@ -30,13 +30,12 @@ type GalleryListItem struct {
 }
 
 type GalleryPageInfo struct {
-	Galleries             []GalleryListItem `json:"galleries"`
-	NextGID               string            `json:"next_gid,omitempty"`
-	PrevGID               string            `json:"prev_gid,omitempty"`
-	TotalCount            *int              `json:"total_count,omitempty"`
-	NextPage              *int              `json:"next_page,omitempty"`
-	FavcatMap             map[int]string    `json:"favcat_map,omitempty"`
-	FavoritesPageVerified bool              `json:"-"`
+	Galleries  []GalleryListItem `json:"galleries"`
+	NextGID    string            `json:"next_gid,omitempty"`
+	PrevGID    string            `json:"prev_gid,omitempty"`
+	TotalCount *int              `json:"total_count,omitempty"`
+	NextPage   *int              `json:"next_page,omitempty"`
+	FavcatMap  map[int]string    `json:"favcat_map,omitempty"`
 }
 
 type Thumbnail struct {

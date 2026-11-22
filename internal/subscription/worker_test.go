@@ -105,14 +105,14 @@ func TestRunPersistsReservationBeforeReturning(t *testing.T) {
 	w.Stop()
 }
 
-func TestQueuedSourceAuthorizationUsesRevisionFavcatAndManualRetention(t *testing.T) {
+func TestQueuedSourceAuthorizationUsesRevisionGalleryCategoryAndManualRetention(t *testing.T) {
 	db := workerTestDB(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := db.Exec(`INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,created_at,updated_at) VALUES('fav','favorites','favorites','{}',0,1,1,'{"categories":[2]}',3,1,?,?)`, now, now)
+	_, err := db.Exec(`INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,created_at,updated_at) VALUES('fav','favorites','preset','{"preset":"favorites","categories":[1],"category_mask":1019}',0,1,1,'{"quality":"original"}',3,1,?,?)`, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO publications(id,provider,gid,token,metadata_json,created_at,updated_at) VALUES(1,'eh',123,'abcdef','{"category":"Manga"}',?,?)`, now, now)
+	_, err = db.Exec(`INSERT INTO publications(id,provider,gid,token,metadata_json,category,created_at,updated_at) VALUES(1,'eh',123,'abcdef','{"category":"Manga"}','Manga',?,?)`, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,37 +128,30 @@ func TestQueuedSourceAuthorizationUsesRevisionFavcatAndManualRetention(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := NewWorker(db.DB, nil, nil, nil, config.Settings{})
-	tx, err := db.Begin()
-	if err != nil {
-		t.Fatal(err)
+	w := NewWorker(db.DB, nil, nil, nil, config.Settings{Facets: []config.Facet{{Name: "Manga", Mask: 1019}, {Name: "Doujinshi", Mask: 1021}}})
+	validate := func() (bool, bool, string, error) {
+		tx, err := db.Begin()
+		if err != nil {
+			return false, false, "", err
+		}
+		defer tx.Rollback()
+		return w.validateQueuedSources(context.Background(), tx, downloadJob{id: "job", gid: 123, token: "abcdef", quality: "original"})
 	}
-	manual, valid, selected, err := w.validateQueuedSources(context.Background(), tx, downloadJob{id: "job", gid: 123, token: "abcdef", quality: "original"})
-	_ = tx.Rollback()
+	manual, valid, selected, err := validate()
 	if err != nil || manual || !valid || selected != "original" {
-		t.Fatalf("matching favcat authorization: manual=%v valid=%v quality=%v err=%v", manual, valid, selected, err)
+		t.Fatalf("matching gallery category authorization: manual=%v valid=%v quality=%v err=%v", manual, valid, selected, err)
 	}
-	if _, err = db.Exec(`UPDATE subscription_items SET favcat=1 WHERE subscription_id='fav'`); err != nil {
+	if _, err = db.Exec(`UPDATE publications SET category='Doujinshi' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
-	tx, err = db.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manual, valid, selected, err = w.validateQueuedSources(context.Background(), tx, downloadJob{id: "job", gid: 123, token: "abcdef", quality: "original"})
-	_ = tx.Rollback()
+	manual, valid, _, err = validate()
 	if err != nil || manual || valid {
-		t.Fatalf("excluded favcat authorization: manual=%v valid=%v err=%v; want revoked", manual, valid, err)
+		t.Fatalf("excluded gallery category authorization: manual=%v valid=%v err=%v; want revoked", manual, valid, err)
 	}
 	if _, err = db.Exec(`INSERT INTO download_job_sources(job_id,subscription_id,source,source_key) VALUES('job',NULL,'manual','manual')`); err != nil {
 		t.Fatal(err)
 	}
-	tx, err = db.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manual, valid, selected, err = w.validateQueuedSources(context.Background(), tx, downloadJob{id: "job", gid: 123, token: "abcdef", quality: "original"})
-	_ = tx.Rollback()
+	manual, valid, _, err = validate()
 	if err != nil || !manual || valid {
 		t.Fatalf("manual source retention: manual=%v valid=%v err=%v", manual, valid, err)
 	}
@@ -172,7 +165,7 @@ func TestQualityUpgradeDirection(t *testing.T) {
 
 func TestCancelSubscriptionKeepsSharedManualSource(t *testing.T) {
 	db := workerTestDB(t)
-	seedQueuedJob(t, db, "shared", "sub-cancel", "subscription:sub-cancel:r1", 1, 2, "favorites")
+	seedQueuedJob(t, db, "shared", "sub-cancel", "subscription:sub-cancel:r1", 1, 2, "preset")
 	if _, err := db.Exec(`INSERT INTO download_job_sources(job_id,subscription_id,source,source_key,requested_quality) VALUES('shared',NULL,'manual','manual','res')`); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +185,7 @@ func TestCancelSubscriptionKeepsSharedManualSource(t *testing.T) {
 
 func TestConcurrentDispatchClaimsQueuedJobOnceAndHonorsSuppression(t *testing.T) {
 	db := workerTestDB(t)
-	seedQueuedJob(t, db, "revoked", "sub-revoked", "subscription:sub-revoked:r1", 1, 2, "favorites")
+	seedQueuedJob(t, db, "revoked", "sub-revoked", "subscription:sub-revoked:r1", 1, 2, "preset")
 	if _, err := db.Exec(`INSERT INTO download_suppressions(provider,gid,token,created_at) VALUES('eh',123,'abcdef',?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +431,7 @@ func TestTerminalJobDrainsQueuedManualJobsAtConcurrencyLimit(t *testing.T) {
 func TestQueuedClaimDoesNotUseHigherTierThanCurrentSourceAuthorization(t *testing.T) {
 	db := workerTestDB(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := db.Exec(`INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,created_at,updated_at) VALUES('sub-tier','tier','favorites','{}',0,1,1,'{"quality":"res"}',1,1,?,?)`, now, now)
+	_, err := db.Exec(`INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,created_at,updated_at) VALUES('sub-tier','tier','preset','{"preset":"favorites"}',0,1,1,'{"quality":"res"}',1,1,?,?)`, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,29 +616,11 @@ func TestReadyArchiveRegistersOnlyVerifiedZipAndExactQuality(t *testing.T) {
 	}
 }
 
-func TestCanceledFavoriteSourceIsNotDispatchedFromQueuedIntent(t *testing.T) {
-	db := workerTestDB(t)
-	seedQueuedJob(t, db, "removed-favorite", "favorite-sub", "subscription:favorite-sub:r1", 1, 2, "favorites")
-	if _, err := db.Exec(`UPDATE subscription_items SET remote_member=0 WHERE subscription_id='favorite-sub' AND publication_id=1`); err != nil {
-		t.Fatal(err)
-	}
-	w := NewWorker(db.DB, nil, nil, nil, config.Settings{ArchiveDownloadConcurrency: 1})
-	w.started, w.dispatchEnabled = true, true
-	w.DispatchQueued()
-	var status string
-	if err := db.QueryRow(`SELECT status FROM download_jobs WHERE id='removed-favorite'`).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	w.Stop()
-	if status != "canceled" {
-		t.Fatalf("removed favorite job status=%q; want canceled before any archive request", status)
-	}
-}
-
 type favoriteFixture struct {
 	gid      int
 	token    string
-	category int
+	favcat   int
+	category string
 }
 
 func favoritePageFixture(items []favoriteFixture, next string) string {
@@ -653,10 +628,10 @@ func favoritePageFixture(items []favoriteFixture, next string) string {
 	b.WriteString(`<html><body><div class="nosel"><div class="fp" onclick="popUp('/gallerypopups.php?favcat=2')"><div>2</div><div>Favorite</div><div>Scoped</div></div><div class="fp" onclick="popUp('/gallerypopups.php?favcat=1')"><div>1</div><div>Favorite</div><div>Other</div></div></div>`)
 	for _, it := range items {
 		name := "Other"
-		if it.category == 2 {
+		if it.favcat == 2 {
 			name = "Scoped"
 		}
-		fmt.Fprintf(&b, `<div class="gl1e"><a href="/g/%d/%s/"><div class="glink">Gallery %d</div></a><div id="posted_%d" title="%s">2026-11-20</div></div>`, it.gid, it.token, it.gid, it.gid, name)
+		fmt.Fprintf(&b, `<div class="gl1e"><a href="/g/%d/%s/"><div class="glink">Gallery %d</div></a><div class="cn">%s</div><div id="posted_%d" title="%s">2026-11-20</div></div>`, it.gid, it.token, it.gid, it.category, it.gid, name)
 	}
 	if next != "" {
 		fmt.Fprintf(&b, `<a id="unext" href="/favorites.php?next=%s">Next</a>`, next)
@@ -664,31 +639,19 @@ func favoritePageFixture(items []favoriteFixture, next string) string {
 	b.WriteString(`</body></html>`)
 	return b.String()
 }
-func seedFavoriteMembership(t *testing.T, db *storage.DB, sub string, gid int, token string) {
-	t.Helper()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO publications(provider,gid,token,metadata_json,created_at,updated_at) VALUES('eh',?,?,'{}',?,?)`, gid, token, now, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at,first_seen_revision,baseline_item,favcat) SELECT ?,id,?,?,1,1,2 FROM publications WHERE provider='eh' AND gid=? AND token=?`, sub, now, now, gid, token); err != nil {
-		t.Fatal(err)
-	}
-}
-func TestFavoritesKnownThresholdStopsBeforeDeepHistoryAndHonorsScope(t *testing.T) {
+func TestFavoritesPresetFetchesOnePageAndFiltersCategories(t *testing.T) {
 	db := workerTestDB(t)
-	c := testSubscriptionConfig(t, db, "fav-window")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{"favorite_categories":[2]}',auto_download=1,baseline_complete=1 WHERE id=?`, c.ID); err != nil {
+	c := testSubscriptionConfig(t, db, "favorites-preset")
+	if _, err := db.Exec(`UPDATE subscriptions SET source='preset',query_json=? WHERE id=?`, `{"preset":"favorites:2","categories":[1],"category_mask":1019,"max_pages":25}`, c.ID); err != nil {
 		t.Fatal(err)
 	}
-	c.Source = "favorites"
-	c.Query = map[string]any{"favorite_categories": []any{float64(2)}}
-	c.AutoDownload = true
-	c.BaselineComplete = true
-	seedFavoriteMembership(t, db, c.ID, 10, "aaa010")
-	seedFavoriteMembership(t, db, c.ID, 11, "aaa011")
-	first := favoritePageFixture([]favoriteFixture{{12, "abc012", 2}, {99, "abc099", 1}}, "12-1786365950")
-	second := favoritePageFixture([]favoriteFixture{{10, "aaa010", 2}, {11, "aaa011", 2}, {20, "abc020", 2}}, "20-1786365951")
+	c.Source = "preset"
+	c.Query = map[string]any{"preset": "favorites:2", "categories": []any{float64(1)}, "category_mask": 1019, "max_pages": 25}
 	requests := 0
+	page := favoritePageFixture([]favoriteFixture{
+		{gid: 12, token: "abc012", favcat: 2, category: "Manga"},
+		{gid: 13, token: "abc013", favcat: 2, category: "Doujinshi"},
+	}, "12-1786365950")
 	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/" {
 			return responseHTML(`<html>session</html>`), nil
@@ -697,122 +660,32 @@ func TestFavoritesKnownThresholdStopsBeforeDeepHistoryAndHonorsScope(t *testing.
 			return nil, fmt.Errorf("unexpected path %s", r.URL.Path)
 		}
 		requests++
-		if requests == 1 {
-			return responseHTML(first), nil
-		}
-		if requests == 2 {
-			return responseHTML(second), nil
-		}
-		return nil, errors.New("threshold should stop before deep page")
+		return responseHTML(page), nil
 	}))
-	w := NewWorker(db.DB, service, nil, nil, config.Settings{IPBMemberID: "test", IPBPassHash: "test", FavoritesSyncMaxPages: 10, FavoritesSyncMatchThreshold: 2})
-	runID, now := "fav-window-run", time.Now().UTC().Format(time.RFC3339Nano)
+	w := NewWorker(db.DB, service, nil, nil, config.Settings{Facets: []config.Facet{{Name: "Doujinshi", Mask: 1021}, {Name: "Manga", Mask: 1019}}})
+	runID, now := "favorites-preset-run", time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, runID, c.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.runOne(context.Background(), c.ID, runID, c); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 2 {
-		t.Fatalf("favorites pages fetched=%d; known threshold should stop at two", requests)
+	if requests != 1 {
+		t.Fatalf("favorites pages fetched=%d, want one page per run", requests)
 	}
+	var kept, filtered, pages int
 	var status, coverage string
-	var complete, pages int
-	if err := db.QueryRow(`SELECT status,coverage,complete,pages FROM subscription_runs WHERE id=?`, runID).Scan(&status, &coverage, &complete, &pages); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=12`, c.ID).Scan(&kept); err != nil {
 		t.Fatal(err)
 	}
-	if status != "complete" || coverage != "window" || complete != 1 || pages != 2 {
-		t.Fatalf("incremental run status=%s coverage=%s complete=%d pages=%d", status, coverage, complete, pages)
-	}
-	var scoped, outsider, deep int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=12`, c.ID).Scan(&scoped)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=99`, c.ID).Scan(&outsider)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=20`, c.ID).Scan(&deep)
-	if scoped != 1 || outsider != 0 || deep != 0 {
-		t.Fatalf("scope/window membership scoped=%d outside=%d deep=%d", scoped, outsider, deep)
-	}
-}
-
-func TestPartialFavoriteBaselineResumesCursorWithoutAutoDownloadingBaseline(t *testing.T) {
-	db := workerTestDB(t)
-	c := testSubscriptionConfig(t, db, "fav-baseline")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{}',auto_download=1,baseline_complete=0 WHERE id=?`, c.ID); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=13`, c.ID).Scan(&filtered); err != nil {
 		t.Fatal(err)
 	}
-	c.Source = "favorites"
-	c.Query = map[string]any{}
-	c.AutoDownload = true
-	c.BaselineComplete = false
-	cursors := []string{}
-	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/" {
-			return responseHTML(`<html>session</html>`), nil
-		}
-		if r.URL.Path != "/favorites.php" {
-			return nil, fmt.Errorf("unexpected path %s", r.URL.Path)
-		}
-		cursor := r.URL.Query().Get("next")
-		cursors = append(cursors, cursor)
-		if cursor == "" {
-			return responseHTML(favoritePageFixture([]favoriteFixture{{1, "abc001", 2}}, "1-1786365950")), nil
-		}
-		return responseHTML(favoritePageFixture([]favoriteFixture{{2, "abc002", 2}}, "")), nil
-	}))
-	cfg := config.Settings{IPBMemberID: "test", IPBPassHash: "test", FavoritesSyncMaxPages: 1, FavoritesSyncMatchThreshold: 2}
-	w := NewWorker(db.DB, service, nil, nil, cfg)
-	w.started = true
-	firstID, now := "baseline-first", time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, firstID, c.ID, now); err != nil {
+	if err := db.QueryRow(`SELECT status,coverage,pages FROM subscription_runs WHERE id=?`, runID).Scan(&status, &coverage, &pages); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.runOne(context.Background(), c.ID, firstID, c); err != nil {
-		t.Fatal(err)
-	}
-	var firstStatus, firstCoverage, firstCursor string
-	var firstComplete int
-	if err := db.QueryRow(`SELECT status,coverage,cursor,complete FROM subscription_runs WHERE id=?`, firstID).Scan(&firstStatus, &firstCoverage, &firstCursor, &firstComplete); err != nil {
-		t.Fatal(err)
-	}
-	if firstStatus != "partial" || firstCoverage != "partial" || firstCursor != "1-1786365950" || firstComplete != 0 {
-		t.Fatalf("first segment status=%s coverage=%s cursor=%s complete=%d", firstStatus, firstCoverage, firstCursor, firstComplete)
-	}
-	var baseline int
-	if err := db.QueryRow(`SELECT baseline_complete FROM subscriptions WHERE id=?`, c.ID).Scan(&baseline); err != nil {
-		t.Fatal(err)
-	}
-	if baseline != 0 {
-		t.Fatal("partial first baseline was marked complete")
-	}
-	if err := w.Run(c.ID); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		var status string
-		_ = db.QueryRow(`SELECT status FROM subscription_runs WHERE subscription_id=? ORDER BY started_at DESC LIMIT 1`, c.ID).Scan(&status)
-		if status == "complete" {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	w.Stop()
-	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "1-1786365950" {
-		t.Fatalf("upstream cursors=%v; expected durable continuation", cursors)
-	}
-	if err := db.QueryRow(`SELECT baseline_complete FROM subscriptions WHERE id=?`, c.ID).Scan(&baseline); err != nil {
-		t.Fatal(err)
-	}
-	var pending, itemBaseline int
-	if err := db.QueryRow(`SELECT pending_auto,baseline_item FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=2`, c.ID).Scan(&pending, &itemBaseline); err != nil {
-		t.Fatal(err)
-	}
-	var coverage string
-	var complete int
-	if err := db.QueryRow(`SELECT coverage,complete FROM subscription_runs WHERE subscription_id=? ORDER BY started_at DESC LIMIT 1`, c.ID).Scan(&coverage, &complete); err != nil {
-		t.Fatal(err)
-	}
-	if baseline != 1 || pending != 0 || itemBaseline != 1 || coverage != "window" || complete != 1 {
-		t.Fatalf("resumed baseline baseline=%d pending=%d itemBaseline=%d coverage=%s complete=%d", baseline, pending, itemBaseline, coverage, complete)
+	if kept != 1 || filtered != 0 || status != "complete" || coverage != "window" || pages != 1 {
+		t.Fatalf("favorites filter kept=%d filtered=%d status=%s coverage=%s pages=%d", kept, filtered, status, coverage, pages)
 	}
 }
 
@@ -911,78 +784,6 @@ func TestVersionUpdateIntentIsDurableBeforeManagerSubmission(t *testing.T) {
 	}
 }
 
-func TestFailedBaselineCursorRestartsAtHeadOnNextAttempt(t *testing.T) {
-	db := workerTestDB(t)
-	c := testSubscriptionConfig(t, db, "bad-cursor")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{}',auto_download=1,baseline_complete=0 WHERE id=?`, c.ID); err != nil {
-		t.Fatal(err)
-	}
-	c.Source = "favorites"
-	c.Query = map[string]any{}
-	c.AutoDownload = true
-	c.BaselineComplete = false
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,finished_at,status,revision,cursor,pages,complete,coverage) VALUES('bad-cursor-run',?,?,?,'partial',1,'bad-cursor',1,0,'partial')`, c.ID, now, now); err != nil {
-		t.Fatal(err)
-	}
-	cursors := []string{}
-	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/" {
-			return responseHTML(`<html>session</html>`), nil
-		}
-		if r.URL.Path != "/favorites.php" {
-			return nil, fmt.Errorf("unexpected path %s", r.URL.Path)
-		}
-		cursor := r.URL.Query().Get("next")
-		cursors = append(cursors, cursor)
-		if cursor == "bad-cursor" {
-			return &http.Response{StatusCode: 500, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("expired cursor"))}, nil
-		}
-		return responseHTML(favoritePageFixture([]favoriteFixture{{3, "abc003", 2}}, "")), nil
-	}))
-	w := NewWorker(db.DB, service, nil, nil, config.Settings{IPBMemberID: "test", IPBPassHash: "test", FavoritesSyncMaxPages: 5, FavoritesSyncMatchThreshold: 2})
-	w.started = true
-	runUntil := func(want string) {
-		t.Helper()
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			var state string
-			_ = db.QueryRow(`SELECT status FROM subscription_runs WHERE subscription_id=? ORDER BY started_at DESC LIMIT 1`, c.ID).Scan(&state)
-			if state == want {
-				return
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		t.Fatalf("latest run did not reach %s", want)
-	}
-	if err := w.Run(c.ID); err != nil {
-		t.Fatal(err)
-	}
-	runUntil("failed")
-	var pages int
-	if err := db.QueryRow(`SELECT pages FROM subscription_runs WHERE subscription_id=? ORDER BY started_at DESC LIMIT 1`, c.ID).Scan(&pages); err != nil {
-		t.Fatal(err)
-	}
-	if pages != 0 {
-		t.Fatalf("bad cursor unexpectedly fetched %d pages", pages)
-	}
-	if err := w.Run(c.ID); err != nil {
-		t.Fatal(err)
-	}
-	runUntil("complete")
-	w.Stop()
-	if len(cursors) != 2 || cursors[0] != "bad-cursor" || cursors[1] != "" {
-		t.Fatalf("cursor retry sequence=%v", cursors)
-	}
-	var pending, baselineItem int
-	if err := db.QueryRow(`SELECT pending_auto,baseline_item FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=3`, c.ID).Scan(&pending, &baselineItem); err != nil {
-		t.Fatal(err)
-	}
-	if pending != 0 || baselineItem != 1 {
-		t.Fatalf("head restart item auto state pending=%d baseline=%d", pending, baselineItem)
-	}
-}
-
 func TestSearchMaxPagesCompletesAsWindowNotFullRemoteCoverage(t *testing.T) {
 	db := workerTestDB(t)
 	c := testSubscriptionConfig(t, db, "search-window")
@@ -1032,7 +833,7 @@ func TestSearchMaxPagesCompletesAsWindowNotFullRemoteCoverage(t *testing.T) {
 func TestFavoritesRunWithoutCredentialsMakesNoUpstreamRequest(t *testing.T) {
 	db := workerTestDB(t)
 	c := testSubscriptionConfig(t, db, "no-fav-auth")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{}' WHERE id=?`, c.ID); err != nil {
+	if _, err := db.Exec(`UPDATE subscriptions SET source='preset',query_json='{"preset":"favorites"}' WHERE id=?`, c.ID); err != nil {
 		t.Fatal(err)
 	}
 	requests := 0
@@ -1052,122 +853,6 @@ func TestFavoritesRunWithoutCredentialsMakesNoUpstreamRequest(t *testing.T) {
 	}
 	if requests != 0 || runs != 0 {
 		t.Fatalf("without credentials requests=%d runs=%d", requests, runs)
-	}
-}
-
-func TestExpiredFavoriteSessionHTMLCannotReconcileMembership(t *testing.T) {
-	db := workerTestDB(t)
-	c := testSubscriptionConfig(t, db, "expired-fav-auth")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{}',auto_download=1,baseline_complete=1 WHERE id=?`, c.ID); err != nil {
-		t.Fatal(err)
-	}
-	c.Source = "favorites"
-	c.Query = map[string]any{}
-	c.AutoDownload = true
-	c.BaselineComplete = true
-	seedFavoriteMembership(t, db, c.ID, 10, "aaa010")
-	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/" {
-			return responseHTML(`<html>session</html>`), nil
-		}
-		return responseHTML(`<html><body><form id="login_form" action="/login.php"><input type="password" name="pass"></form></body></html>`), nil
-	}))
-	w := NewWorker(db.DB, service, nil, nil, config.Settings{IPBMemberID: "test", IPBPassHash: "test", FavoritesSyncMaxPages: 5})
-	runID, now := "expired-login-run", time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, runID, c.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.runOne(context.Background(), c.ID, runID, c); !errors.Is(err, eh.ErrAuthenticationRequired) {
-		t.Fatalf("run error=%v, want authentication error", err)
-	}
-	var baseline, remote, complete int
-	var status string
-	if err := db.QueryRow(`SELECT baseline_complete FROM subscriptions WHERE id=?`, c.ID).Scan(&baseline); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT remote_member FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=10`, c.ID).Scan(&remote); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT status,complete FROM subscription_runs WHERE id=?`, runID).Scan(&status, &complete); err != nil {
-		t.Fatal(err)
-	}
-	if baseline != 1 || remote != 1 || status != "failed" || complete != 0 {
-		t.Fatalf("expired auth baseline=%d remote=%d status=%s complete=%d", baseline, remote, status, complete)
-	}
-}
-
-func TestUnknownEmptyFavoritePageDoesNotCompleteBaseline(t *testing.T) {
-	db := workerTestDB(t)
-	c := testSubscriptionConfig(t, db, "unknown-empty-favs")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{}',baseline_complete=0 WHERE id=?`, c.ID); err != nil {
-		t.Fatal(err)
-	}
-	c.Source = "favorites"
-	c.Query = map[string]any{}
-	c.BaselineComplete = false
-	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/" {
-			return responseHTML(`<html>session</html>`), nil
-		}
-		return responseHTML(`<html><body>not a favorites page</body></html>`), nil
-	}))
-	w := NewWorker(db.DB, service, nil, nil, config.Settings{IPBMemberID: "test", IPBPassHash: "test", FavoritesSyncMaxPages: 5})
-	runID, now := "unknown-empty-run", time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, runID, c.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.runOne(context.Background(), c.ID, runID, c); !errors.Is(err, eh.ErrUnverifiedFavoritesPage) {
-		t.Fatalf("run error=%v, want unverified favorites page", err)
-	}
-	var baseline, complete int
-	var status string
-	if err := db.QueryRow(`SELECT baseline_complete FROM subscriptions WHERE id=?`, c.ID).Scan(&baseline); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT status,complete FROM subscription_runs WHERE id=?`, runID).Scan(&status, &complete); err != nil {
-		t.Fatal(err)
-	}
-	if baseline != 0 || status != "failed" || complete != 0 {
-		t.Fatalf("unverified empty baseline=%d status=%s complete=%d", baseline, status, complete)
-	}
-}
-
-func TestVerifiedEmptyFavoritesPageCanReconcileMembership(t *testing.T) {
-	db := workerTestDB(t)
-	c := testSubscriptionConfig(t, db, "verified-empty")
-	if _, err := db.Exec(`UPDATE subscriptions SET source='favorites',query_json='{}',auto_download=1,baseline_complete=1 WHERE id=?`, c.ID); err != nil {
-		t.Fatal(err)
-	}
-	c.Source = "favorites"
-	c.Query = map[string]any{}
-	c.AutoDownload = true
-	c.BaselineComplete = true
-	seedFavoriteMembership(t, db, c.ID, 10, "aaa010")
-	emptyPage := `<html><body><div class="nosel"><div class="fp" onclick="popUp('/gallerypopups.php?favcat=0')"><div>0</div><div>Favorite</div><div>Common</div></div></div><table class="itg glte"></table></body></html>`
-	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/" {
-			return responseHTML(`<html>session</html>`), nil
-		}
-		return responseHTML(emptyPage), nil
-	}))
-	w := NewWorker(db.DB, service, nil, nil, config.Settings{IPBMemberID: "test", IPBPassHash: "test", FavoritesSyncMaxPages: 5})
-	runID, now := "verified-empty-run", time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, runID, c.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.runOne(context.Background(), c.ID, runID, c); err != nil {
-		t.Fatal(err)
-	}
-	var remote, complete int
-	var coverage string
-	if err := db.QueryRow(`SELECT remote_member FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND p.gid=10`, c.ID).Scan(&remote); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT complete,coverage FROM subscription_runs WHERE id=?`, runID).Scan(&complete, &coverage); err != nil {
-		t.Fatal(err)
-	}
-	if remote != 0 || complete != 1 || coverage != "full" {
-		t.Fatalf("verified empty page remote=%d complete=%d coverage=%s", remote, complete, coverage)
 	}
 }
 

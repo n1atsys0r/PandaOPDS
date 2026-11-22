@@ -893,18 +893,65 @@
     },
     "/opds/v2.0/subscription/{id}": {
       "get": {
-        "tags": ["opds2"],
+        "tags": [
+          "opds2"
+        ],
         "summary": "Cached Subscription Feed",
         "description": "Paginated OPDS 2.0 feed of locally cached accumulated items for a subscription. Reading this feed never starts a fetch; an empty subscription returns an empty feed. Items may include retained results from earlier runs, following subscription cache retention behavior.",
         "operationId": "subscription_feed_opds_v2_0_subscription__id__get",
         "parameters": [
-          {"in": "path", "name": "id", "required": true, "schema": {"type": "string"}, "description": "Local subscription ID"},
-          {"name": "page", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}, "example": 1}
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Local subscription ID"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "example": 1
+          }
         ],
         "responses": {
-          "200": {"description": "Cached subscription feed", "content": {"application/opds+json;profile=acquisition": {"schema": {"$ref": "#/components/schemas/Feed"}}}},
-          "404": {"description": "Subscription not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
-          "500": {"description": "Could not read local subscription items", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "200": {
+            "description": "Cached subscription feed",
+            "content": {
+              "application/opds+json;profile=acquisition": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Could not read local subscription items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2816,12 +2863,22 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "deep": { "type": "boolean", "default": false },
-                  "acknowledged": { "type": "boolean" }
+                  "deep": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "acknowledged": {
+                    "type": "boolean"
+                  }
                 }
               },
               "examples": {
-                "deep": { "value": { "deep": true, "acknowledged": true } }
+                "deep": {
+                  "value": {
+                    "deep": true,
+                    "acknowledged": true
+                  }
+                }
               }
             }
           }
@@ -4063,167 +4120,6 @@
         }
       }
     },
-    "/api/favorites/sync": {
-      "get": {
-        "tags": [
-          "favorites"
-        ],
-        "summary": "Favorites Sync Status",
-        "operationId": "favorites_sync_status_api_favorites_sync_get",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FavoriteSyncStatus"
-                },
-                "example": {
-                  "enabled": true,
-                  "interval_seconds": 3600,
-                  "auto_archive": false,
-                  "categories": "all",
-                  "excluded_categories": [],
-                  "running": false,
-                  "last_error": null,
-                  "baseline": true
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Basic authentication required when configured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "headers": {
-              "WWW-Authenticate": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Favorites sync unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/favorites/sync/run": {
-      "post": {
-        "tags": [
-          "favorites"
-        ],
-        "summary": "Favorites Sync Run",
-        "description": "Trigger a favorites scan that catalogs discovered favorites into ARCHIVE_STATE_DIR and optionally starts auto-archiving newly discovered entries when FAVORITES_SYNC_ARCHIVE is enabled. After the initial baseline, this may spend GP. Pass full=1 to run a full catalog backfill scan without triggering paid auto-archiving on known items.",
-        "operationId": "favorites_sync_run_api_favorites_sync_run_post",
-        "parameters": [
-          {
-            "name": "full",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            },
-            "description": "Scan all favorites pages to backfill catalog entries and reconcile removed unarchived records."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    {
-                      "$ref": "#/components/schemas/FavoriteSyncStatus"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "ok": {
-                          "type": "boolean"
-                        },
-                        "new": {
-                          "type": "array",
-                          "items": {
-                            "type": "object"
-                          }
-                        },
-                        "pages": {
-                          "type": "integer"
-                        },
-                        "auto_archived": {
-                          "type": "array",
-                          "items": {
-                            "type": "object"
-                          }
-                        },
-                        "auto_upgraded": {
-                          "type": "array",
-                          "items": {
-                            "type": "object"
-                          }
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Basic authentication required when configured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "headers": {
-              "WWW-Authenticate": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "E-Hentai account cookies required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Favorites sync unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/rating": {
       "post": {
         "tags": [
@@ -5038,20 +4934,6 @@
                       "null"
                     ],
                     "description": "Automatically download newer archive versions, which may spend GP. Defaults to false. Stored in settings.toml."
-                  },
-                  "favorites_sync_archive": {
-                    "type": [
-                      "boolean",
-                      "null"
-                    ],
-                    "description": "Automatically archive newly discovered favorites, which may spend GP. Defaults to false. The initial scan only creates a baseline. Stored in settings.toml; environment overrides lock this setting."
-                  },
-                  "favorites_sync_categories": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "Limits auto-archive scope using comma-separated favorite folder IDs 0-9; -ID excludes a folder; empty means all folders. It does not filter the sync scan. Stored in settings.toml; environment overrides lock this setting."
                   }
                 },
                 "additionalProperties": true
@@ -6415,12 +6297,48 @@
         "summary": "Unlink the associated local document while preserving its file",
         "operationId": "archive_unlink_association",
         "parameters": [
-          {"name":"gid","in":"path","required":true,"schema":{"type":"integer"}},
-          {"name":"token","in":"path","required":true,"schema":{"type":"string"}}
+          {
+            "name": "gid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": {"description":"Association removed; local document preserved","content":{"application/json":{"schema":{"type":"object","properties":{"unlinked":{"type":"boolean"},"document_id":{"type":"string"},"file_preserved":{"type":"boolean"}}}}}},
-          "404": {"description":"No associated document"}
+          "200": {
+            "description": "Association removed; local document preserved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "unlinked": {
+                      "type": "boolean"
+                    },
+                    "document_id": {
+                      "type": "string"
+                    },
+                    "file_preserved": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No associated document"
+          }
         }
       }
     },
@@ -6457,10 +6375,16 @@
                 }
               }
             }
-          }
-          ,"409": {
+          },
+          "409": {
             "description": "Another document already occupies this gallery identity",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "parameters": [
@@ -6553,7 +6477,9 @@
             "description": "The local archive changed while its page index was being built",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -6561,7 +6487,9 @@
             "description": "The archive is structurally invalid or contains no readable image pages; explicit reading can be retried",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -6569,7 +6497,9 @@
             "description": "Archive I/O did not complete; no partial page index was committed",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -6627,7 +6557,9 @@
             "description": "Unsafe path or stale file signature; run a regular scan when the signature changed",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -6635,7 +6567,9 @@
             "description": "The archive or selected page is structurally invalid",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -6643,7 +6577,9 @@
             "description": "Archive I/O did not complete; retry reading",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -7459,11 +7395,50 @@
               "failed"
             ]
           },
-          "archive_status": {"type":"string","enum":["unarchived","ready","unavailable","pending","downloading","zipping","failed"]},
-          "document_id": {"type":["string","null"],"description":"Stable local document identifier when a document is associated."},
-          "document_status": {"type":["string","null"],"enum":["available","missing","invalid",null]},
-          "association_source": {"type":["string","null"]},
-          "path": {"type":["string","null"],"description":"Archive relative path shown for explicit delete confirmation."},
+          "archive_status": {
+            "type": "string",
+            "enum": [
+              "unarchived",
+              "ready",
+              "unavailable",
+              "pending",
+              "downloading",
+              "zipping",
+              "failed"
+            ]
+          },
+          "document_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable local document identifier when a document is associated."
+          },
+          "document_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "available",
+              "missing",
+              "invalid",
+              null
+            ]
+          },
+          "association_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Archive relative path shown for explicit delete confirmation."
+          },
           "title": {
             "type": [
               "string",
@@ -7698,57 +7673,6 @@
                 }
               }
             }
-          }
-        }
-      },
-      "FavoriteSyncStatus": {
-        "type": "object",
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "interval_seconds": {
-            "type": "number"
-          },
-          "auto_archive": {
-            "type": "boolean"
-          },
-          "categories": {
-            "oneOf": [
-              {
-                "type": "array",
-                "items": {
-                  "type": "integer"
-                }
-              },
-              {
-                "const": "all"
-              }
-            ]
-          },
-          "excluded_categories": {
-            "type": "array",
-            "items": {
-              "type": "integer"
-            }
-          },
-          "running": {
-            "type": "boolean"
-          },
-          "last_error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "baseline": {
-            "type": "boolean"
-          },
-          "last_run": {
-            "type": [
-              "number",
-              "null"
-            ]
           }
         }
       },
@@ -8148,7 +8072,6 @@
           "source": {
             "type": "string",
             "enum": [
-              "favorites",
               "search",
               "preset"
             ]
@@ -8255,16 +8178,7 @@
               "minimum": 0,
               "maximum": 9
             },
-            "description": "Included EH gallery category IDs. Search, latest, and watched apply them upstream where supported; popular, toplist, and favorites presets filter fetched results locally. The built-in favorites subscription filters displayed items and automatic downloads while retaining complete favorite membership synchronization. Existing cached items are retained and filtered from output when this setting changes."
-          },
-          "favorite_categories": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9
-            },
-            "description": "Favorite folder IDs; empty means all"
+            "description": "Included EH gallery category IDs. Search, latest, and watched apply them upstream where supported; popular, toplist, and favorites presets filter fetched results locally. Existing cached items remain stored and are filtered from output using the current selection."
           },
           "sort": {
             "type": "string",
@@ -8297,9 +8211,7 @@
           },
           "max_pages": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 50,
-            "description": "Favorites subscriptions may fetch up to this many upstream pages per run. Search and preset subscriptions are normalized and enforced to one upstream page per run regardless of this value; entry count is determined by the upstream page size."
+            "description": "Compatibility field; the server normalizes every subscription to one upstream page per run."
           }
         }
       },
@@ -8313,24 +8225,6 @@
               "org",
               "res"
             ]
-          },
-          "categories": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9
-            },
-            "description": "Allowed EH favorite folder IDs (0..9); applies only to favorites auto-download scope."
-          },
-          "excluded_categories": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9
-            },
-            "description": "Excluded EH favorite folder IDs (0..9); applies only to favorites auto-download scope."
           }
         }
       },
@@ -8346,7 +8240,6 @@
           "source": {
             "type": "string",
             "enum": [
-              "favorites",
               "search",
               "preset"
             ]
@@ -8841,7 +8734,6 @@
           "source": {
             "type": "string",
             "enum": [
-              "favorites",
               "search",
               "preset"
             ]

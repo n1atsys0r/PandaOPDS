@@ -65,18 +65,6 @@ def _field(
     }
 
 
-def _fav_scope_text(s: Settings) -> str:
-    """Human-readable favorites sync scope: (whitelist or 全部) − excludes."""
-    base = (
-        ", ".join(str(c) for c in s.favorites_sync_categories)
-        if s.favorites_sync_categories else "全部"
-    )
-    if s.favorites_sync_excludes:
-        excl = ", ".join(f"-{c}" for c in s.favorites_sync_excludes)
-        return f"{base}（排除 {excl}）"
-    return base
-
-
 def _settings_groups(s: Settings) -> list[dict]:
     return [
         {
@@ -254,38 +242,12 @@ def _settings_groups(s: Settings) -> list[dict]:
         },
         {
             "id": "favorites",
-            "title": "收藏夹（操作与同步）",
+            "title": "收藏夹操作",
             "fields": [
                 _field(
                     "favorites_enabled", "启用条件",
                     "开（已配置 IPB 登录态）" if bool(s.ipb_member_id and s.ipb_pass_hash) else "关（需 IPB_MEMBER_ID + IPB_PASS_HASH）",
                     note="写操作（add/move/remove）与目录列表需要登录态；无登录态时 API 返回 403",
-                ),
-                _field(
-                    "favorites_sync_interval_seconds", "同步周期（秒）", s.favorites_sync_interval_seconds,
-                    note="默认 3600=每小时；0 = 关闭周期扫描（写操作后的防抖触发 + 手动 sync/run 仍生效）",
-                ),
-                _field(
-                    "favorites_sync_archive", "自动归档新增项",
-                    "开（消耗 GP！）" if s.favorites_sync_archive else "关（仅扫描记录）",
-                    note="必须显式开启；对每次扫描发现的新增收藏项调用 archiver start（首次运行仅建档不归档，自第二次起生效）",
-                ),
-                _field(
-                    "favorites_sync_categories", "自动归档范围",
-                    _fav_scope_text(s),
-                    note="FAVORITES_SYNC_CATEGORIES：只决定哪些新增收藏会被自动归档；扫描恒全量。逗号分隔的收藏夹 ID；留空 = 全归档；-ID = 排除该分区（如 -0）",
-                ),
-                _field(
-                    "favorites_sync_state", "同步状态文件", str(s.favorites_sync_state),
-                    note="记录已扫描/已归档 gid；删除可重置增量扫描基线",
-                ),
-                _field(
-                    "favorites_sync_match_threshold", "增量停止阈值", s.favorites_sync_match_threshold,
-                    note="连续 N 个已知 gid 即停止翻页",
-                ),
-                _field(
-                    "favorites_sync_max_pages", "单轮扫描页数上限", s.favorites_sync_max_pages,
-                    note="硬上限，防止异常时无限翻页",
                 ),
             ],
         },
@@ -305,10 +267,6 @@ def _derived(s: Settings) -> dict:
         "auth_exempt_prefixes": sorted(s.auth_exempt_prefixes),
         "image_proxy_hosts": sorted(s.image_proxy_hosts),
         "archive_enabled": bool(s.ipb_member_id and s.ipb_pass_hash),
-        "favorites_sync_interval_seconds": s.favorites_sync_interval_seconds,
-        "favorites_sync_archive": s.favorites_sync_archive,
-        "favorites_sync_categories": list(s.favorites_sync_categories),
-        "favorites_sync_excludes": list(s.favorites_sync_excludes),
     }
 
 

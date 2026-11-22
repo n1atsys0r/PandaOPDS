@@ -8,8 +8,6 @@ Routes:
                                        accepts single shorthand (gid+token at
                                        the top level) or a batch ``items`` list
 - GET    /api/favorites/categories    favorites folder list (id + name)
-- GET    /api/favorites/sync          sync state (periodic + auto-archive cfg)
-- POST   /api/favorites/sync/run      trigger one scan now (shortcut-friendly)
 
 All routes require IPB cookies (favorites are account-scoped and the write
 forms need the logged-in session); a missing login returns 403. Batch size is
@@ -29,10 +27,6 @@ ACTIONS = ("add", "move", "remove")
 
 def _service(request: Request):
     return request.app.state.service
-
-
-def _syncer(request: Request):
-    return getattr(request.app.state, "favorites", None)
 
 
 def _require_ipb(request: Request) -> None:
@@ -118,33 +112,6 @@ async def favorites_action(request: Request, payload: dict):
     results = await _service(request).favorite_action(
         action, items, favcat=favcat, note=note
     )
-    # optimistic sync-state update so GET /api/archive reflects the change immediately
-    ok_keys = {f"{r['gid']}:{r['token']}" for r in results if r.get("ok")}
-    if ok_keys:
-        syncer0 = _syncer(request)
-        state0 = getattr(syncer0, "state", None) if syncer0 is not None else None
-        if state0 is not None:
-            try:
-                if action == "remove":
-                    await state0.discard_keys(ok_keys)
-                else:  # add / move: upsert known + favcats optimistically
-                    # add may be called for not-yet-known galleries
-                    favcat_int = int(favcat) if favcat is not None else None
-                    existing_known = state0.known()
-                    existing_favcats = state0.favcats()
-                    new_known = existing_known | ok_keys
-                    if favcat_int is not None:
-                        for k in ok_keys:
-                            existing_favcats[k] = favcat_int
-                    await state0.update(known=new_known, favcats=existing_favcats)
-            except Exception:
-                pass
-    # any successful write → schedule one (debounced, coalesced) background
-    # scan so the favorites index / auto-archive catches up immediately
-    # instead of waiting for the next periodic tick.
-    syncer = _syncer(request)
-    if syncer is not None and any(r["ok"] for r in results):
-        syncer.request_run()
     return {
         "action": action,
         "ok": all(r["ok"] for r in results),
@@ -176,20 +143,3 @@ async def favorites_favcats(request: Request):
     """
     _require_ipb(request)
     return await _service(request).favorite_categories()
-
-
-@router.get("/api/favorites/sync")
-async def favorites_sync_status(request: Request):
-    syncer = _syncer(request)
-    if syncer is None:
-        raise HTTPException(status_code=404, detail="favorites sync unavailable")
-    return syncer.status()
-
-
-@router.post("/api/favorites/sync/run")
-async def favorites_sync_run(request: Request):
-    _require_ipb(request)
-    syncer = _syncer(request)
-    if syncer is None:
-        raise HTTPException(status_code=404, detail="favorites sync unavailable")
-    return await syncer.run()

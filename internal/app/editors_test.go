@@ -118,60 +118,19 @@ func TestArchiveEditorPersistsFileOnlySettingsForRestart(t *testing.T) {
 	}
 }
 
-func TestFavoritesAutoArchiveEditorSavesSettingAndRespectsEnvironmentLock(t *testing.T) {
-	t.Setenv("FAVORITES_SYNC_ARCHIVE", "")
-	_ = os.Unsetenv("FAVORITES_SYNC_ARCHIVE")
-	t.Setenv("FAVORITES_SYNC_CATEGORIES", "")
-	_ = os.Unsetenv("FAVORITES_SYNC_CATEGORIES")
-	p := filepath.Join(t.TempDir(), "settings.toml")
-	s := &Server{Settings: config.Settings{FavoritesSyncArchive: false, FavoritesSyncCategories: []int{1}, FavoritesSyncExcludes: []int{0}}, settingsPath: p, editKey: []byte("test-only-etag-key")}
+func TestConfigEditorOmitsFavoritesSyncSettings(t *testing.T) {
+	s := &Server{Settings: config.Settings{}, settingsPath: filepath.Join(t.TempDir(), "settings.toml"), editKey: []byte("test-only-etag-key")}
 	get := httptest.NewRecorder()
 	s.configEdit(get, httptest.NewRequest(http.MethodGet, "/api/config/edit", nil))
 	var shape map[string]any
 	if err := json.Unmarshal(get.Body.Bytes(), &shape); err != nil {
 		t.Fatal(err)
 	}
-	field := shape["fields"].(map[string]any)["favorites_sync_archive"].(map[string]any)
-	if field["active"] != false || field["locked"] != false {
-		t.Fatalf("unexpected initial setting field: %#v", field)
-	}
-	scopeField := shape["fields"].(map[string]any)["favorites_sync_categories"].(map[string]any)
-	if scopeField["active"] != "1,-0" || scopeField["locked"] != false {
-		t.Fatalf("unexpected initial scope field: %#v", scopeField)
-	}
-	patch := httptest.NewRequest(http.MethodPatch, "/api/config/edit", strings.NewReader(`{"favorites_sync_archive":true,"favorites_sync_categories":"2,-5"}`))
-	patch.Header.Set("Content-Type", "application/json")
-	patch.Header.Set("If-Match", get.Header().Get("ETag"))
-	ok := httptest.NewRecorder()
-	s.configEdit(ok, patch)
-	if ok.Code != 200 {
-		t.Fatalf("PATCH status=%d body=%s", ok.Code, ok.Body.String())
-	}
-	restarted := config.LoadWithConfigPath(p)
-	if !restarted.FavoritesSyncArchive || len(restarted.FavoritesSyncCategories) != 1 || restarted.FavoritesSyncCategories[0] != 2 || len(restarted.FavoritesSyncExcludes) != 1 || restarted.FavoritesSyncExcludes[0] != 5 {
-		t.Fatalf("saved favorites settings were not loaded after restart: %+v", restarted)
-	}
-
-	t.Setenv("FAVORITES_SYNC_ARCHIVE", "true")
-	s.Settings.FavoritesSyncArchive = true
-	locked := httptest.NewRecorder()
-	s.configEdit(locked, httptest.NewRequest(http.MethodGet, "/api/config/edit", nil))
-	if err := json.Unmarshal(locked.Body.Bytes(), &shape); err != nil {
-		t.Fatal(err)
-	}
-	field = shape["fields"].(map[string]any)["favorites_sync_archive"].(map[string]any)
-	if field["locked"] != true || field["source"] != "env" {
-		t.Fatalf("environment override did not lock setting: %#v", field)
-	}
-	t.Setenv("FAVORITES_SYNC_CATEGORIES", "3")
-	locked = httptest.NewRecorder()
-	s.configEdit(locked, httptest.NewRequest(http.MethodGet, "/api/config/edit", nil))
-	if err := json.Unmarshal(locked.Body.Bytes(), &shape); err != nil {
-		t.Fatal(err)
-	}
-	scopeField = shape["fields"].(map[string]any)["favorites_sync_categories"].(map[string]any)
-	if scopeField["locked"] != true || scopeField["source"] != "env" {
-		t.Fatalf("environment override did not lock favorites scope: %#v", scopeField)
+	fields := shape["fields"].(map[string]any)
+	for _, key := range []string{"favorites_sync_interval_seconds", "favorites_sync_archive", "favorites_sync_categories"} {
+		if _, ok := fields[key]; ok {
+			t.Fatalf("retired setting %q is still exposed", key)
+		}
 	}
 }
 
