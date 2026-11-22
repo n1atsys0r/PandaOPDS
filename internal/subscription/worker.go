@@ -341,6 +341,12 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 				}
 			}
 		}
+		if c.Source != "favorites" {
+			items, e = filterSubscriptionCategories(items, c.Query, w.Settings)
+			if e != nil {
+				break
+			}
+		}
 		// AddPage even when the selected favorites scope is empty: the cursor
 		// checkpoint must be revision-checked and durable on every fetched page.
 		_, e = w.Store.AddPage(ctx, id, runID, c.Revision, pages, cursor, baseComplete, c.AutoDownload, items)
@@ -453,6 +459,92 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 		w.DispatchPending(id)
 	}
 	return e
+}
+
+func subscriptionCategoryMask(query map[string]any) (int, error) {
+	raw, exists := query["categories"]
+	if !exists || raw == nil {
+		return 0, nil
+	}
+	ids, ok := intSlice(raw)
+	if !ok {
+		return 0, errors.New("categories must be numeric category IDs")
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	mask := intNumber(query["category_mask"])
+	if mask == 0 {
+		return 0, errors.New("category filter mask is unavailable")
+	}
+	return mask, nil
+}
+
+func filterSubscriptionCategories(items []eh.GalleryListItem, query map[string]any, settings config.Settings) ([]eh.GalleryListItem, error) {
+	mask, err := subscriptionCategoryMask(query)
+	if err != nil {
+		return nil, err
+	}
+	if mask == 0 {
+		return items, nil
+	}
+	out := make([]eh.GalleryListItem, 0, len(items))
+	for _, item := range items {
+		if galleryCategoryMatches(item.Category, mask, settings) {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func galleryCategoryMatches(category string, mask int, settings config.Settings) bool {
+	if mask == 0 {
+		return true
+	}
+	actualMask := eh.CategoryMask([]string{strings.TrimSpace(category)}, settings)
+	return actualMask != 0 && actualMask&mask == mask
+}
+
+func (w *Worker) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, int, error) {
+	q.CategoryNamesBySubscription = make(map[string][]string)
+	for _, id := range q.SubscriptionIDs {
+		c, err := w.Store.Get(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		mask, err := subscriptionCategoryMask(c.Query)
+		if err != nil {
+			return nil, 0, err
+		}
+		if mask == 0 {
+			continue
+		}
+		rows, err := w.db.QueryContext(ctx, `SELECT DISTINCT p.category FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=?`, id)
+		if err != nil {
+			return nil, 0, err
+		}
+		names := []string{}
+		for rows.Next() {
+			var category string
+			if err = rows.Scan(&category); err != nil {
+				_ = rows.Close()
+				return nil, 0, err
+			}
+			if galleryCategoryMatches(category, mask, w.Settings) {
+				names = append(names, strings.ToLower(category))
+			}
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, 0, err
+		}
+		_ = rows.Close()
+		q.CategoryNamesBySubscription[id] = names
+	}
+	return w.Store.ListItems(ctx, q)
 }
 
 func favoriteScope(c Config) ([]int, error) {
@@ -604,14 +696,21 @@ func (w *Worker) autoCandidate(ctx context.Context, c Config, gid int, token str
 	if priorFailure > 0 {
 		return false, quality, false, nil
 	}
-	var source string
+	var source, galleryCategory string
 	var favcat sql.NullInt64
 	var revision, baseline, remoteMember int
-	e := w.db.QueryRowContext(ctx, `SELECT s.source,si.favcat,si.first_seen_revision,si.baseline_item,si.remote_member FROM subscription_items si JOIN subscriptions s ON s.id=si.subscription_id WHERE si.subscription_id=? AND si.publication_id=? AND s.enabled=1 AND s.auto_download=1 AND s.baseline_complete=1`, c.ID, pubID).Scan(&source, &favcat, &revision, &baseline, &remoteMember)
+	e := w.db.QueryRowContext(ctx, `SELECT s.source,si.favcat,si.first_seen_revision,si.baseline_item,si.remote_member,p.category FROM subscription_items si JOIN subscriptions s ON s.id=si.subscription_id JOIN publications p ON p.id=si.publication_id WHERE si.subscription_id=? AND si.publication_id=? AND s.enabled=1 AND s.auto_download=1 AND s.baseline_complete=1`, c.ID, pubID).Scan(&source, &favcat, &revision, &baseline, &remoteMember, &galleryCategory)
 	if e != nil {
 		return false, "", false, e
 	}
 	if revision != c.Revision || baseline != 0 {
+		return false, quality, false, nil
+	}
+	categoryMask, err := subscriptionCategoryMask(c.Query)
+	if err != nil {
+		return false, "", false, err
+	}
+	if categoryMask != 0 && !galleryCategoryMatches(galleryCategory, categoryMask, w.Settings) {
 		return false, quality, false, nil
 	}
 	if source == "favorites" && remoteMember != 1 {
@@ -893,7 +992,7 @@ func (w *Worker) DispatchQueued() {
 }
 
 func (w *Worker) validateQueuedSources(ctx context.Context, tx *sql.Tx, j downloadJob) (manual, valid bool, selectedQuality string, err error) {
-	rows, err := tx.QueryContext(ctx, `SELECT d.source,d.source_key,d.subscription_id,d.requested_quality,s.source,s.enabled,s.auto_download,s.revision,si.first_seen_revision,si.baseline_item,si.favcat,si.remote_member,s.download_rules_json FROM download_job_sources d LEFT JOIN subscriptions s ON s.id=d.subscription_id LEFT JOIN publications p ON p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?) LEFT JOIN subscription_items si ON si.subscription_id=d.subscription_id AND si.publication_id=p.id WHERE d.job_id=?`, j.gid, strings.ToLower(j.token), j.id)
+	rows, err := tx.QueryContext(ctx, `SELECT d.source,d.source_key,d.subscription_id,d.requested_quality,s.source,s.enabled,s.auto_download,s.revision,si.first_seen_revision,si.baseline_item,si.favcat,si.remote_member,s.download_rules_json,s.query_json,p.category FROM download_job_sources d LEFT JOIN subscriptions s ON s.id=d.subscription_id LEFT JOIN publications p ON p.provider='eh' AND p.gid=? AND lower(p.token)=lower(?) LEFT JOIN subscription_items si ON si.subscription_id=d.subscription_id AND si.publication_id=p.id WHERE d.job_id=?`, j.gid, strings.ToLower(j.token), j.id)
 	if err != nil {
 		return false, false, "", err
 	}
@@ -905,7 +1004,8 @@ func (w *Worker) validateQueuedSources(ctx context.Context, tx *sql.Tx, j downlo
 		var enabled, auto, subRev, firstRev, baseline, remoteMember sql.NullInt64
 		var favcat sql.NullInt64
 		var rawRules sql.NullString
-		if err = rows.Scan(&source, &sourceKey, &subscriptionID, &requested, &kind, &enabled, &auto, &subRev, &firstRev, &baseline, &favcat, &remoteMember, &rawRules); err != nil {
+		var rawQuery, galleryCategory sql.NullString
+		if err = rows.Scan(&source, &sourceKey, &subscriptionID, &requested, &kind, &enabled, &auto, &subRev, &firstRev, &baseline, &favcat, &remoteMember, &rawRules, &rawQuery, &galleryCategory); err != nil {
 			return manual, valid, selectedQuality, err
 		}
 		if source == "manual" && sourceKey == "manual" && !subscriptionID.Valid {
@@ -924,6 +1024,17 @@ func (w *Worker) validateQueuedSources(ctx context.Context, tx *sql.Tx, j downlo
 			continue
 		}
 		if sourceKey != fmt.Sprintf("subscription:%s:r%d", subscriptionID.String, subRev.Int64) && sourceKey != subscriptionID.String {
+			continue
+		}
+		query := map[string]any{}
+		if rawQuery.Valid && json.Unmarshal([]byte(rawQuery.String), &query) != nil {
+			return manual, valid, selectedQuality, errors.New("invalid subscription query")
+		}
+		categoryMask, err := subscriptionCategoryMask(query)
+		if err != nil {
+			return manual, valid, selectedQuality, err
+		}
+		if categoryMask != 0 && (!galleryCategory.Valid || !galleryCategoryMatches(galleryCategory.String, categoryMask, w.Settings)) {
 			continue
 		}
 		rules := map[string]any{}

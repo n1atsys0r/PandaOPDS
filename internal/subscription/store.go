@@ -450,9 +450,10 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 }
 
 type ItemQuery struct {
-	SubscriptionIDs   []string
-	View, Q, Category string
-	Page, PerPage     int
+	SubscriptionIDs             []string
+	CategoryNamesBySubscription map[string][]string
+	View, Q, Category           string
+	Page, PerPage               int
 }
 
 func placeholders(n int) string {
@@ -476,10 +477,34 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]map[string]any, i
 		return []map[string]any{}, 0, nil
 	}
 	args := []any{}
-	for _, id := range q.SubscriptionIDs {
-		args = append(args, id)
+	base := ` FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.purged=0`
+	if len(q.CategoryNamesBySubscription) == 0 {
+		base += ` AND si.subscription_id IN (` + placeholders(len(q.SubscriptionIDs)) + `)`
+		for _, id := range q.SubscriptionIDs {
+			args = append(args, id)
+		}
+	} else {
+		memberships := make([]string, 0, len(q.SubscriptionIDs))
+		for _, id := range q.SubscriptionIDs {
+			names, filtered := q.CategoryNamesBySubscription[id]
+			if !filtered {
+				memberships = append(memberships, `si.subscription_id=?`)
+				args = append(args, id)
+				continue
+			}
+			if len(names) == 0 {
+				memberships = append(memberships, `(si.subscription_id=? AND 1=0)`)
+				args = append(args, id)
+				continue
+			}
+			memberships = append(memberships, ` (si.subscription_id=? AND lower(p.category) IN (`+placeholders(len(names))+`))`)
+			args = append(args, id)
+			for _, name := range names {
+				args = append(args, strings.ToLower(name))
+			}
+		}
+		base += ` AND (` + strings.Join(memberships, ` OR `) + `)`
 	}
-	base := ` FROM subscription_items si JOIN publications p ON p.id=si.publication_id WHERE si.purged=0 AND si.subscription_id IN (` + placeholders(len(q.SubscriptionIDs)) + `)`
 	// Legacy favorites known-key imports contain only identity and baseline
 	// membership. Keep those rows for deduplication and remote reconciliation,
 	// but don't expose them as blank publication cards until a fetch supplies

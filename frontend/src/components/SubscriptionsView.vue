@@ -4,6 +4,8 @@ import { useApp } from "@/state.js";
 import { t } from "@/i18n.js";
 import PublicationCard from "@/components/PublicationCard.vue";
 import PublicationDetailDialog from "@/components/PublicationDetailDialog.vue";
+import GalleryCategoryPicker from "@/components/GalleryCategoryPicker.vue";
+import AutoArchiveOptions from "@/components/AutoArchiveOptions.vue";
 import {
   createSubscriptionItemsController,
   createSubscriptionPayload,
@@ -104,7 +106,8 @@ const draft = ref({
   preset: "latest",
   keywords: "",
   categories: "",
-  query_categories: "",
+  query_categories: [],
+  auto_archive: "disabled",
   favorite_categories: "",
   interval: 3600,
 });
@@ -126,7 +129,8 @@ function openAddModal() {
     preset: "latest",
     keywords: "",
     categories: "",
-    query_categories: "",
+    query_categories: [],
+    auto_archive: "disabled",
     favorite_categories: "",
     interval: 3600,
   };
@@ -181,15 +185,18 @@ function openSettingsModal(sub) {
   settingsDraft.value = {
     name: sub.name || "",
     keywords: sub.query?.keywords || "",
-    query_categories: (sub.query?.categories || []).join(","),
+    query_categories: [...(sub.query?.categories || [])],
     favorite_categories: (sub.query?.favorite_categories || []).join(","),
     sort: sub.query?.sort || "newest",
     preset: sub.query?.preset || "latest",
     max_pages: sub.source === "favorites" ? sub.query?.max_pages || 10 : 1,
-    interval_seconds: sub.interval_seconds ?? 3600,
-    enabled: sub.enabled !== false,
-    auto_download: Boolean(sub.auto_download),
-    quality: sub.download_rules?.quality || "res",
+    interval_seconds:
+      sub.enabled === false ? 0 : (sub.interval_seconds ?? 3600),
+    auto_archive: sub.auto_download
+      ? sub.download_rules?.quality === "org"
+        ? "org"
+        : "res"
+      : "disabled",
     categories: (sub.download_rules?.categories || []).join(","),
     excluded_categories: (sub.download_rules?.excluded_categories || []).join(
       ",",
@@ -308,7 +315,8 @@ async function createSubscription() {
       preset: "latest",
       keywords: "",
       categories: "",
-      query_categories: "",
+      query_categories: [],
+      auto_archive: "disabled",
       favorite_categories: "",
       interval: 3600,
     };
@@ -450,12 +458,6 @@ async function runNow() {
 
 async function saveSettings() {
   if (!editingSubscription.value) return;
-  if (
-    settingsDraft.value.auto_download &&
-    !editingSubscription.value.auto_download &&
-    !window.confirm(t("subscription.auto_download_confirm"))
-  )
-    return;
   try {
     const { data } = await s.api(
       `/api/subscriptions/${encodeURIComponent(editingSubscription.value.id)}`,
@@ -1146,6 +1148,13 @@ function onDetailCategory(cat) {
             </Select>
           </div>
 
+          <GalleryCategoryPicker
+            v-if="draft.source === 'preset'"
+            v-model="draft.query_categories"
+            :label="t('subscription.gallery_categories')"
+            :description="t('subscription.gallery_category_filter_desc')"
+          />
+
           <template v-if="draft.source === 'search'">
             <div class="space-y-1.5">
               <label class="text-xs font-semibold">{{
@@ -1156,12 +1165,11 @@ function onDetailCategory(cat) {
                 :placeholder="t('subscription.keywords')"
               />
             </div>
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold">{{
-                t("subscription.search_categories")
-              }}</label>
-              <Input v-model="draft.query_categories" placeholder="0,1,2..." />
-            </div>
+            <GalleryCategoryPicker
+              v-model="draft.query_categories"
+              :label="t('subscription.gallery_categories')"
+              :description="t('subscription.gallery_category_filter_desc')"
+            />
           </template>
 
           <div class="space-y-1.5">
@@ -1170,6 +1178,12 @@ function onDetailCategory(cat) {
             }}</label>
             <Input v-model.number="draft.interval" type="number" min="0" />
           </div>
+
+          <AutoArchiveOptions
+            v-if="s.status.value?.site?.has_ipb"
+            v-model="draft.auto_archive"
+            name="new-subscription-auto-archive"
+          />
 
           <DialogFooter class="pt-2">
             <Button
@@ -1221,6 +1235,38 @@ function onDetailCategory(cat) {
             />
           </div>
 
+          <AutoArchiveOptions
+            v-if="s.status.value?.site?.has_ipb"
+            v-model="settingsDraft.auto_archive"
+            name="settings-auto-archive"
+          />
+          <div
+            v-if="
+              settingsDraft.auto_archive !== 'disabled' &&
+              editingSubscription.source === 'favorites'
+            "
+            class="space-y-2"
+          >
+            <div class="space-y-1">
+              <label class="text-xs text-muted-foreground">{{
+                t("subscription.categories")
+              }}</label>
+              <Input
+                v-model="settingsDraft.categories"
+                class="h-8 text-xs"
+              />
+            </div>
+            <div class="space-y-1">
+              <label class="text-xs text-muted-foreground">{{
+                t("subscription.excluded_categories")
+              }}</label>
+              <Input
+                v-model="settingsDraft.excluded_categories"
+                class="h-8 text-xs"
+              />
+            </div>
+          </div>
+
           <!-- Preset selector when editing a preset subscription -->
           <div
             v-if="editingSubscription.source === 'preset'"
@@ -1258,6 +1304,13 @@ function onDetailCategory(cat) {
             </Select>
           </div>
 
+          <GalleryCategoryPicker
+            v-if="editingSubscription.source === 'preset'"
+            v-model="settingsDraft.query_categories"
+            :label="t('subscription.gallery_categories')"
+            :description="t('subscription.gallery_category_filter_desc')"
+          />
+
           <div v-if="editingSubscription.source === 'search'" class="space-y-3">
             <div class="space-y-1.5">
               <label class="text-xs font-semibold">{{
@@ -1265,12 +1318,11 @@ function onDetailCategory(cat) {
               }}</label>
               <Input v-model="settingsDraft.keywords" />
             </div>
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold">{{
-                t("subscription.search_categories")
-              }}</label>
-              <Input v-model="settingsDraft.query_categories" />
-            </div>
+            <GalleryCategoryPicker
+              v-model="settingsDraft.query_categories"
+              :label="t('subscription.gallery_categories')"
+              :description="t('subscription.gallery_category_filter_desc')"
+            />
           </div>
 
           <div
@@ -1283,6 +1335,11 @@ function onDetailCategory(cat) {
               }}</label>
               <Input v-model="settingsDraft.favorite_categories" />
             </div>
+            <GalleryCategoryPicker
+              v-model="settingsDraft.query_categories"
+              :label="t('subscription.gallery_categories')"
+              :description="t('subscription.favorites_gallery_category_filter_desc')"
+            />
             <div class="space-y-1.5">
               <label class="text-xs font-semibold">{{
                 t("subscription.max_pages")
@@ -1293,85 +1350,6 @@ function onDetailCategory(cat) {
                 min="1"
                 max="50"
               />
-            </div>
-          </div>
-
-          <div class="flex items-center gap-2 pt-1">
-            <input
-              id="sub-enabled"
-              v-model="settingsDraft.enabled"
-              type="checkbox"
-              class="rounded border-border size-4 accent-primary"
-            />
-            <label for="sub-enabled" class="text-xs font-medium cursor-pointer">
-              {{ t("subscription.enabled") }}
-            </label>
-          </div>
-
-          <div
-            class="space-y-2 rounded-xl border border-border/60 bg-muted/30 p-3"
-          >
-            <div class="flex items-center gap-2">
-              <input
-                id="auto-download"
-                v-model="settingsDraft.auto_download"
-                type="checkbox"
-                class="rounded border-border size-4 accent-primary"
-              />
-              <label
-                for="auto-download"
-                class="text-xs font-medium cursor-pointer"
-              >
-                {{
-                  settingsDraft.auto_download
-                    ? t("subscription.auto_download_on")
-                    : t("subscription.auto_download_off")
-                }}
-              </label>
-            </div>
-
-            <div v-if="settingsDraft.auto_download" class="pt-2 space-y-3">
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-muted-foreground">{{
-                  t("subscription.quality")
-                }}</label>
-                <Select v-model="settingsDraft.quality">
-                  <SelectTrigger class="h-8 text-xs"
-                    ><SelectValue
-                  /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="res">{{
-                      t("archive.tier_resample")
-                    }}</SelectItem>
-                    <SelectItem value="org">{{
-                      t("archive.tier_original")
-                    }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div
-                v-if="editingSubscription.source === 'favorites'"
-                class="space-y-2"
-              >
-                <div class="space-y-1">
-                  <label class="text-xs text-muted-foreground">{{
-                    t("subscription.categories")
-                  }}</label>
-                  <Input
-                    v-model="settingsDraft.categories"
-                    class="h-8 text-xs"
-                  />
-                </div>
-                <div class="space-y-1">
-                  <label class="text-xs text-muted-foreground">{{
-                    t("subscription.excluded_categories")
-                  }}</label>
-                  <Input
-                    v-model="settingsDraft.excluded_categories"
-                    class="h-8 text-xs"
-                  />
-                </div>
-              </div>
             </div>
           </div>
 

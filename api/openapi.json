@@ -8255,7 +8255,7 @@
               "minimum": 0,
               "maximum": 9
             },
-            "description": "EH gallery category IDs"
+            "description": "Included EH gallery category IDs. Search, latest, and watched apply them upstream where supported; popular, toplist, and favorites presets filter fetched results locally. The built-in favorites subscription filters displayed items and automatic downloads while retaining complete favorite membership synchronization. Existing cached items are retained and filtered from output when this setting changes."
           },
           "favorite_categories": {
             "type": "array",

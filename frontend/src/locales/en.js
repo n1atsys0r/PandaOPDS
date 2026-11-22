@@ -38,13 +38,11 @@ export default {
     preset_favcat_item: "Favorites {id} (favorites:{id})",
     preset_select: "Select Preset",
     keywords: "Keywords",
-    interval: "Fetch interval (seconds, 0 for manual only)",
-    auto_download_off:
-      "Automatic downloads are off by default; enabling them may spend account GP.",
-    auto_download_on:
-      "Automatic downloads are on; newly discovered items may spend account GP.",
-    auto_download_confirm:
-      "Automatic downloads may spend account GP when newly discovered items match. Continue?",
+    interval: "Fetch interval (seconds); 0 disables automatic fetching",
+    auto_archive: "Automatic archiving",
+    auto_archive_disabled: "Disabled",
+    auto_archive_note:
+      "May spend account GP. The first fetch will not archive items.",
     create: "Create subscription",
     run_now: "Fetch now",
     running: "Fetching",
@@ -67,14 +65,18 @@ export default {
     single_page:
       "Each fetch reads one upstream page; the upstream determines the number of entries.",
     enabled: "Enable scheduled fetches",
-    quality: "Automatic download quality",
-    categories: "Allowed category IDs (comma separated; blank means all)",
-    excluded_categories: "Excluded category IDs (comma separated)",
+    categories:
+      "Allowed favorite folder IDs (comma separated; blank means all)",
+    excluded_categories: "Excluded favorite folder IDs (comma separated)",
     delete_confirm:
       "Delete this subscription? Cached publications and local files will remain.",
     first_seen: "First seen",
     open_eh: "Open EH page",
     search_categories: "Limit category IDs (comma separated)",
+    gallery_categories: "Gallery categories",
+    gallery_category_filter_desc: "Leave blank to include all categories.",
+    favorites_gallery_category_filter_desc:
+      "Filters listed items and automatic downloads while keeping full favorite membership synced.",
     sort_newest: "Newest",
     filter_local: "Filter cached results",
     filter_category: "Filter by category",
@@ -82,7 +84,7 @@ export default {
     favorite: "Add EH favorite",
     manual_download: "Download archive manually",
     favorite_categories:
-      "Favorite categories to fetch (IDs 0–9, comma separated; blank means all)",
+      "Favorite folders to fetch (IDs 0–9, comma separated; blank means all)",
     last_success: "Last successful fetch",
     run_diagnostics: "Latest fetch",
     run_pages: "pages",

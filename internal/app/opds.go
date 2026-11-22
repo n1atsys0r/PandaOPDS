@@ -1393,7 +1393,7 @@ func (s *Server) subscriptionPreview(ctx context.Context, id string, limit int) 
 	if limit > 200 {
 		limit = 200
 	}
-	items, _, err := s.Subscriptions.Store.ListItems(ctx, subscription.ItemQuery{SubscriptionIDs: []string{id}, Page: 1, PerPage: limit})
+	items, _, err := s.Subscriptions.ListItems(ctx, subscription.ItemQuery{SubscriptionIDs: []string{id}, Page: 1, PerPage: limit})
 	if err != nil {
 		return eh.GalleryPageInfo{}, err
 	}
@@ -1426,7 +1426,7 @@ func (s *Server) subscriptionFeed20(w http.ResponseWriter, r *http.Request) {
 	if page > 100000 {
 		page = 100000
 	}
-	items, total, err := s.Subscriptions.Store.ListItems(r.Context(), subscription.ItemQuery{SubscriptionIDs: []string{id}, Page: page, PerPage: 50})
+	items, total, err := s.Subscriptions.ListItems(r.Context(), subscription.ItemQuery{SubscriptionIDs: []string{id}, Page: page, PerPage: 50})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "could not list subscription items"})
 		return

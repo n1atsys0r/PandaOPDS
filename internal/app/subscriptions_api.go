@@ -204,7 +204,7 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 			return
 		}
 		q := itemQuery(r, []string{id})
-		items, total, e := w.Store.ListItems(r.Context(), q)
+		items, total, e := w.ListItems(r.Context(), q)
 		if e != nil {
 			writeJSON(rw, 500, map[string]any{"detail": "could not list subscription items"})
 			return
@@ -214,7 +214,7 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 	m.HandleFunc("GET /api/subscription-items", func(rw http.ResponseWriter, r *http.Request) {
 		ids := splitIDs(r.URL.Query().Get("subscription_ids"))
 		q := itemQuery(r, ids)
-		items, total, e := w.Store.ListItems(r.Context(), q)
+		items, total, e := w.ListItems(r.Context(), q)
 		if e != nil {
 			writeJSON(rw, 500, map[string]any{"detail": "could not list subscription items"})
 			return
@@ -358,6 +358,9 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 	if c.Source != "favorites" && c.Source != "search" && c.Source != "preset" {
 		return errors.New("source must be favorites, search, or preset")
 	}
+	if err := normalizeGalleryCategoryQuery(c, settings); err != nil {
+		return err
+	}
 	if c.Source == "search" || c.Source == "preset" {
 		if _, ok := c.Query["favorite_categories"]; ok {
 			return errors.New("favorite_categories is only supported for favorites")
@@ -365,26 +368,6 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 		sort := subscriptionString(c.Query["sort"])
 		if sort != "" && sort != "newest" {
 			return errors.New("supported sort is newest")
-		}
-		ids, err := categoryIDs(c.Query["categories"])
-		if err != nil {
-			return err
-		}
-		if len(ids) > 0 {
-			names := make([]string, 0, len(ids))
-			for _, id := range ids {
-				if id >= len(settings.Facets) {
-					return fmt.Errorf("category id %d is unavailable", id)
-				}
-				names = append(names, settings.Facets[id].Name)
-			}
-			mask := eh.CategoryMask(names, settings)
-			if mask == 0 {
-				return errors.New("invalid gallery categories")
-			}
-			c.Query["category_mask"] = mask
-		} else {
-			delete(c.Query, "category_mask")
 		}
 		for _, key := range []string{"categories", "excluded_categories"} {
 			if vals, ok := c.DownloadRules[key]; ok {
@@ -394,9 +377,6 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 			}
 		}
 	} else {
-		if c.Query["categories"] != nil {
-			return errors.New("favorites source scope must use favorite_categories")
-		}
 		if sort := subscriptionString(c.Query["sort"]); sort != "" && sort != "newest" {
 			return errors.New("favorites subscriptions support only newest ordering")
 		}
@@ -426,6 +406,33 @@ func normalizeSubscription(c *subscription.Config, settings config.Settings) err
 		}
 		c.Query["max_pages"] = v
 	}
+	return nil
+}
+
+func normalizeGalleryCategoryQuery(c *subscription.Config, settings config.Settings) error {
+	ids, err := categoryIDs(c.Query["categories"])
+	if err != nil {
+		return fmt.Errorf("categories: %w", err)
+	}
+	if _, exists := c.Query["categories"]; exists {
+		c.Query["categories"] = ids
+	}
+	if len(ids) == 0 {
+		delete(c.Query, "category_mask")
+		return nil
+	}
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id >= len(settings.Facets) {
+			return fmt.Errorf("category id %d is unavailable", id)
+		}
+		names = append(names, settings.Facets[id].Name)
+	}
+	mask := eh.CategoryMask(names, settings)
+	if mask == 0 {
+		return errors.New("invalid gallery categories")
+	}
+	c.Query["category_mask"] = mask
 	return nil
 }
 func categoryIDs(v any) ([]int, error) {

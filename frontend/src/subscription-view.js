@@ -25,16 +25,37 @@ export async function loadSubscriptionItems(api, options) {
   return api(subscriptionItemsPath(options));
 }
 
+function applyGalleryCategorySelection(query, value) {
+  const categories = parseCategoryIDs(value);
+  if (categories.length) {
+    query.categories = categories;
+  } else {
+    delete query.categories;
+    delete query.category_mask;
+  }
+  return query;
+}
+
+function autoArchiveMode(draft) {
+  if (["disabled", "res", "org"].includes(draft.auto_archive))
+    return draft.auto_archive;
+  return draft.auto_download ? draft.quality || "res" : "disabled";
+}
+
 export function createSubscriptionPayload(draft) {
   const source = draft.source === "search" ? "search" : draft.source === "favorites" ? "favorites" : "preset";
+  const preset = draft.preset || "latest";
   const query =
     source === "favorites"
-      ? {
+      ? applyGalleryCategorySelection({
           max_pages: 10,
           favorite_categories: parseCategoryIDs(draft.favorite_categories),
-        }
+        }, draft.query_categories)
       : source === "preset"
-        ? { preset: draft.preset || "latest", max_pages: 1 }
+        ? applyGalleryCategorySelection({
+            preset,
+            max_pages: 1,
+          }, draft.query_categories)
         : {
             keywords: String(draft.keywords || "").trim(),
             categories: parseCategoryIDs(
@@ -43,31 +64,33 @@ export function createSubscriptionPayload(draft) {
             sort: "newest",
             max_pages: 1,
           };
+  const archiveMode = autoArchiveMode(draft);
+  const autoDownload = archiveMode !== "disabled";
   return {
     name: String(draft.name || "").trim(),
     source,
     query,
     interval_seconds: Number(draft.interval ?? 3600),
     enabled: true,
-    auto_download: false,
-    download_rules: {},
+    auto_download: autoDownload,
+    download_rules: autoDownload ? { quality: archiveMode } : {},
   };
 }
 
 export function createSubscriptionUpdate(subscription, draft) {
   const query =
     subscription.source === "favorites"
-      ? {
+      ? applyGalleryCategorySelection({
           ...subscription.query,
           max_pages: Number(draft.max_pages),
           favorite_categories: parseCategoryIDs(draft.favorite_categories),
-        }
+        }, draft.query_categories)
       : subscription.source === "preset"
-        ? {
+        ? applyGalleryCategorySelection({
             ...subscription.query,
             preset: draft.preset || subscription.query?.preset || "latest",
             max_pages: 1,
-          }
+          }, draft.query_categories)
         : {
             ...subscription.query,
             keywords: String(draft.keywords || "").trim(),
@@ -75,7 +98,9 @@ export function createSubscriptionUpdate(subscription, draft) {
             sort: "newest",
             max_pages: 1,
           };
-  const downloadRules = { quality: draft.quality };
+  const archiveMode = autoArchiveMode(draft);
+  const autoDownload = archiveMode !== "disabled";
+  const downloadRules = autoDownload ? { quality: archiveMode } : {};
   if (subscription.source === "favorites") {
     downloadRules.categories = parseCategoryIDs(draft.categories);
     downloadRules.excluded_categories = parseCategoryIDs(
@@ -86,8 +111,8 @@ export function createSubscriptionUpdate(subscription, draft) {
     name: String(draft.name || "").trim(),
     query,
     interval_seconds: Number(draft.interval_seconds),
-    enabled: Boolean(draft.enabled),
-    auto_download: Boolean(draft.auto_download),
+    enabled: true,
+    auto_download: autoDownload,
     download_rules: downloadRules,
   };
 }
@@ -144,10 +169,14 @@ export function submitBatchDownload(api, items, quality) {
 }
 
 export function parseCategoryIDs(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return [];
-  return raw.split(",").map((part) => {
-    const token = part.trim();
+  const values = Array.isArray(value)
+    ? value
+    : String(value || "").trim()
+      ? String(value).split(",")
+      : [];
+  if (!values.length) return [];
+  const ids = values.map((part) => {
+    const token = String(part).trim();
     if (!/^\d+$/.test(token))
       throw new Error("Category IDs must be integers from 0 to 9");
     const id = Number(token);
@@ -155,6 +184,7 @@ export function parseCategoryIDs(value) {
       throw new Error("Category IDs must be integers from 0 to 9");
     return id;
   });
+  return [...new Set(ids)];
 }
 
 export function documentReaderPaths(documentId, page) {
@@ -264,16 +294,86 @@ export function createSubscriptionPoller({
 }
 
 export const EH_CATEGORIES = [
-  { key: "Doujinshi", label: "Doujinshi", color: "#fc4e4e" },
-  { key: "Manga", label: "Manga", color: "#e58200" },
-  { key: "Artist CG", label: "Artist CG", color: "#dde500" },
-  { key: "Game CG", label: "Game CG", color: "#05bf0b" },
-  { key: "Western", label: "Western", color: "#14e723" },
-  { key: "Non-H", label: "Non-H", color: "#68c9de" },
-  { key: "Image Set", label: "Image Set", color: "#5050d7" },
-  { key: "Cosplay", label: "Cosplay", color: "#9755f5" },
-  { key: "Asian Porn", label: "Asian Porn", color: "#fe93ff" },
-  { key: "Misc", label: "Misc", color: "#9e9e9e" },
+  {
+    id: 0,
+    key: "Doujinshi",
+    label: "Doujinshi",
+    color: "#fc4e4e",
+    facetColor: "#ed5565",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 1,
+    key: "Manga",
+    label: "Manga",
+    color: "#e58200",
+    facetColor: "#f6bb42",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 2,
+    key: "Artist CG",
+    label: "Artist CG",
+    color: "#dde500",
+    facetColor: "#d0b400",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 3,
+    key: "Game CG",
+    label: "Game CG",
+    color: "#05bf0b",
+    facetColor: "#2ecc71",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 4,
+    key: "Western",
+    label: "Western",
+    color: "#14e723",
+    facetColor: "#8cc152",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 5,
+    key: "Non-H",
+    label: "Non-H",
+    color: "#68c9de",
+    facetColor: "#4fc1e9",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 6,
+    key: "Image Set",
+    label: "Image Set",
+    color: "#5050d7",
+    facetColor: "#5d9cec",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 7,
+    key: "Cosplay",
+    label: "Cosplay",
+    color: "#9755f5",
+    facetColor: "#ac92ec",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 8,
+    key: "Asian Porn",
+    label: "Asian Porn",
+    color: "#fe93ff",
+    facetColor: "#ec87c0",
+    facetTextColor: "#ffffff",
+  },
+  {
+    id: 9,
+    key: "Misc",
+    label: "Misc",
+    color: "#9e9e9e",
+    facetColor: "#aab2bd",
+    facetTextColor: "#ffffff",
+  },
 ];
 
 export function getCategoryColor(category) {

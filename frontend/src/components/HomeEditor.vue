@@ -337,6 +337,10 @@ function isCatSelected(item, catName) {
   );
 }
 
+function hasSelectedCategories(item) {
+  return EH_CATEGORIES.some((category) => isCatSelected(item, category.name));
+}
+
 function selectAllCategories(item) {
   item.categories = EH_CATEGORIES.map((c) => c.name);
   s.homeDirty.value = true;
@@ -1520,23 +1524,21 @@ async function handleImportFileChange(event) {
                           <span class="text-xs font-semibold text-foreground">
                             {{ t("home_editor.facet_categories") }}
                           </span>
-                          <div class="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              class="text-[11px] text-primary hover:underline cursor-pointer"
-                              @click="selectAllCategories(fItem)"
-                            >
-                              {{ t("home_editor.facet_select_all") }}
-                            </button>
-                            <span class="text-muted-foreground/40">·</span>
-                            <button
-                              type="button"
-                              class="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
-                              @click="clearAllCategories(fItem)"
-                            >
-                              {{ t("home_editor.facet_clear_all") }}
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            class="text-[11px] text-primary hover:underline cursor-pointer"
+                            @click="
+                              hasSelectedCategories(fItem)
+                                ? clearAllCategories(fItem)
+                                : selectAllCategories(fItem)
+                            "
+                          >
+                            {{
+                              hasSelectedCategories(fItem)
+                                ? t("home_editor.facet_clear_all")
+                                : t("home_editor.facet_select_all")
+                            }}
+                          </button>
                         </div>
                         <div class="flex flex-wrap gap-1.5">
                           <button
