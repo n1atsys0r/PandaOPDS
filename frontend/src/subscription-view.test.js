@@ -18,6 +18,7 @@ import {
   getCategoryColor,
   getPresetLabel,
   SUBSCRIPTION_PRESET_GROUPS,
+  formatRelativeTime,
 } from "./subscription-view.js";
 
 test("subscription pagination only requests its persisted local-items endpoint", async () => {
@@ -321,4 +322,31 @@ test("preset subscriptions preserve chosen preset and allow label lookup", () =>
   assert.equal(getPresetLabel("watched", mockT), "subscription.preset_watched");
   assert.equal(getPresetLabel("favorites:3", mockT), "Fav 3");
   assert.equal(getPresetLabel("unknown", mockT), "unknown");
+});
+
+test("formatRelativeTime formats timestamps into human readable relative intervals", () => {
+  const base = new Date("2026-11-22T12:00:00Z").getTime();
+
+  // Empty or invalid
+  assert.equal(formatRelativeTime("", "zh", base), "");
+  assert.equal(formatRelativeTime("invalid-date", "zh", base), "invalid-date");
+
+  // Just now (< 45s)
+  assert.equal(formatRelativeTime("2026-11-22T11:59:45Z", "zh", base), "刚刚");
+  assert.equal(formatRelativeTime("2026-11-22T11:59:45Z", "en", base), "just now");
+
+  // Minutes
+  const fiveMinAgo = "2026-11-22T11:55:00Z";
+  assert.equal(formatRelativeTime(fiveMinAgo, "zh", base), "5分钟前");
+  assert.match(formatRelativeTime(fiveMinAgo, "en", base), /5 min/);
+
+  // Hours
+  const twoHoursAgo = "2026-11-22T10:00:00Z";
+  assert.equal(formatRelativeTime(twoHoursAgo, "zh", base), "2小时前");
+  assert.match(formatRelativeTime(twoHoursAgo, "en", base), /2 hr/);
+
+  // Days
+  const threeDaysAgo = "2026-11-19T12:00:00Z";
+  assert.equal(formatRelativeTime(threeDaysAgo, "zh", base), "3天前");
+  assert.match(formatRelativeTime(threeDaysAgo, "en", base), /3 day/);
 });

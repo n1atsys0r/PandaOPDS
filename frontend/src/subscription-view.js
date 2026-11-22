@@ -409,3 +409,55 @@ export function getPresetLabel(presetId, t) {
   }
   return presetId;
 }
+
+export function formatRelativeTime(isoStr, locale = "zh", now = Date.now()) {
+  if (!isoStr) return "";
+  const date = new Date(isoStr);
+  if (isNaN(date.getTime())) return isoStr;
+
+  const baseTime = typeof now === "number" ? now : new Date(now).getTime();
+  const diffSec = Math.round((date.getTime() - baseTime) / 1000);
+  const absSec = Math.abs(diffSec);
+
+  const isZh = String(locale).startsWith("zh");
+  if (absSec < 45) {
+    return isZh ? "刚刚" : "just now";
+  }
+
+  try {
+    const rtf = new Intl.RelativeTimeFormat(isZh ? "zh-CN" : "en", {
+      numeric: "always",
+      style: "short",
+    });
+
+    if (absSec < 3600) {
+      const minutes = Math.round(diffSec / 60);
+      return rtf.format(minutes, "minute");
+    }
+    if (absSec < 86400) {
+      const hours = Math.round(diffSec / 3600);
+      return rtf.format(hours, "hour");
+    }
+    if (absSec < 86400 * 30) {
+      const days = Math.round(diffSec / 86400);
+      return rtf.format(days, "day");
+    }
+    if (absSec < 86400 * 365) {
+      const months = Math.round(diffSec / (86400 * 30));
+      return rtf.format(months, "month");
+    }
+    const years = Math.round(diffSec / (86400 * 365));
+    return rtf.format(years, "year");
+  } catch {
+    if (absSec < 3600) {
+      const m = Math.max(1, Math.round(absSec / 60));
+      return isZh ? `${m}分钟前` : `${m} min ago`;
+    }
+    if (absSec < 86400) {
+      const h = Math.round(absSec / 3600);
+      return isZh ? `${h}小时前` : `${h} hr ago`;
+    }
+    const d = Math.round(absSec / 86400);
+    return isZh ? `${d}天前` : `${d} days ago`;
+  }
+}

@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useApp } from "@/state.js";
-import { t } from "@/i18n.js";
+import { t, currentLocale } from "@/i18n.js";
 import PublicationCard from "@/components/PublicationCard.vue";
 import PublicationDetailDialog from "@/components/PublicationDetailDialog.vue";
 import GalleryCategoryPicker from "@/components/GalleryCategoryPicker.vue";
 import AutoArchiveOptions from "@/components/AutoArchiveOptions.vue";
+import SubscriptionList from "@/components/SubscriptionList.vue";
 import {
   createSubscriptionItemsController,
   createSubscriptionPayload,
@@ -18,6 +19,7 @@ import {
   isFavoritesPreset,
   SUBSCRIPTION_PRESET_GROUPS,
   getPresetLabel,
+  formatRelativeTime,
 } from "@/subscription-view.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,19 +47,18 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   RefreshCw,
   Plus,
   Check,
-  CheckCheck,
   CheckSquare,
   Search,
   Bookmark,
   Zap,
   Settings,
-  MoreVertical,
   Download,
   Trash2,
   Layers,
@@ -66,6 +67,9 @@ import {
   Eye,
   TrendingUp,
   Sparkles,
+  ChevronsUpDown,
+  PanelLeft,
+  X,
 } from "@lucide/vue";
 
 const s = useApp();
@@ -93,8 +97,48 @@ const error = ref("");
 const creating = ref(false);
 const isSelecting = ref(false);
 const selectedItems = ref(new Set());
-const batchQuality = ref("res");
+const defaultQuality = ref("org");
+const batchQuality = ref("org");
 const batchResult = ref("");
+const batchDownloadModalOpen = ref(false);
+const submittingBatch = ref(false);
+
+// Sidebar Pinned State
+const pinnedSidebar = ref(
+  typeof window !== "undefined" &&
+    localStorage.getItem("panda_subscriptions_sidebar_pinned") === "true",
+);
+
+function togglePinSidebar() {
+  pinnedSidebar.value = !pinnedSidebar.value;
+  if (typeof window !== "undefined") {
+    localStorage.setItem(
+      "panda_subscriptions_sidebar_pinned",
+      String(pinnedSidebar.value),
+    );
+  }
+}
+
+const activeSubscriptionTitle = computed(() => {
+  if (allSelected.value) {
+    return t("subscription.all_subscriptions");
+  }
+  return selected.value?.name || t("subscription.choose");
+});
+
+const activeSubscriptionIcon = computed(() => {
+  if (allSelected.value) {
+    return Layers;
+  }
+  return selected.value ? iconForSub(selected.value) : BookmarkCheck;
+});
+
+const activeSubscriptionRunning = computed(() => {
+  if (allSelected.value) {
+    return subscriptions.value.some((x) => x.running);
+  }
+  return Boolean(selected.value?.running);
+});
 
 // Dialog modals
 const addModalOpen = ref(false);
@@ -143,15 +187,6 @@ function iconForSub(sub) {
   if (p.startsWith("toplist:")) return TrendingUp;
   if (p === "favorites" || p.startsWith("favorites:")) return Bookmark;
   return Sparkles;
-}
-
-function subtitleForSub(sub) {
-  if (sub.source === "search") {
-    return sub.query?.keywords
-      ? `“${sub.query.keywords}”`
-      : t("subscription.source_search");
-  }
-  return getPresetLabel(sub.query?.preset || "latest", t);
 }
 
 const settingsDraft = ref({});
@@ -287,8 +322,25 @@ function startPolling() {
   poller.start();
 }
 
+async function loadDefaultQuality() {
+  try {
+    const res = await s.api("/api/config");
+    const archiveGroup = (res.data?.groups || []).find((g) => g.id === "archive");
+    const qualityField = (archiveGroup?.fields || []).find((f) => f.key === "archive_quality");
+    const val = String(qualityField?.value || "").toLowerCase().trim();
+    if (val === "resample" || val === "res" || val === "resized") {
+      defaultQuality.value = "res";
+    } else {
+      defaultQuality.value = "org";
+    }
+    batchQuality.value = defaultQuality.value;
+  } catch (_) {
+    // Keep fallback "org"
+  }
+}
+
 onMounted(async () => {
-  await loadSubscriptions();
+  await Promise.all([loadSubscriptions(), loadDefaultQuality()]);
   if (subscriptions.value.some((x) => x.running)) startPolling();
 });
 
@@ -400,20 +452,16 @@ async function cleanupHistory(mode) {
   }
 }
 
-async function batchDownload() {
+function openBatchDownloadModal() {
+  if (!selectedPageItems.value.length) return;
+  batchQuality.value = defaultQuality.value;
+  batchDownloadModalOpen.value = true;
+}
+
+async function confirmBatchDownload() {
   const chosen = selectedPageItems.value;
   if (!chosen.length) return;
-  if (
-    !window.confirm(
-      t("subscription.batch_confirm", {
-        count: chosen.length,
-        quality: t(
-          `archive.tier_${batchQuality.value === "org" ? "original" : "resample"}`,
-        ),
-      }),
-    )
-  )
-    return;
+  submittingBatch.value = true;
   try {
     const { data } = await submitBatchDownload(
       s.api,
@@ -426,9 +474,12 @@ async function batchDownload() {
       failed,
     });
     selectedItems.value = new Set();
+    batchDownloadModalOpen.value = false;
     await loadItems();
   } catch (e) {
     error.value = e.message;
+  } finally {
+    submittingBatch.value = false;
   }
 }
 
@@ -589,206 +640,210 @@ function onDetailCategory(cat) {
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <Button
+          :variant="isSelecting ? 'default' : 'outline'"
+          class="gap-1.5 cursor-pointer"
+          @click="toggleSelectMode"
+        >
+          <CheckSquare class="size-4" />
+          {{
+            isSelecting
+              ? t("subscription.exit_select")
+              : t("subscription.select_mode")
+          }}
+        </Button>
+
+        <Button
           variant="outline"
-          class="gap-1.5"
+          class="gap-1.5 cursor-pointer"
           :disabled="!targets.length || running"
           @click="runNow"
         >
           <RefreshCw class="size-4" :class="{ 'animate-spin': running }" />
           {{ running ? t("subscription.running") : t("subscription.run_now") }}
         </Button>
+
+        <Button
+          variant="outline"
+          class="gap-1.5 cursor-pointer"
+          @click="openAddModal"
+        >
+          <Plus class="size-4" />
+          {{ t("subscription.add") }}
+        </Button>
       </div>
     </div>
 
-    <!-- Master-Detail Layout (Aligned with HomeEditor grid: Left 3-4 cols, Right 8-9 cols) -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      <!-- ================= LEFT SIDEBAR: 平铺订阅列表 ================= -->
-      <div class="lg:col-span-4 xl:col-span-3 flex flex-col gap-3">
-        <Card class="panel">
-          <CardHeader
-            class="p-4 pb-3 flex flex-row items-center justify-between gap-2 border-b border-border/60"
-          >
-            <div class="flex items-center gap-2">
-              <BookmarkCheck class="size-4 text-primary" />
-              <span class="font-semibold text-sm">{{
-                t("subscription.list_title")
-              }}</span>
-              <Badge
-                variant="secondary"
-                class="h-5 px-1.5 text-[11px] font-mono font-normal"
-              >
-                {{ subscriptions.length }}
-              </Badge>
-            </div>
+    <!-- Master-Detail Layout: Pinned Sidebar or Full-Width Gallery -->
+    <div
+      :class="
+        pinnedSidebar
+          ? 'flex flex-col lg:flex-row gap-5 items-start'
+          : 'flex flex-col gap-4'
+      "
+    >
+      <!-- ================= LEFT PINNED SIDEBAR (Only visible on lg+ when pinned) ================= -->
+      <div
+        v-if="pinnedSidebar"
+        class="hidden lg:flex w-60 xl:w-64 shrink-0 flex-col gap-3"
+      >
+        <SubscriptionList
+          :subscriptions="subscriptions"
+          :selected-id="selectedId"
+          :is-pinned="true"
+          @select="selectedId = $event"
+          @open-settings="openSettingsModal"
+          @toggle-pin="togglePinSidebar"
+        />
+      </div>
+
+      <!-- ================= RIGHT / FULL WORKBENCH ================= -->
+      <div
+        class="flex-1 min-w-0 flex flex-col gap-4 transition-[padding] duration-200"
+        :class="(isSelecting || selectedItems.size > 0) ? 'pb-20 sm:pb-24' : ''"
+      >
+        <!-- Single Consolidated Toolbar (Luma Theme Aligned) -->
+        <div
+          class="p-3 rounded-2xl border border-border/60 bg-card shadow-xs flex flex-wrap items-center justify-between gap-3"
+        >
+          <!-- Left: Compact Sidebar Toggle (when unpinned) + Active Subscription Dropdown + View Switcher -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Desktop Pin Sidebar Toggle (when unpinned) -->
             <Button
-              variant="outline"
-              size="sm"
-              class="h-7 gap-1 text-xs px-2"
-              @click="openAddModal"
+              v-if="!pinnedSidebar"
+              variant="ghost"
+              size="icon-xs"
+              class="hidden lg:flex size-8 text-muted-foreground hover:text-foreground cursor-pointer"
+              :title="t('subscription.pin_sidebar')"
+              @click="togglePinSidebar"
             >
-              <Plus class="size-3.5" />{{ t("subscription.add") }}
+              <PanelLeft class="size-4" />
             </Button>
-          </CardHeader>
-          <CardContent class="p-2 flex flex-col gap-1">
-            <!-- Pinned All Subscriptions Item (when multiple subscriptions exist) -->
-            <div
-              v-if="subscriptions.length > 1"
-              class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none border border-transparent"
-              :class="
-                selectedId === 'all'
-                  ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs'
-                  : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
-              "
-              @click="selectedId = 'all'"
-            >
-              <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                <Layers class="size-4 shrink-0 text-primary" />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-medium leading-tight">
-                    {{ t("subscription.all_subscriptions") }}
-                  </div>
-                  <div class="flex items-center gap-1.5 mt-0.5">
-                    <span class="text-[10px] text-muted-foreground/80">
-                      {{ subscriptions.length }}
-                      {{ t("subscription.list_title") }}
+
+            <DropdownMenu v-if="!pinnedSidebar">
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-8 gap-2 text-xs px-2.5 max-w-[220px] border-border/60 bg-muted/20 hover:bg-muted/40 font-medium cursor-pointer"
+                  :title="t('subscription.choose')"
+                >
+                  <component
+                    :is="activeSubscriptionIcon"
+                    class="size-3.5 shrink-0 text-primary"
+                  />
+                  <span class="truncate">{{ activeSubscriptionTitle }}</span>
+                  <RefreshCw
+                    v-if="activeSubscriptionRunning"
+                    class="size-3 shrink-0 text-primary animate-spin"
+                  />
+                  <ChevronsUpDown
+                    class="size-3 text-muted-foreground shrink-0 opacity-60 ml-0.5"
+                  />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" class="w-64 max-h-[70vh] overflow-y-auto">
+                <!-- All Subscriptions -->
+                <DropdownMenuItem
+                  v-if="subscriptions.length > 1"
+                  class="flex items-center justify-between gap-2 py-2 cursor-pointer"
+                  :class="selectedId === 'all' ? 'bg-primary/10 text-primary font-medium' : ''"
+                  @click="selectedId = 'all'"
+                >
+                  <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                    <Layers class="size-4 shrink-0 text-primary" />
+                    <span class="truncate text-xs font-medium">
+                      {{ t("subscription.all_subscriptions") }}
                     </span>
                   </div>
-                </div>
-              </div>
-              <RefreshCw
-                v-if="subscriptions.some((x) => x.running)"
-                class="size-3.5 shrink-0 text-primary animate-spin"
-              />
-            </div>
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <RefreshCw
+                      v-if="subscriptions.some((x) => x.running)"
+                      class="size-3 text-primary animate-spin"
+                    />
+                    <Badge
+                      variant="secondary"
+                      class="h-4.5 px-1.5 text-[10px] font-mono font-normal"
+                    >
+                      {{ subscriptions.length }}
+                    </Badge>
+                    <Check v-if="selectedId === 'all'" class="size-3.5 text-primary" />
+                  </div>
+                </DropdownMenuItem>
 
-            <!-- Tiled Individual Subscriptions -->
-            <div
-              v-for="sub in subscriptions"
-              :key="sub.id"
-              class="group relative flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors text-xs select-none border border-transparent"
-              :class="
-                selectedId === sub.id
-                  ? 'bg-primary/10 border-primary/20 text-primary font-medium shadow-xs'
-                  : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
-              "
-              @click="selectedId = sub.id"
-            >
-              <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                <component
-                  :is="iconForSub(sub)"
-                  class="size-4 shrink-0"
-                  :class="
-                    sub.query?.preset?.startsWith('favorites')
-                      ? 'text-primary'
-                      : sub.source === 'preset'
-                        ? 'text-amber-500'
-                        : 'text-blue-500'
-                  "
-                />
+                <DropdownMenuSeparator v-if="subscriptions.length > 1" />
 
-                <div class="min-w-0 flex-1">
-                  <div
-                    class="truncate text-sm font-medium leading-tight flex items-center gap-1.5"
-                  >
-                    <span class="truncate">{{ sub.name }}</span>
+                <!-- Individual Subscriptions -->
+                <DropdownMenuItem
+                  v-for="sub in subscriptions"
+                  :key="sub.id"
+                  class="group flex items-center justify-between gap-2 py-2 cursor-pointer"
+                  :class="selectedId === sub.id ? 'bg-primary/10 text-primary font-medium' : ''"
+                  @click="selectedId = sub.id"
+                >
+                  <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                    <component
+                      :is="iconForSub(sub)"
+                      class="size-4 shrink-0"
+                      :class="
+                        sub.query?.preset?.startsWith('favorites')
+                          ? 'text-primary'
+                          : sub.source === 'preset'
+                            ? 'text-amber-500'
+                            : 'text-blue-500'
+                      "
+                    />
+                    <span class="truncate text-xs font-medium">
+                      {{ sub.name }}
+                    </span>
                     <span
                       v-if="!sub.enabled"
                       class="size-1.5 rounded-full bg-muted-foreground/50 shrink-0"
                     />
                   </div>
-                  <div
-                    class="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground/80 truncate"
-                  >
-                    <span class="font-medium text-foreground/70 shrink-0">
-                      {{ subtitleForSub(sub) }}
-                    </span>
-                    <span>·</span>
+
+                  <div class="flex items-center gap-1.5 shrink-0">
                     <span
                       v-if="sub.running"
-                      class="text-primary font-medium flex items-center gap-1"
+                      class="text-primary flex items-center shrink-0"
                     >
-                      <RefreshCw class="size-2.5 animate-spin" />
-                      {{ t("subscription.running") }}
+                      <RefreshCw class="size-3 animate-spin" />
                     </span>
                     <span
                       v-else-if="sub.last_error"
-                      class="text-destructive truncate"
+                      class="size-1.5 rounded-full bg-destructive shrink-0"
+                      :title="sub.last_error"
+                    />
+                    <span
+                      v-else-if="sub.last_run_at"
+                      class="text-[11px] text-muted-foreground/70 shrink-0"
+                      :title="sub.last_run_at"
                     >
-                      {{ sub.last_error }}
+                      {{ formatRelativeTime(sub.last_run_at, currentLocale) }}
                     </span>
-                    <span v-else-if="sub.last_run_at" class="truncate">
-                      {{ sub.last_run_at }}
-                    </span>
-                    <span v-else>
-                      {{ t("subscription.never_run") }}
-                    </span>
+
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      class="size-6 rounded-md text-muted-foreground hover:text-foreground opacity-50 hover:opacity-100 transition-opacity cursor-pointer"
+                      :title="t('subscription.settings')"
+                      @click.stop="openSettingsModal(sub)"
+                    >
+                      <Settings class="size-3.5" />
+                    </Button>
+                    <Check v-if="selectedId === sub.id" class="size-3.5 text-primary" />
                   </div>
-                </div>
-              </div>
+                </DropdownMenuItem>
 
-              <div class="flex items-center gap-1 shrink-0">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  class="size-6 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-background/80"
-                  :title="t('subscription.settings')"
-                  @click.stop="openSettingsModal(sub)"
+                <div
+                  v-if="!subscriptions.length"
+                  class="p-3 text-center text-xs text-muted-foreground"
                 >
-                  <Settings class="size-3.5" />
-                </Button>
-              </div>
-            </div>
+                  {{ t("subscription.no_subscriptions") }}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-            <div
-              v-if="!subscriptions.length"
-              class="p-4 text-center text-xs text-muted-foreground"
-            >
-              {{ t("subscription.no_subscriptions") }}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <!-- ================= RIGHT WORKBENCH: 工具栏与画廊网格 ================= -->
-      <div class="lg:col-span-8 xl:col-span-9 flex flex-col gap-4 min-w-0">
-        <!-- Diagnostic Status Banner -->
-        <div
-          v-if="runInfo"
-          class="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2"
-        >
-          <div class="flex items-center gap-1.5 flex-wrap">
-            <span>{{ t("subscription.run_diagnostics") }}:</span>
-            <Badge
-              variant="outline"
-              class="text-[10px] py-0 px-1.5 font-normal"
-            >
-              {{ runInfo.status }}
-            </Badge>
-            <span>· {{ runInfo.pages }} {{ t("subscription.run_pages") }}</span>
-            <span
-              >· {{ runInfo.results }} {{ t("subscription.run_results") }}</span
-            >
-            <span
-              >·
-              {{
-                t(`subscription.coverage_${runInfo.coverage || "unknown"}`)
-              }}</span
-            >
-          </div>
-          <span
-            v-if="runInfo.coverage === 'partial'"
-            class="text-amber-500 font-medium text-[11px]"
-          >
-            {{ t("subscription.partial_run") }}
-          </span>
-        </div>
-
-        <!-- Single Consolidated Toolbar (Luma Theme Aligned) -->
-        <div
-          class="p-3 rounded-2xl border border-border/60 bg-card shadow-xs flex flex-wrap items-center justify-between gap-3"
-        >
-          <!-- Left: View Switcher (Unread / All) + Item Count -->
-          <div class="flex items-center gap-2.5">
+            <!-- View Switcher (Unread / All) + Item Count -->
             <ToggleGroup
               type="single"
               v-model="view"
@@ -815,9 +870,9 @@ function onDetailCategory(cat) {
             </Badge>
           </div>
 
-          <!-- Middle: Search Input and Category Selector -->
-          <div class="flex items-center gap-2 flex-1 max-w-md min-w-[200px]">
-            <div class="relative flex-1">
+          <!-- Right: Search Input and Category Selector (Right-aligned) -->
+          <div class="flex items-center gap-2 flex-1 sm:flex-initial justify-end min-w-[200px] ml-auto">
+            <div class="relative w-full sm:w-60 md:w-64">
               <Search
                 class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground pointer-events-none"
               />
@@ -829,7 +884,7 @@ function onDetailCategory(cat) {
             </div>
             <Select v-model="filterCategory">
               <SelectTrigger
-                class="h-8 text-xs w-[130px] bg-muted/30 border-border/60"
+                class="h-8 text-xs w-[130px] bg-muted/30 border-border/60 shrink-0"
               >
                 <SelectValue :placeholder="t('subscription.filter_category')" />
               </SelectTrigger>
@@ -852,113 +907,6 @@ function onDetailCategory(cat) {
                 </SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <!-- Right: Selection Mode Button + Overflow Actions -->
-          <div class="flex items-center gap-2">
-            <Button
-              :variant="isSelecting ? 'default' : 'outline'"
-              size="sm"
-              class="h-8 gap-1.5 text-xs px-2.5"
-              @click="toggleSelectMode"
-            >
-              <CheckSquare class="size-3.5" />
-              {{
-                isSelecting
-                  ? t("subscription.exit_select")
-                  : t("subscription.select_mode")
-              }}
-            </Button>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger as-child>
-                <Button variant="outline" size="sm" class="h-8 size-8 p-0">
-                  <MoreVertical class="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  @click="cleanupHistory('inspected')"
-                  :disabled="!targets.length"
-                >
-                  <CheckCheck class="size-4 mr-2" />
-                  {{ t("subscription.cleanup_inspected") }}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  @click="runNow"
-                  :disabled="!targets.length || running"
-                >
-                  <RefreshCw
-                    class="size-4 mr-2"
-                    :class="{ 'animate-spin': running }"
-                  />
-                  {{ t("subscription.run_now") }}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-
-        <!-- Sticky Docked Multi-Select Action Bar -->
-        <div
-          v-if="isSelecting || selectedItems.size > 0"
-          class="sticky top-4 z-20 flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl border border-primary/20 bg-background/95 backdrop-blur-md shadow-lg"
-        >
-          <div class="flex items-center gap-3">
-            <label
-              class="flex items-center gap-2 text-xs font-medium cursor-pointer select-none"
-            >
-              <input
-                type="checkbox"
-                class="rounded border-border size-4 accent-primary"
-                :checked="allPageSelected"
-                @change="togglePageSelection"
-              />
-              {{ t("subscription.select_page") }}
-            </label>
-            <Badge variant="outline" class="font-mono text-xs">
-              {{
-                t("subscription.selected_count", { count: selectedItems.size })
-              }}
-            </Badge>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <Select v-model="batchQuality">
-              <SelectTrigger class="h-8 text-xs w-[110px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="res">{{
-                  t("archive.tier_resample")
-                }}</SelectItem>
-                <SelectItem value="org">{{
-                  t("archive.tier_original")
-                }}</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button
-              size="sm"
-              class="h-8 text-xs gap-1.5"
-              :disabled="!selectedItems.size"
-              @click="batchDownload"
-            >
-              <Download class="size-3.5" />
-              {{
-                t("subscription.batch_download", { count: selectedItems.size })
-              }}
-            </Button>
-
-            <Button
-              v-if="isSelecting"
-              size="sm"
-              variant="ghost"
-              class="h-8 text-xs text-muted-foreground hover:text-foreground"
-              @click="exitSelectMode"
-            >
-              {{ t("subscription.exit_select") }}
-            </Button>
           </div>
         </div>
 
@@ -987,7 +935,12 @@ function onDetailCategory(cat) {
 
         <div
           v-else-if="items.length"
-          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+          class="grid gap-4"
+          :class="
+            pinnedSidebar
+              ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'
+              : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7'
+          "
         >
           <div
             v-for="item in items"
@@ -1057,6 +1010,76 @@ function onDetailCategory(cat) {
       </div>
     </div>
 
+    <!-- Floating Bottom Multi-Select Capsule Toolbar (Reader-Style) -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0 translate-y-6 scale-95"
+      enter-to-class="opacity-100 translate-y-0 scale-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="opacity-100 translate-y-0 scale-100"
+      leave-to-class="opacity-0 translate-y-6 scale-95"
+    >
+      <div
+        v-if="isSelecting || selectedItems.size > 0"
+        class="fixed bottom-4 sm:bottom-6 inset-x-3 sm:inset-x-6 z-50 pointer-events-none flex justify-center select-none"
+      >
+        <div
+          class="pointer-events-auto flex items-center gap-2 sm:gap-3 rounded-full border border-border/70 bg-background/85 px-3 sm:px-4 py-1.5 text-foreground backdrop-blur-xl shadow-xl ring-1 ring-black/5 dark:ring-white/10"
+          @click.stop
+        >
+          <!-- Left: Page Select Checkbox + Selected Count Badge -->
+          <div class="flex items-center gap-2 pl-1 sm:pl-1.5">
+            <label
+              class="flex items-center gap-2 text-xs font-medium cursor-pointer select-none text-foreground hover:text-primary transition-colors"
+            >
+              <input
+                type="checkbox"
+                class="rounded border-border size-4 accent-primary cursor-pointer"
+                :checked="allPageSelected"
+                @change="togglePageSelection"
+              />
+              <span class="whitespace-nowrap">{{ t("subscription.select_page") }}</span>
+            </label>
+            <Badge
+              variant="secondary"
+              class="h-5 px-2 text-[11px] font-mono font-medium rounded-full"
+            >
+              {{ t("subscription.selected_count", { count: selectedItems.size }) }}
+            </Badge>
+          </div>
+
+          <!-- Divider -->
+          <div class="h-4 w-px bg-border/60 shrink-0 mx-0.5" />
+
+          <!-- Right: Batch Download Button + Exit Button -->
+          <div class="flex items-center gap-1.5 sm:gap-2">
+            <Button
+              size="sm"
+              class="h-7.5 text-xs gap-1.5 rounded-full px-3 shadow-xs cursor-pointer"
+              :disabled="!selectedItems.size"
+              @click="openBatchDownloadModal"
+            >
+              <Download class="size-3.5" />
+              <span class="whitespace-nowrap">
+                {{ t("subscription.batch_download", { count: selectedItems.size }) }}
+              </span>
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-7.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/70 cursor-pointer shrink-0"
+              :title="t('subscription.exit_select')"
+              :aria-label="t('subscription.exit_select')"
+              @click="exitSelectMode"
+            >
+              <X class="size-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Apple Books Style Gallery Detail Dialog (Reused from Explore) -->
     <PublicationDetailDialog
       v-model:open="detailOpen"
@@ -1073,6 +1096,93 @@ function onDetailCategory(cat) {
       @author-click="onDetailSearch"
       @uploader-click="onDetailSearch"
     />
+
+    <!-- Batch Download Confirmation Dialog with Quality Selection -->
+    <Dialog v-model:open="batchDownloadModalOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ t("subscription.batch_dialog_title") }}</DialogTitle>
+          <DialogDescription>
+            {{ t("subscription.batch_dialog_desc", { count: selectedPageItems.length }) }}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-3 pt-2">
+          <label class="text-xs font-semibold text-foreground">
+            {{ t("subscription.batch_quality_label") }}
+          </label>
+
+          <div class="grid grid-cols-1 gap-2">
+            <!-- Option 1: Resampled -->
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-2.5 transition-colors"
+              :class="
+                batchQuality === 'res'
+                  ? 'border-primary bg-primary/5 text-foreground font-medium'
+                  : 'border-border/60 bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+              "
+            >
+              <input
+                type="radio"
+                name="batch_quality"
+                value="res"
+                :checked="batchQuality === 'res'"
+                class="size-4 accent-primary cursor-pointer"
+                @change="batchQuality = 'res'"
+              />
+              <span class="text-xs text-foreground">
+                {{ t("archive.tier_resample") }}
+              </span>
+            </label>
+
+            <!-- Option 2: Original -->
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-2.5 transition-colors"
+              :class="
+                batchQuality === 'org'
+                  ? 'border-primary bg-primary/5 text-foreground font-medium'
+                  : 'border-border/60 bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+              "
+            >
+              <input
+                type="radio"
+                name="batch_quality"
+                value="org"
+                :checked="batchQuality === 'org'"
+                class="size-4 accent-primary cursor-pointer"
+                @change="batchQuality = 'org'"
+              />
+              <span class="text-xs text-foreground">
+                {{ t("archive.tier_original") }}
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <DialogFooter class="gap-2 sm:gap-0 pt-3">
+          <Button
+            type="button"
+            variant="outline"
+            class="cursor-pointer"
+            @click="batchDownloadModalOpen = false"
+          >
+            {{ t("common.cancel") }}
+          </Button>
+          <Button
+            type="button"
+            class="cursor-pointer"
+            :disabled="submittingBatch"
+            @click="confirmBatchDownload"
+          >
+            <RefreshCw
+              v-if="submittingBatch"
+              class="size-4 animate-spin mr-1.5"
+            />
+            {{ t("subscription.batch_submit", { count: selectedPageItems.length }) }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <!-- Add Subscription Dialog -->
     <Dialog v-model:open="addModalOpen">
