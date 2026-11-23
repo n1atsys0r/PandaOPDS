@@ -46,6 +46,12 @@ import {
   formatLanguage,
 } from "@/gallery-metadata.js";
 import {
+  FAVCAT_SOLID_COLORS,
+  FAVCAT_PALETTE,
+  getFavcatSolidColor,
+  getFavcatBadgeStyle,
+} from "@/favcat-colors.js";
+import {
   CompassIcon as Compass,
   HomeIcon as Home,
   ChevronLeftIcon as ChevronLeft,
@@ -521,76 +527,9 @@ const currentRating = computed(() => {
   return 0;
 });
 
-const FAVCAT_PALETTE = [
-  {
-    bg: "rgba(158, 158, 158, 0.22)",
-    border: "rgba(158, 158, 158, 0.45)",
-    text: "#e5e5e5",
-  }, // 0: 灰
-  {
-    bg: "rgba(239, 68, 68, 0.22)",
-    border: "rgba(239, 68, 68, 0.45)",
-    text: "#fca5a5",
-  }, // 1: 红
-  {
-    bg: "rgba(249, 115, 22, 0.22)",
-    border: "rgba(249, 115, 22, 0.45)",
-    text: "#fdba74",
-  }, // 2: 橙
-  {
-    bg: "rgba(234, 179, 8, 0.22)",
-    border: "rgba(234, 179, 8, 0.45)",
-    text: "#fde047",
-  }, // 3: 黄
-  {
-    bg: "rgba(34, 197, 94, 0.22)",
-    border: "rgba(34, 197, 94, 0.45)",
-    text: "#86efac",
-  }, // 4: 绿
-  {
-    bg: "rgba(132, 204, 22, 0.22)",
-    border: "rgba(132, 204, 22, 0.45)",
-    text: "#bef264",
-  }, // 5: 黄绿
-  {
-    bg: "rgba(6, 182, 212, 0.22)",
-    border: "rgba(6, 182, 212, 0.45)",
-    text: "#67e8f9",
-  }, // 6: 青
-  {
-    bg: "rgba(59, 130, 246, 0.22)",
-    border: "rgba(59, 130, 246, 0.45)",
-    text: "#93c5fd",
-  }, // 7: 蓝
-  {
-    bg: "rgba(168, 85, 247, 0.22)",
-    border: "rgba(168, 85, 247, 0.45)",
-    text: "#d8b4fe",
-  }, // 8: 紫
-  {
-    bg: "rgba(236, 72, 153, 0.22)",
-    border: "rgba(236, 72, 153, 0.45)",
-    text: "#f472b6",
-  }, // 9: 粉
-];
-
-const FAVCAT_SOLID_COLORS = [
-  "#6b7280", // 0: 灰
-  "#ef4444", // 1: 红
-  "#f97316", // 2: 橙
-  "#eab308", // 3: 黄
-  "#22c55e", // 4: 绿
-  "#84cc16", // 5: 黄绿
-  "#06b6d4", // 6: 青
-  "#3b82f6", // 7: 蓝
-  "#a855f7", // 8: 紫
-  "#ec4899", // 9: 粉
-];
-
 function getFavcatDiamondStyle(favcatId) {
-  const color = FAVCAT_SOLID_COLORS[favcatId] || FAVCAT_SOLID_COLORS[0];
   return {
-    backgroundColor: color,
+    backgroundColor: getFavcatSolidColor(favcatId),
   };
 }
 
@@ -705,18 +644,17 @@ const currentFavcatStyle = computed(() => {
   return FAVCAT_PALETTE[id] || FAVCAT_PALETTE[0];
 });
 
-function handleFavcatClick() {
-  if (!currentFavcatInfo.value) return;
-  if (currentFavcatInfo.value.href) {
-    detailOpen.value = false;
-    s.enterExploreSubRoute(
-      {
-        title: `${t("common.favorite")}: ${currentFavcatInfo.value.name}`,
-        href: currentFavcatInfo.value.href,
-      },
-      true,
-    );
-  }
+function handleFavcatClick(favcatInfo = null) {
+  const target = favcatInfo || currentFavcatInfo.value;
+  if (!target?.href) return;
+  detailOpen.value = false;
+  s.enterExploreSubRoute(
+    {
+      title: `${t("common.favorite")}: ${target.name}`,
+      href: target.href,
+    },
+    true,
+  );
 }
 
 const favcatList = computed(() => {
@@ -3302,6 +3240,7 @@ onUnmounted(() => {
       @category-click="handleCategoryClick"
       @author-click="handleAuthorClick"
       @uploader-click="handleUploaderClick"
+      @favcat-click="handleFavcatClick"
     />
 
     <!-- Floating Back to Top Button -->

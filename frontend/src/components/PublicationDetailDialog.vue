@@ -62,6 +62,11 @@ import {
 } from "@/gallery-metadata.js";
 import { t } from "@/i18n.js";
 import { EH_CATEGORIES, getCategoryColor } from "@/subscription-view.js";
+import {
+  getFavcatSolidColor,
+  getFavcatBadgeStyle,
+  resolveFavcatId,
+} from "@/favcat-colors.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -82,6 +87,7 @@ const emit = defineEmits([
   "category-click",
   "author-click",
   "uploader-click",
+  "favcat-click",
 ]);
 
 const s = useApp();
@@ -94,21 +100,6 @@ const isOpen = computed({
 function onOpenChange(val) {
   isOpen.value = val;
 }
-
-
-
-const FAVCAT_SOLID_COLORS = {
-  0: "#000000",
-  1: "#fc4e4f",
-  2: "#e58200",
-  3: "#dde500",
-  4: "#05bf0b",
-  5: "#14e723",
-  6: "#68c9de",
-  7: "#5050d7",
-  8: "#9755f5",
-  9: "#fe93ff",
-};
 
 function normalizePublicationItem(p) {
   if (!p) return null;
@@ -241,20 +232,25 @@ const isArchiveQuoteBusy = computed(() => {
   return s.busy.value;
 });
 
-const currentFavcatId = computed(() => {
+const favoriteOverride = computed(() => {
   const pub = selectedPub.value;
-  if (!pub) return null;
-  if (typeof pub.favcat === "number") return pub.favcat;
-  if (pub.archiveItem?.favcat != null) return pub.archiveItem.favcat;
-  const match = (pub.belongsTo?.collection?.links?.[0]?.href || "").match(
-    /favcat=(\d+)/,
-  );
-  if (match) return Number(match[1]);
-  return null;
+  if (!pub?.gid || !pub?.token) return null;
+  const key = `${pub.gid}:${pub.token}`;
+  return s.favoriteOverrides?.value?.[key] ?? null;
+});
+
+const currentFavcatId = computed(() => {
+  return resolveFavcatId(selectedPub.value, favoriteOverride.value);
 });
 
 const isCurrentFavorited = computed(() => {
-  return currentFavcatId.value != null || Boolean(selectedPub.value?.favorited);
+  if (favoriteOverride.value != null) {
+    return favoriteOverride.value.isFavorited;
+  }
+  return (
+    currentFavcatId.value != null ||
+    Boolean(selectedPub.value?.favorited || selectedPub.value?.is_favorited)
+  );
 });
 
 const favcatList = computed(() => {
@@ -265,7 +261,8 @@ const favcatList = computed(() => {
     list.push({
       id: i,
       name: custom?.name || `${t("common.favorite")} ${i}`,
-      color: FAVCAT_SOLID_COLORS[i] || "#fc4e4f",
+      color: getFavcatSolidColor(i),
+      href: `/opds/v2.0/gallery?favcat=${i}&query=favorites`,
     });
   }
   return list;
@@ -274,22 +271,33 @@ const favcatList = computed(() => {
 const currentFavcatInfo = computed(() => {
   const id = currentFavcatId.value;
   if (id == null) return null;
-  return favcatList.value.find((c) => c.id === id) || null;
-});
-
-const currentFavcatStyle = computed(() => {
-  const id = currentFavcatId.value;
-  const solid = FAVCAT_SOLID_COLORS[id] || "#fc4e4f";
+  const item = favcatList.value.find((c) => c.id === id);
+  if (!item) return null;
+  const override = favoriteOverride.value;
+  const belongsName =
+    selectedPub.value?.belongsTo?.collection?.name ||
+    selectedPub.value?.metadata?.belongsTo?.collection?.name;
+  const name =
+    override?.favcatName ||
+    (belongsName &&
+    !belongsName.startsWith("Favorites ") &&
+    !belongsName.startsWith("收藏夹 ")
+      ? belongsName
+      : null) ||
+    item.name;
   return {
-    bg: solid + "22",
-    border: solid + "55",
-    text: solid,
+    ...item,
+    name,
   };
 });
 
+const currentFavcatStyle = computed(() => {
+  return getFavcatBadgeStyle(currentFavcatId.value);
+});
+
 function handleFavcatClick() {
-  if (currentFavcatInfo.value?.name) {
-    emit("category-click", currentFavcatInfo.value.name);
+  if (currentFavcatInfo.value) {
+    emit("favcat-click", currentFavcatInfo.value);
   }
 }
 
@@ -1262,7 +1270,7 @@ onUnmounted(() => {
                           <span
                             class="size-2.5 rounded-full shrink-0"
                             :style="{
-                              backgroundColor: FAVCAT_SOLID_COLORS[cat.id],
+                              backgroundColor: getFavcatSolidColor(cat.id),
                             }"
                           />
                           <span class="truncate text-xs"
