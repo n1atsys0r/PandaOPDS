@@ -97,6 +97,7 @@ import {
 } from "@lucide/vue";
 import { useApp } from "./state.js";
 import { t, currentLocale, setLocale } from "./i18n.js";
+import { Toaster, toast } from "@/components/ui/toast";
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -107,6 +108,27 @@ function formatBytes(bytes) {
 }
 
 const s = useApp();
+
+watch(s.notice, (val) => {
+  if (val) {
+    toast({
+      description: val,
+      variant: "default",
+    });
+    s.notice.value = "";
+  }
+});
+
+watch(s.error, (val) => {
+  if (val) {
+    toast({
+      description: val,
+      variant: "destructive",
+      duration: 6000,
+    });
+    s.error.value = "";
+  }
+});
 
 onMounted(() => {
   s.init();
@@ -595,32 +617,6 @@ async function handleQuoteArchive(a) {
         </div>
       </header>
       <div class="page-content">
-        <Alert v-if="s.notice.value" class="app-alert success-alert">
-          <CircleCheck class="size-4 text-foreground" />
-          <AlertDescription class="text-sm">{{
-            s.notice.value
-          }}</AlertDescription>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            :aria-label="t('common.close_notice')"
-            @click="s.notice.value = ''"
-            ><X :size="14"
-          /></Button>
-        </Alert>
-        <Alert v-if="s.error.value" variant="destructive" class="app-alert">
-          <CircleAlert class="size-4" />
-          <AlertDescription class="text-sm">{{
-            s.error.value
-          }}</AlertDescription>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            :aria-label="t('common.close_error')"
-            @click="s.error.value = ''"
-            ><X :size="14"
-          /></Button>
-        </Alert>
         <template v-if="s.page.value === 'dashboard'">
           <div class="heading">
             <div>
@@ -1246,9 +1242,7 @@ async function handleQuoteArchive(a) {
                           : 'text'
                     "
                     :min="
-                      [
-                        'archive_update_interval_days',
-                      ].includes(key)
+                      ['archive_update_interval_days'].includes(key)
                         ? 0
                         : undefined
                     "
@@ -1455,6 +1449,8 @@ async function handleQuoteArchive(a) {
         :pse-page-base="psePageBase"
         :theme="s.theme.value"
       />
+
+      <Toaster />
     </SidebarInset>
   </SidebarProvider>
 </template>

@@ -561,6 +561,37 @@
   color: var(--foreground);
 }
 
+/* Toast viewport and stack effect */
+.toast-viewport {
+  perspective: 1000px;
+}
+
+.toast-viewport > [data-slot="toast"],
+.toast-viewport > li {
+  transform-origin: bottom center;
+  transition:
+    transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    margin 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.25s ease;
+}
+
+.toast-viewport:not(:hover) > [data-slot="toast"]:not(:first-child),
+.toast-viewport:not(:hover) > li:not(:first-child) {
+  margin-bottom: calc(-1 * var(--reka-toast-height, 60px) + 10px);
+  transform: scale(calc(1 - var(--reka-toast-index, 0) * 0.05))
+    translateY(calc(var(--reka-toast-index, 0) * -6px));
+  opacity: calc(1 - var(--reka-toast-index, 0) * 0.2);
+  z-index: calc(50 - var(--reka-toast-index, 0));
+}
+
+.toast-viewport:hover > [data-slot="toast"],
+.toast-viewport:hover > li {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+  margin-bottom: 0;
+}
+
 .form-panel {
   padding-bottom: 1.5rem;
 }
@@ -1663,12 +1694,14 @@
 /* Non-exclusive semi-transparent overlay scrollbar */
 .overlay-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: var(--overlay-scrollbar-thumb, rgba(0, 0, 0, 0.22)) transparent;
+  scrollbar-color: var(--overlay-scrollbar-thumb, rgba(0, 0, 0, 0.22))
+    transparent;
 }
 
 :is(.dark, .dark *) .overlay-scrollbar,
 .dark.overlay-scrollbar {
-  scrollbar-color: var(--overlay-scrollbar-thumb, rgba(255, 255, 255, 0.25)) transparent;
+  scrollbar-color: var(--overlay-scrollbar-thumb, rgba(255, 255, 255, 0.25))
+    transparent;
 }
 
 @supports (overflow: overlay) {
@@ -1716,7 +1749,10 @@
 
 :is(.dark, .dark *) .overlay-scrollbar::-webkit-scrollbar-thumb:hover,
 .dark.overlay-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: var(--overlay-scrollbar-thumb-hover, rgba(255, 255, 255, 0.45));
+  background-color: var(
+    --overlay-scrollbar-thumb-hover,
+    rgba(255, 255, 255, 0.45)
+  );
 }
 
 .overlay-scrollbar::-webkit-scrollbar-corner {
