@@ -259,9 +259,9 @@ const isCurrentFavorited = computed(() => {
 
 const favcatList = computed(() => {
   const list = [];
-  const siteCategories = s.categories.value?.categories || [];
+  const siteCategories = s.favcats.value || [];
   for (let i = 0; i < 10; i++) {
-    const custom = siteCategories.find((c) => c.index === i);
+    const custom = siteCategories.find((c) => Number(c.id) === i);
     list.push({
       id: i,
       name: custom?.name || `${t("common.favorite")} ${i}`,
