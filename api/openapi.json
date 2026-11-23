@@ -5914,6 +5914,7 @@
           {
             "name": "subscription_ids",
             "in": "query",
+            "description": "Comma-separated subscription IDs to include. If omitted, defaults to all subscriptions where exclude_from_all is false.",
             "required": false,
             "schema": {
               "type": "string"
@@ -8171,6 +8172,9 @@
           "auto_download": {
             "type": "boolean"
           },
+          "exclude_from_all": {
+            "type": "boolean"
+          },
           "download_rules": {
             "$ref": "#/components/schemas/DownloadRules"
           }
@@ -8339,6 +8343,9 @@
           "auto_download": {
             "type": "boolean"
           },
+          "exclude_from_all": {
+            "type": "boolean"
+          },
           "download_rules": {
             "$ref": "#/components/schemas/DownloadRules"
           },
@@ -8377,6 +8384,7 @@
           "interval_seconds",
           "enabled",
           "auto_download",
+          "exclude_from_all",
           "download_rules",
           "revision",
           "baseline_complete",
@@ -8831,6 +8839,9 @@
             "type": "boolean"
           },
           "auto_download": {
+            "type": "boolean"
+          },
+          "exclude_from_all": {
             "type": "boolean"
           },
           "download_rules": {

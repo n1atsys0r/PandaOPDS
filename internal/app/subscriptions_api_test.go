@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
@@ -294,5 +295,105 @@ func TestBatchInspectAPIAndReadingViews(t *testing.T) {
 	}
 	if resNew.Total != 1 || int(resNew.Items[0]["gid"].(float64)) != 202 {
 		t.Fatalf("expected 1 item with gid 202 in view=new after inspect, got %+v", resNew.Items)
+	}
+}
+
+func TestSubscriptionExcludeFromAllAPI(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "exclude.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	w := subscription.NewWorker(db.DB, nil, nil, nil, config.Settings{})
+	mux := http.NewServeMux()
+	RegisterSubscriptionRoutes(mux, w)
+
+	ctx := context.Background()
+	sub1, err := w.Store.Create(ctx, subscription.Config{Name: "Feed", Source: "search", Query: map[string]any{"keywords": "tag1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub2, err := w.Store.Create(ctx, subscription.Config{Name: "Favs", Source: "preset", Query: map[string]any{"preset": "favorites"}, ExcludeFromAll: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = db.Exec(`INSERT INTO publications(provider,gid,token,title,metadata_json,created_at,updated_at) VALUES('eh',301,'tok301','Item 301','{}',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO publications(provider,gid,token,title,metadata_json,created_at,updated_at) VALUES('eh',302,'tok302','Item 302','{}',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var pubID1, pubID2 int
+	_ = db.QueryRow(`SELECT id FROM publications WHERE gid=301`).Scan(&pubID1)
+	_ = db.QueryRow(`SELECT id FROM publications WHERE gid=302`).Scan(&pubID2)
+
+	if _, err = db.Exec(`INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at) VALUES(?,?,?,?)`, sub1.ID, pubID1, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at) VALUES(?,?,?,?)`, sub2.ID, pubID2, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Test PATCH /api/subscriptions/{id} updates exclude_from_all
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/subscriptions/"+sub1.ID, strings.NewReader(`{"exclude_from_all":true}`))
+	patchRec := httptest.NewRecorder()
+	mux.ServeHTTP(patchRec, patchReq)
+	if patchRec.Code != 200 {
+		t.Fatalf("patch status=%d body=%s", patchRec.Code, patchRec.Body.String())
+	}
+	var patched subscription.Config
+	if err := json.Unmarshal(patchRec.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if !patched.ExcludeFromAll {
+		t.Fatalf("expected exclude_from_all=true, got %v", patched.ExcludeFromAll)
+	}
+
+	// Revert sub1 to exclude_from_all: false
+	patchReq2 := httptest.NewRequest(http.MethodPatch, "/api/subscriptions/"+sub1.ID, strings.NewReader(`{"exclude_from_all":false}`))
+	patchRec2 := httptest.NewRecorder()
+	mux.ServeHTTP(patchRec2, patchReq2)
+	if patchRec2.Code != 200 {
+		t.Fatalf("patch status=%d body=%s", patchRec2.Code, patchRec2.Body.String())
+	}
+
+	// 2. Test GET /api/subscription-items without subscription_ids query param
+	// Should only return Item 301 from sub1 (sub2 is excluded)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/subscription-items", nil)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, getReq)
+	if getRec.Code != 200 {
+		t.Fatalf("get subscription-items status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	var res struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 1 || len(res.Items) != 1 || int(res.Items[0]["gid"].(float64)) != 301 {
+		t.Fatalf("expected 1 item with gid 301, got total=%d items=%+v", res.Total, res.Items)
+	}
+
+	// 3. Test explicit subscription_ids for sub2 returns Item 302
+	getExplicit := httptest.NewRequest(http.MethodGet, "/api/subscription-items?subscription_ids="+sub2.ID, nil)
+	getExplicitRec := httptest.NewRecorder()
+	mux.ServeHTTP(getExplicitRec, getExplicit)
+	if getExplicitRec.Code != 200 {
+		t.Fatalf("get explicit status=%d body=%s", getExplicitRec.Code, getExplicitRec.Body.String())
+	}
+	var resExplicit struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(getExplicitRec.Body.Bytes(), &resExplicit); err != nil {
+		t.Fatal(err)
+	}
+	if resExplicit.Total != 1 || len(resExplicit.Items) != 1 || int(resExplicit.Items[0]["gid"].(float64)) != 302 {
+		t.Fatalf("expected 1 item with gid 302, got total=%d items=%+v", resExplicit.Total, resExplicit.Items)
 	}
 }

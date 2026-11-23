@@ -26,6 +26,7 @@ type Config struct {
 	DownloadRules    map[string]any `json:"download_rules"`
 	Revision         int            `json:"revision"`
 	BaselineComplete bool           `json:"baseline_complete"`
+	ExcludeFromAll   bool           `json:"exclude_from_all"`
 	LastRunAt        *time.Time     `json:"last_run_at"`
 	LastSuccessAt    *time.Time     `json:"last_success_at"`
 	LastError        string         `json:"last_error,omitempty"`
@@ -97,17 +98,17 @@ func (s *Store) Create(ctx context.Context, c Config) (Config, error) {
 }
 func (s *Store) insertConfig(ctx context.Context, c Config) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, e := s.db.ExecContext(ctx, `INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,0,?,?)`, c.ID, c.Name, c.Source, marshal(c.Query), c.IntervalSeconds, boolInt(c.Enabled), boolInt(c.AutoDownload), marshal(c.DownloadRules), c.Revision, now, now)
+	_, e := s.db.ExecContext(ctx, `INSERT INTO subscriptions(id,name,source,query_json,interval_seconds,enabled,auto_download,download_rules_json,revision,baseline_complete,exclude_from_all,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, c.Name, c.Source, marshal(c.Query), c.IntervalSeconds, boolInt(c.Enabled), boolInt(c.AutoDownload), marshal(c.DownloadRules), c.Revision, 0, boolInt(c.ExcludeFromAll), now, now)
 	return e
 }
 func (s *Store) Get(ctx context.Context, id string) (Config, error) {
 	var c Config
 	var q, r string
-	var enabled, auto, base int
+	var enabled, auto, base, excludeFromAll int
 	var lastRun, lastOK sql.NullString
 	var lastErr sql.NullString
 	var running int
-	err := s.db.QueryRowContext(ctx, `SELECT s.id,s.name,s.source,s.query_json,s.interval_seconds,s.enabled,s.auto_download,s.download_rules_json,s.revision,s.baseline_complete,(SELECT started_at FROM subscription_runs WHERE subscription_id=s.id ORDER BY started_at DESC LIMIT 1),(SELECT finished_at FROM subscription_runs WHERE subscription_id=s.id AND status='complete' ORDER BY finished_at DESC LIMIT 1),(SELECT error FROM subscription_runs WHERE subscription_id=s.id ORDER BY started_at DESC LIMIT 1),EXISTS(SELECT 1 FROM subscription_runs WHERE subscription_id=s.id AND status='running') FROM subscriptions s WHERE s.id=?`, id).Scan(&c.ID, &c.Name, &c.Source, &q, &c.IntervalSeconds, &enabled, &auto, &r, &c.Revision, &base, &lastRun, &lastOK, &lastErr, &running)
+	err := s.db.QueryRowContext(ctx, `SELECT s.id,s.name,s.source,s.query_json,s.interval_seconds,s.enabled,s.auto_download,s.download_rules_json,s.revision,s.baseline_complete,s.exclude_from_all,(SELECT started_at FROM subscription_runs WHERE subscription_id=s.id ORDER BY started_at DESC LIMIT 1),(SELECT finished_at FROM subscription_runs WHERE subscription_id=s.id AND status='complete' ORDER BY finished_at DESC LIMIT 1),(SELECT error FROM subscription_runs WHERE subscription_id=s.id ORDER BY started_at DESC LIMIT 1),EXISTS(SELECT 1 FROM subscription_runs WHERE subscription_id=s.id AND status='running') FROM subscriptions s WHERE s.id=?`, id).Scan(&c.ID, &c.Name, &c.Source, &q, &c.IntervalSeconds, &enabled, &auto, &r, &c.Revision, &base, &excludeFromAll, &lastRun, &lastOK, &lastErr, &running)
 	if err != nil {
 		return c, err
 	}
@@ -116,6 +117,7 @@ func (s *Store) Get(ctx context.Context, id string) (Config, error) {
 	c.Enabled = enabled != 0
 	c.AutoDownload = auto != 0
 	c.BaselineComplete = base != 0
+	c.ExcludeFromAll = excludeFromAll != 0
 	c.Running = running != 0
 	if lastRun.Valid {
 		t, _ := time.Parse(time.RFC3339Nano, lastRun.String)
@@ -282,12 +284,12 @@ func (s *Store) Update(ctx context.Context, id string, c Config) (Config, error)
 		return c, e
 	}
 	defer tx.Rollback()
-	_, e = tx.ExecContext(ctx, `UPDATE subscriptions SET name=?,source=?,query_json=?,interval_seconds=?,enabled=?,auto_download=?,download_rules_json=?,revision=?,baseline_complete=CASE WHEN ? THEN 0 ELSE baseline_complete END,updated_at=? WHERE id=?`, c.Name, c.Source, marshal(c.Query), c.IntervalSeconds, boolInt(c.Enabled), boolInt(c.AutoDownload), marshal(c.DownloadRules), func() int {
+	_, e = tx.ExecContext(ctx, `UPDATE subscriptions SET name=?,source=?,query_json=?,interval_seconds=?,enabled=?,auto_download=?,download_rules_json=?,revision=?,baseline_complete=CASE WHEN ? THEN 0 ELSE baseline_complete END,exclude_from_all=?,updated_at=? WHERE id=?`, c.Name, c.Source, marshal(c.Query), c.IntervalSeconds, boolInt(c.Enabled), boolInt(c.AutoDownload), marshal(c.DownloadRules), func() int {
 		if changed {
 			return old.Revision + 1
 		}
 		return old.Revision
-	}(), boolInt(changed), now, id)
+	}(), boolInt(changed), boolInt(c.ExcludeFromAll), now, id)
 	if e != nil {
 		return c, e
 	}

@@ -32,6 +32,7 @@ func TestOpenCreatesPrivateDatabaseAndMigratesVersionOneAtomically(t *testing.T)
 	_, err = legacy.Exec(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL);
 CREATE TABLE documents(id TEXT PRIMARY KEY,publication_id INTEGER,association_source TEXT,association_evidence TEXT,updated_at TEXT NOT NULL DEFAULT '',archive_path TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'missing');
 CREATE TABLE download_jobs(id TEXT PRIMARY KEY);
+CREATE TABLE subscriptions(id TEXT PRIMARY KEY);
 CREATE TABLE subscription_items(id INTEGER PRIMARY KEY);
 CREATE TABLE publications(id INTEGER PRIMARY KEY,provider TEXT NOT NULL DEFAULT 'eh',gid INTEGER NOT NULL DEFAULT 0,token TEXT NOT NULL DEFAULT '');
 CREATE TABLE download_job_sources(id INTEGER PRIMARY KEY);
@@ -49,7 +50,7 @@ INSERT INTO schema_migrations(version,applied_at)VALUES(1,'old');PRAGMA user_ver
 		t.Fatal(err)
 	}
 	var version int
-	if err = migrated.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 9 {
+	if err = migrated.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 	if err = migrated.Close(); err != nil {
@@ -60,7 +61,7 @@ INSERT INTO schema_migrations(version,applied_at)VALUES(1,'old');PRAGMA user_ver
 		t.Fatalf("reopen migrated database: %v", err)
 	}
 	defer reopened.Close()
-	for _, check := range []struct{ table, column string }{{"documents", "progression_gid"}, {"download_jobs", "force"}, {"download_jobs", "intent_json"}, {"subscription_items", "favcat"}, {"subscription_items", "purged"}, {"publications", "metadata_level"}, {"archive_versions", "source_sha256"}, {"download_job_sources", "requested_quality"}, {"subscription_runs", "coverage"}} {
+	for _, check := range []struct{ table, column string }{{"documents", "progression_gid"}, {"download_jobs", "force"}, {"download_jobs", "intent_json"}, {"subscription_items", "favcat"}, {"subscription_items", "purged"}, {"publications", "metadata_level"}, {"archive_versions", "source_sha256"}, {"download_job_sources", "requested_quality"}, {"subscription_runs", "coverage"}, {"subscriptions", "exclude_from_all"}} {
 		rows, err := reopened.Query(`PRAGMA table_info(` + check.table + `)`)
 		if err != nil {
 			t.Fatal(err)
@@ -124,7 +125,7 @@ func TestAssociationMigrationKeepsOneTrustedDuplicate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = db.Exec(`DELETE FROM schema_migrations WHERE version=9;PRAGMA user_version=8;`); err != nil {
+	if _, err = db.Exec(`DELETE FROM schema_migrations WHERE version>=9;PRAGMA user_version=8;`); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {

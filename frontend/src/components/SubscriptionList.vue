@@ -1,4 +1,5 @@
 <script setup>
+import { computed } from "vue";
 import { t, currentLocale } from "@/i18n.js";
 import { formatRelativeTime } from "@/subscription-view.js";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import {
   Layers,
   RefreshCw,
   Settings,
+  SlidersHorizontal,
   ChevronsLeft,
   Search,
   Flame,
@@ -35,8 +37,20 @@ const props = defineProps({
 const emit = defineEmits([
   "select",
   "open-settings",
+  "open-all-filter",
   "toggle-pin",
 ]);
+
+const visibleCount = computed(
+  () => props.subscriptions.filter((x) => !x.exclude_from_all).length,
+);
+
+const allBadgeText = computed(() => {
+  if (visibleCount.value === props.subscriptions.length) {
+    return String(props.subscriptions.length);
+  }
+  return `${visibleCount.value}/${props.subscriptions.length}`;
+});
 
 function iconForSub(sub) {
   if (sub.source === "search") return Search;
@@ -103,15 +117,24 @@ function iconForSub(sub) {
 
         <div class="flex items-center gap-1.5 shrink-0">
           <RefreshCw
-            v-if="subscriptions.some((x) => x.running)"
+            v-if="subscriptions.some((x) => !x.exclude_from_all && x.running)"
             class="size-3.5 shrink-0 text-primary animate-spin"
           />
           <Badge
             variant="secondary"
             class="h-4.5 px-1.5 text-[10px] font-mono font-normal"
           >
-            {{ subscriptions.length }}
+            {{ allBadgeText }}
           </Badge>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="size-6 rounded-md text-muted-foreground hover:text-foreground opacity-50 hover:opacity-100 transition-opacity cursor-pointer"
+            :title="t('subscription.all_filter_settings')"
+            @click.stop="emit('open-all-filter')"
+          >
+            <SlidersHorizontal class="size-3.5" />
+          </Button>
         </div>
       </div>
 

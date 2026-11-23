@@ -60,6 +60,20 @@ export default {
     empty: "暂无缓存数据。",
     local_archive: "已归档",
     all_subscriptions: "全部订阅",
+    all_filter_settings: "筛选设置",
+    filter_subscriptions: "筛选订阅",
+    all_filter_dialog_title: "全部订阅筛选设置",
+    all_filter_dialog_desc:
+      "选择在「全部订阅」中展示哪些订阅的内容。隐藏的订阅仍会按计划运行并执行自动下载，但不会在全部列表中显示。",
+    show_in_all: "在「全部订阅」中展示",
+    show_in_all_desc:
+      "关闭后，该订阅的新条目不会出现在「全部订阅」列表中，但仍会按设定的时间间隔检查更新并执行自动下载。",
+    all_filter_select_all: "全选",
+    all_filter_deselect_all: "全不选",
+    all_filter_selected_count: "已展示 {selected} / {total} 个订阅",
+    all_filter_all_hidden_tip:
+      "你已在全部订阅中隐藏了所有订阅源，可以在筛选设置中重新勾选需要展示的订阅。",
+    open_filter_settings: "打开筛选设置",
     settings: "订阅设置",
     preset: "搜索预设",
     single_page: "每轮抓取上游单页，条目数由上游分页决定。",

@@ -64,6 +64,20 @@ export default {
     empty: "No cached results.",
     local_archive: "Archived",
     all_subscriptions: "All subscriptions",
+    all_filter_settings: "Filter settings",
+    filter_subscriptions: "Filter subscriptions",
+    all_filter_dialog_title: "All Subscriptions Display Settings",
+    all_filter_dialog_desc:
+      "Choose which subscriptions to display in All Subscriptions. Hidden subscriptions will still run on schedule and auto-download, but won't be shown in the unified list.",
+    show_in_all: "Show in All Subscriptions",
+    show_in_all_desc:
+      "When turned off, new items from this subscription will not appear in All Subscriptions, but scheduled checks and auto-downloads will continue normally.",
+    all_filter_select_all: "Select all",
+    all_filter_deselect_all: "Deselect all",
+    all_filter_selected_count: "Showing {selected} / {total} subscriptions",
+    all_filter_all_hidden_tip:
+      "All subscriptions are currently hidden from All Subscriptions. You can re-enable them in filter settings.",
+    open_filter_settings: "Open filter settings",
     settings: "Subscription settings",
     preset: "Search preset",
     preset_latest: "Latest",

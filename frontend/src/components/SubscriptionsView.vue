@@ -70,6 +70,7 @@ import {
   Sparkles,
   ChevronsUpDown,
   PanelLeft,
+  SlidersHorizontal,
   X,
 } from "@lucide/vue";
 
@@ -134,9 +135,20 @@ const activeSubscriptionIcon = computed(() => {
   return selected.value ? iconForSub(selected.value) : BookmarkCheck;
 });
 
+const visibleSubscriptions = computed(() =>
+  subscriptions.value.filter((x) => !x.exclude_from_all),
+);
+
+const allBadgeText = computed(() => {
+  if (visibleSubscriptions.value.length === subscriptions.value.length) {
+    return String(subscriptions.value.length);
+  }
+  return `${visibleSubscriptions.value.length}/${subscriptions.value.length}`;
+});
+
 const activeSubscriptionRunning = computed(() => {
   if (allSelected.value) {
-    return subscriptions.value.some((x) => x.running);
+    return visibleSubscriptions.value.some((x) => x.running);
   }
   return Boolean(selected.value?.running);
 });
@@ -144,7 +156,69 @@ const activeSubscriptionRunning = computed(() => {
 // Dialog modals
 const addModalOpen = ref(false);
 const settingsModalOpen = ref(false);
+const allFilterModalOpen = ref(false);
+const subDropdownOpen = ref(false);
+const filterSelectionMap = ref({});
+const savingFilter = ref(false);
 const editingSubscription = ref(null);
+
+const tempSelectedCount = computed(() => {
+  return Object.values(filterSelectionMap.value).filter(Boolean).length;
+});
+
+function openAllFilterModal() {
+  subDropdownOpen.value = false;
+  const map = {};
+  subscriptions.value.forEach((sub) => {
+    map[sub.id] = !sub.exclude_from_all;
+  });
+  filterSelectionMap.value = map;
+  allFilterModalOpen.value = true;
+}
+
+function selectAllInFilter(val) {
+  const map = { ...filterSelectionMap.value };
+  subscriptions.value.forEach((sub) => {
+    map[sub.id] = val;
+  });
+  filterSelectionMap.value = map;
+}
+
+function toggleSubFilter(id) {
+  filterSelectionMap.value = {
+    ...filterSelectionMap.value,
+    [id]: !filterSelectionMap.value[id],
+  };
+}
+
+async function saveFilterSettings() {
+  savingFilter.value = true;
+  error.value = "";
+  try {
+    const changed = subscriptions.value.filter(
+      (sub) => !sub.exclude_from_all !== Boolean(filterSelectionMap.value[sub.id]),
+    );
+    if (changed.length > 0) {
+      await Promise.all(
+        changed.map((sub) =>
+          s.api(`/api/subscriptions/${encodeURIComponent(sub.id)}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              exclude_from_all: !filterSelectionMap.value[sub.id],
+            }),
+          }),
+        ),
+      );
+      await loadSubscriptions();
+      await loadItems();
+    }
+    allFilterModalOpen.value = false;
+  } catch (e) {
+    error.value = e.message;
+  } finally {
+    savingFilter.value = false;
+  }
+}
 
 const draft = ref({
   name: "",
@@ -154,6 +228,7 @@ const draft = ref({
   query_categories: [],
   auto_archive: "disabled",
   interval: 3600,
+  show_in_all: true,
 });
 
 watch(
@@ -176,6 +251,7 @@ function openAddModal() {
     query_categories: [],
     auto_archive: "disabled",
     interval: 3600,
+    show_in_all: true,
   };
   addModalOpen.value = true;
 }
@@ -205,11 +281,11 @@ const allSelected = computed(() => selectedId.value === "all");
 const pages = computed(() => Math.max(1, Math.ceil(total.value / perPage)));
 const running = computed(() =>
   allSelected.value
-    ? subscriptions.value.some((x) => x.running)
+    ? visibleSubscriptions.value.some((x) => x.running)
     : Boolean(selected.value?.running),
 );
 const targets = computed(() =>
-  allSelected.value ? subscriptions.value : [selected.value].filter(Boolean),
+  allSelected.value ? visibleSubscriptions.value : [selected.value].filter(Boolean),
 );
 const presetGroups = computed(() => {
   const allowFavorites = Boolean(s.status.value?.site?.has_ipb) ||
@@ -224,6 +300,7 @@ const presetGroups = computed(() => {
 });
 
 function openSettingsModal(sub) {
+  subDropdownOpen.value = false;
   editingSubscription.value = sub;
   settingsDraft.value = {
     name: sub.name || "",
@@ -238,6 +315,7 @@ function openSettingsModal(sub) {
         ? "org"
         : "res"
       : "disabled",
+    show_in_all: !sub.exclude_from_all,
   };
   settingsModalOpen.value = true;
 }
@@ -284,7 +362,17 @@ async function loadItems() {
   loading.value = true;
   error.value = "";
   try {
-    const ids = allSelected.value ? subscriptions.value.map((x) => x.id) : [];
+    const ids = allSelected.value
+      ? visibleSubscriptions.value.map((x) => x.id)
+      : [];
+    if (allSelected.value && ids.length === 0) {
+      itemsController.invalidate();
+      items.value = [];
+      total.value = 0;
+      runInfo.value = null;
+      loading.value = false;
+      return;
+    }
     const catQuery =
       filterCategory.value === "ALL_CATEGORIES" ? "" : filterCategory.value;
     const response = await itemsController.load({
@@ -450,7 +538,12 @@ async function createSubscription() {
   try {
     const { data } = await s.api("/api/subscriptions", {
       method: "POST",
-      body: JSON.stringify(createSubscriptionPayload(draft.value)),
+      body: JSON.stringify(
+        createSubscriptionPayload({
+          ...draft.value,
+          exclude_from_all: !draft.value.show_in_all,
+        }),
+      ),
     });
     await loadSubscriptions();
     selectedId.value = data.id || selectedId.value;
@@ -463,6 +556,7 @@ async function createSubscription() {
       query_categories: [],
       auto_archive: "disabled",
       interval: 3600,
+      show_in_all: true,
     };
   } catch (e) {
     error.value = e.message;
@@ -581,7 +675,7 @@ async function runNow() {
   error.value = "";
   try {
     const targets = allSelected.value
-      ? subscriptions.value.filter((x) => x.enabled && !x.running)
+      ? visibleSubscriptions.value.filter((x) => x.enabled && !x.running)
       : [selected.value].filter(Boolean);
     if (!targets.length) return;
     await Promise.all(
@@ -609,7 +703,10 @@ async function saveSettings() {
         body: JSON.stringify(
           createSubscriptionUpdate(
             editingSubscription.value,
-            settingsDraft.value,
+            {
+              ...settingsDraft.value,
+              exclude_from_all: !settingsDraft.value.show_in_all,
+            },
           ),
         ),
       },
@@ -789,6 +886,7 @@ function onDetailCategory(cat) {
           :is-pinned="true"
           @select="selectedId = $event"
           @open-settings="openSettingsModal"
+          @open-all-filter="openAllFilterModal"
           @toggle-pin="togglePinSidebar"
         />
       </div>
@@ -816,7 +914,7 @@ function onDetailCategory(cat) {
               <PanelLeft class="size-4" />
             </Button>
 
-            <DropdownMenu v-if="!pinnedSidebar">
+            <DropdownMenu v-if="!pinnedSidebar" v-model:open="subDropdownOpen">
               <DropdownMenuTrigger as-child>
                 <Button
                   variant="outline"
@@ -838,13 +936,16 @@ function onDetailCategory(cat) {
                   />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" class="w-64 max-h-[70vh] overflow-y-auto">
+              <DropdownMenuContent align="start" class="w-72 max-h-[70vh] overflow-y-auto">
                 <!-- All Subscriptions -->
                 <DropdownMenuItem
                   v-if="subscriptions.length > 1"
                   class="flex items-center justify-between gap-2 py-2 cursor-pointer"
                   :class="selectedId === 'all' ? 'bg-primary/10 text-primary font-medium' : ''"
-                  @click="selectedId = 'all'"
+                  @click="
+                    selectedId = 'all';
+                    subDropdownOpen = false;
+                  "
                 >
                   <div class="flex items-center gap-2.5 min-w-0 flex-1">
                     <Layers class="size-4 shrink-0 text-primary" />
@@ -854,16 +955,24 @@ function onDetailCategory(cat) {
                   </div>
                   <div class="flex items-center gap-1.5 shrink-0">
                     <RefreshCw
-                      v-if="subscriptions.some((x) => x.running)"
+                      v-if="subscriptions.some((x) => !x.exclude_from_all && x.running)"
                       class="size-3 text-primary animate-spin"
                     />
                     <Badge
                       variant="secondary"
                       class="h-4.5 px-1.5 text-[10px] font-mono font-normal"
                     >
-                      {{ subscriptions.length }}
+                      {{ allBadgeText }}
                     </Badge>
-                    <Check v-if="selectedId === 'all'" class="size-3.5 text-primary" />
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      class="size-6 rounded-md text-muted-foreground hover:text-foreground opacity-50 hover:opacity-100 transition-opacity cursor-pointer"
+                      :title="t('subscription.all_filter_settings')"
+                      @click.stop="openAllFilterModal"
+                    >
+                      <SlidersHorizontal class="size-3.5" />
+                    </Button>
                   </div>
                 </DropdownMenuItem>
 
@@ -875,7 +984,10 @@ function onDetailCategory(cat) {
                   :key="sub.id"
                   class="group flex items-center justify-between gap-2 py-2 cursor-pointer"
                   :class="selectedId === sub.id ? 'bg-primary/10 text-primary font-medium' : ''"
-                  @click="selectedId = sub.id"
+                  @click="
+                    selectedId = sub.id;
+                    subDropdownOpen = false;
+                  "
                 >
                   <div class="flex items-center gap-2.5 min-w-0 flex-1">
                     <component
@@ -927,7 +1039,6 @@ function onDetailCategory(cat) {
                     >
                       <Settings class="size-3.5" />
                     </Button>
-                    <Check v-if="selectedId === sub.id" class="size-3.5 text-primary" />
                   </div>
                 </DropdownMenuItem>
 
@@ -1079,6 +1190,23 @@ function onDetailCategory(cat) {
         </div>
 
         <!-- Empty State -->
+        <div
+          v-if="allSelected && subscriptions.length > 0 && visibleSubscriptions.length === 0"
+          class="rounded-2xl border border-dashed border-border/80 p-12 text-center text-sm text-muted-foreground flex flex-col items-center gap-3"
+        >
+          <SlidersHorizontal class="size-8 text-muted-foreground/60 stroke-[1.5]" />
+          <p class="max-w-md">{{ t("subscription.all_filter_all_hidden_tip") }}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            class="gap-1.5 cursor-pointer"
+            @click="openAllFilterModal"
+          >
+            <SlidersHorizontal class="size-3.5" />
+            {{ t("subscription.open_filter_settings") }}
+          </Button>
+        </div>
+
         <div
           v-else-if="subscriptions.length && selectedId"
           class="rounded-2xl border border-dashed border-border/80 p-12 text-center text-sm text-muted-foreground"
@@ -1397,6 +1525,23 @@ function onDetailCategory(cat) {
             name="new-subscription-auto-archive"
           />
 
+          <div class="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3 bg-muted/20">
+            <div class="space-y-0.5">
+              <label class="text-xs font-semibold cursor-pointer select-none" for="add-show-in-all">
+                {{ t("subscription.show_in_all") }}
+              </label>
+              <p class="text-[11px] text-muted-foreground leading-relaxed">
+                {{ t("subscription.show_in_all_desc") }}
+              </p>
+            </div>
+            <input
+              id="add-show-in-all"
+              v-model="draft.show_in_all"
+              type="checkbox"
+              class="rounded border-border size-4 accent-primary cursor-pointer mt-0.5"
+            />
+          </div>
+
           <DialogFooter class="pt-2">
             <Button
               type="button"
@@ -1511,6 +1656,23 @@ function onDetailCategory(cat) {
           </div>
 
 
+          <div class="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3 bg-muted/20">
+            <div class="space-y-0.5">
+              <label class="text-xs font-semibold cursor-pointer select-none" for="settings-show-in-all">
+                {{ t("subscription.show_in_all") }}
+              </label>
+              <p class="text-[11px] text-muted-foreground leading-relaxed">
+                {{ t("subscription.show_in_all_desc") }}
+              </p>
+            </div>
+            <input
+              id="settings-show-in-all"
+              v-model="settingsDraft.show_in_all"
+              type="checkbox"
+              class="rounded border-border size-4 accent-primary cursor-pointer mt-0.5"
+            />
+          </div>
+
           <DialogFooter
             class="pt-2 flex items-center justify-between sm:justify-between w-full"
           >
@@ -1540,6 +1702,116 @@ function onDetailCategory(cat) {
             </div>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+
+    <!-- All Subscriptions Filter Settings Dialog -->
+    <Dialog v-model:open="allFilterModalOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{
+            t("subscription.all_filter_dialog_title")
+          }}</DialogTitle>
+          <DialogDescription>{{
+            t("subscription.all_filter_dialog_desc")
+          }}</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-4 pt-1">
+          <!-- Quick Selection Bar -->
+          <div
+            class="flex items-center justify-between text-xs text-muted-foreground border-b border-border/40 pb-2"
+          >
+            <span>{{
+              t("subscription.all_filter_selected_count", {
+                selected: tempSelectedCount,
+                total: subscriptions.length,
+              })
+            }}</span>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="text-primary hover:underline cursor-pointer font-medium"
+                @click="selectAllInFilter(true)"
+              >
+                {{ t("subscription.all_filter_select_all") }}
+              </button>
+              <span>·</span>
+              <button
+                type="button"
+                class="text-primary hover:underline cursor-pointer font-medium"
+                @click="selectAllInFilter(false)"
+              >
+                {{ t("subscription.all_filter_deselect_all") }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Subscription Rows List -->
+          <div class="max-h-[50vh] overflow-y-auto space-y-1.5 pr-1">
+            <div
+              v-for="sub in subscriptions"
+              :key="sub.id"
+              class="flex items-center justify-between p-2.5 rounded-xl border border-border/60 hover:bg-muted/40 transition-colors cursor-pointer select-none"
+              @click="toggleSubFilter(sub.id)"
+            >
+              <div class="flex items-center gap-2.5 min-w-0 flex-1 mr-3">
+                <component
+                  :is="iconForSub(sub)"
+                  class="size-4 shrink-0"
+                  :class="
+                    sub.query?.preset?.startsWith('favorites')
+                      ? 'text-primary'
+                      : sub.source === 'preset'
+                        ? 'text-amber-500'
+                        : 'text-blue-500'
+                  "
+                />
+                <span class="text-xs font-medium truncate text-foreground">
+                  {{ sub.name }}
+                </span>
+                <span
+                  v-if="!sub.enabled"
+                  class="size-1.5 rounded-full bg-muted-foreground/50 shrink-0"
+                />
+                <span
+                  v-if="sub.auto_download"
+                  class="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-medium shrink-0"
+                >
+                  {{ t("subscription.local_archive") }}
+                </span>
+              </div>
+              <input
+                type="checkbox"
+                class="rounded border-border size-4 accent-primary cursor-pointer shrink-0"
+                :checked="Boolean(filterSelectionMap[sub.id])"
+                @click.stop="toggleSubFilter(sub.id)"
+              />
+            </div>
+          </div>
+
+          <DialogFooter class="pt-2 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              @click="allFilterModalOpen = false"
+            >
+              {{ t("common.cancel") }}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              :disabled="savingFilter"
+              @click="saveFilterSettings"
+            >
+              <RefreshCw
+                v-if="savingFilter"
+                class="size-3.5 mr-1.5 animate-spin"
+              />
+              {{ t("common.save") }}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   </div>

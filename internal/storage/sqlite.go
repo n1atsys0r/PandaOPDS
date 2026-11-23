@@ -115,17 +115,29 @@ func migrate(db *sql.DB) error {
 	if err = tx.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version > 9 {
+	if version > 10 {
 		return fmt.Errorf("database schema version %d is newer than this application supports", version)
 	}
+	if version == 10 {
+		return tx.Commit()
+	}
 	if version == 9 {
+		if err := addColumnIfMissing(tx, "subscriptions", "exclude_from_all", `ALTER TABLE subscriptions ADD COLUMN exclude_from_all INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`PRAGMA user_version=10`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(10,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	if version == 8 {
 		if err := migrateArchiveAssociationIdentity(tx); err != nil {
 			return err
 		}
-		return tx.Commit()
+		version = 9
 	}
 	if version == 1 {
 		for _, col := range []struct{ table, name, stmt string }{
@@ -232,6 +244,18 @@ CREATE TABLE IF NOT EXISTS archive_delete_payloads(intent_id TEXT NOT NULL REFER
 		if err := migrateArchiveAssociationIdentity(tx); err != nil {
 			return err
 		}
+		version = 9
+	}
+	if version == 9 {
+		if err := addColumnIfMissing(tx, "subscriptions", "exclude_from_all", `ALTER TABLE subscriptions ADD COLUMN exclude_from_all INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`PRAGMA user_version=10`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations(version,applied_at)VALUES(10,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -250,7 +274,7 @@ CREATE INDEX IF NOT EXISTS progressions_written ON progressions(written DESC);
 CREATE TABLE IF NOT EXISTS progression_aliases(alias TEXT PRIMARY KEY, target_id TEXT NOT NULL, target_type TEXT NOT NULL DEFAULT 'eh');
 CREATE INDEX IF NOT EXISTS progression_alias_target ON progression_aliases(target_type,target_id);
 CREATE TABLE IF NOT EXISTS progression_protected(target_type TEXT NOT NULL, target_id TEXT NOT NULL, PRIMARY KEY(target_type,target_id));
-CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, query_json TEXT NOT NULL, interval_seconds INTEGER NOT NULL DEFAULT 3600, enabled INTEGER NOT NULL DEFAULT 1, auto_download INTEGER NOT NULL DEFAULT 0, download_rules_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 1, baseline_complete INTEGER NOT NULL DEFAULT 0, last_run_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, query_json TEXT NOT NULL, interval_seconds INTEGER NOT NULL DEFAULT 3600, enabled INTEGER NOT NULL DEFAULT 1, auto_download INTEGER NOT NULL DEFAULT 0, download_rules_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 1, baseline_complete INTEGER NOT NULL DEFAULT 0, exclude_from_all INTEGER NOT NULL DEFAULT 0, last_run_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS subscription_items(subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE, publication_id INTEGER NOT NULL REFERENCES publications(id), first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, last_seen_run TEXT NOT NULL DEFAULT '', inspected INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0, remote_member INTEGER NOT NULL DEFAULT 1, first_seen_revision INTEGER NOT NULL DEFAULT 1, baseline_item INTEGER NOT NULL DEFAULT 1, pending_auto INTEGER NOT NULL DEFAULT 0, favcat INTEGER, purged INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(subscription_id,publication_id));
 CREATE INDEX IF NOT EXISTS subscription_items_order ON subscription_items(subscription_id,first_seen_at DESC,publication_id DESC);
 CREATE TABLE IF NOT EXISTS subscription_runs(id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, cursor TEXT NOT NULL DEFAULT '', pages INTEGER NOT NULL DEFAULT 0, results INTEGER NOT NULL DEFAULT 0, error TEXT, complete INTEGER NOT NULL DEFAULT 0, coverage TEXT NOT NULL DEFAULT 'unknown');
@@ -272,6 +296,9 @@ PRAGMA user_version=8;`)
 		return err
 	}
 	if err := migrateArchiveAssociationIdentity(tx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version=10; INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(10,?);`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	return tx.Commit()

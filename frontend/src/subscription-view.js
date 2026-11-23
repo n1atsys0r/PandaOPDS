@@ -58,7 +58,7 @@ export function createSubscriptionPayload(draft) {
         };
   const archiveMode = autoArchiveMode(draft);
   const autoDownload = archiveMode !== "disabled";
-  return {
+  const payload = {
     name: String(draft.name || "").trim(),
     source,
     query,
@@ -67,6 +67,10 @@ export function createSubscriptionPayload(draft) {
     auto_download: autoDownload,
     download_rules: autoDownload ? { quality: archiveMode } : {},
   };
+  if (typeof draft.exclude_from_all === "boolean") {
+    payload.exclude_from_all = draft.exclude_from_all;
+  }
+  return payload;
 }
 
 export function createSubscriptionUpdate(subscription, draft) {
@@ -87,14 +91,19 @@ export function createSubscriptionUpdate(subscription, draft) {
   const archiveMode = autoArchiveMode(draft);
   const autoDownload = archiveMode !== "disabled";
   const downloadRules = autoDownload ? { quality: archiveMode } : {};
-  return {
+  const update = {
     name: String(draft.name || "").trim(),
     query,
     interval_seconds: Number(draft.interval_seconds),
     enabled: true,
     auto_download: autoDownload,
     download_rules: downloadRules,
+    exclude_from_all:
+      typeof draft.exclude_from_all === "boolean"
+        ? draft.exclude_from_all
+        : Boolean(subscription.exclude_from_all),
   };
+  return update;
 }
 
 export function buildCleanupPayload(mode) {

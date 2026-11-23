@@ -212,7 +212,21 @@ func RegisterSubscriptionRoutes(m *http.ServeMux, w *subscription.Worker) {
 		writeJSON(rw, 200, map[string]any{"items": items, "total": total, "page": q.Page, "per_page": q.PerPage, "run": latestRun(r, w, id)})
 	})
 	m.HandleFunc("GET /api/subscription-items", func(rw http.ResponseWriter, r *http.Request) {
-		ids := splitIDs(r.URL.Query().Get("subscription_ids"))
+		var ids []string
+		if r.URL.Query().Has("subscription_ids") {
+			ids = splitIDs(r.URL.Query().Get("subscription_ids"))
+		} else {
+			subs, err := w.Store.List(r.Context())
+			if err != nil {
+				writeJSON(rw, 500, map[string]any{"detail": "could not list subscriptions"})
+				return
+			}
+			for _, sub := range subs {
+				if !sub.ExcludeFromAll {
+					ids = append(ids, sub.ID)
+				}
+			}
+		}
 		q := itemQuery(r, ids)
 		items, total, e := w.ListItems(r.Context(), q)
 		if e != nil {

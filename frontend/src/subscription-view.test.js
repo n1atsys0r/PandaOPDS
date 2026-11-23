@@ -360,3 +360,37 @@ test("formatRelativeTime formats timestamps into human readable relative interva
   assert.equal(formatRelativeTime(threeDaysAgo, "zh", base), "3天前");
   assert.match(formatRelativeTime(threeDaysAgo, "en", base), /3 day/);
 });
+
+test("subscription payloads preserve exclude_from_all setting", () => {
+  const payloadDefault = createSubscriptionPayload({
+    name: "Default Sub",
+    source: "preset",
+  });
+  assert.equal(payloadDefault.exclude_from_all, undefined);
+
+  const payloadExcluded = createSubscriptionPayload({
+    name: "Excluded Sub",
+    source: "preset",
+    exclude_from_all: true,
+  });
+  assert.equal(payloadExcluded.exclude_from_all, true);
+
+  const payloadIncluded = createSubscriptionPayload({
+    name: "Included Sub",
+    source: "preset",
+    exclude_from_all: false,
+  });
+  assert.equal(payloadIncluded.exclude_from_all, false);
+
+  const update = createSubscriptionUpdate(
+    { source: "preset", query: { preset: "latest" }, exclude_from_all: false },
+    { interval_seconds: 3600, exclude_from_all: true },
+  );
+  assert.equal(update.exclude_from_all, true);
+
+  const updateKeep = createSubscriptionUpdate(
+    { source: "preset", query: { preset: "latest" }, exclude_from_all: true },
+    { interval_seconds: 3600 },
+  );
+  assert.equal(updateKeep.exclude_from_all, true);
+});

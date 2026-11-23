@@ -191,3 +191,48 @@ func TestCleanupKeepsDedupTombstoneAcrossRepeatedFetches(t *testing.T) {
 		t.Fatalf("tombstone purged=%d pending=%d err=%v", purged, pending, err)
 	}
 }
+
+func TestExcludeFromAllLifecycle(t *testing.T) {
+	ctx := context.Background()
+	_, s := testStore(t)
+	c1, err := s.Create(ctx, Config{Name: "Normal", Source: "search", Query: map[string]any{"keywords": "normal"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c1.ExcludeFromAll {
+		t.Fatalf("expected ExcludeFromAll to be false, got true")
+	}
+
+	c2, err := s.Create(ctx, Config{Name: "Excluded", Source: "preset", Query: map[string]any{"preset": "favorites"}, ExcludeFromAll: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c2.ExcludeFromAll {
+		t.Fatalf("expected ExcludeFromAll to be true, got false")
+	}
+
+	read1, err := s.Get(ctx, c1.ID)
+	if err != nil || read1.ExcludeFromAll {
+		t.Fatalf("read1 ExcludeFromAll=%v err=%v", read1.ExcludeFromAll, err)
+	}
+	read2, err := s.Get(ctx, c2.ID)
+	if err != nil || !read2.ExcludeFromAll {
+		t.Fatalf("read2 ExcludeFromAll=%v err=%v", read2.ExcludeFromAll, err)
+	}
+
+	read1.ExcludeFromAll = true
+	updated1, err := s.Update(ctx, c1.ID, read1)
+	if err != nil || !updated1.ExcludeFromAll {
+		t.Fatalf("updated1 ExcludeFromAll=%v err=%v", updated1.ExcludeFromAll, err)
+	}
+
+	if updated1.Revision != c1.Revision {
+		t.Fatalf("revision changed from %d to %d on ExcludeFromAll change", c1.Revision, updated1.Revision)
+	}
+
+	read2.ExcludeFromAll = false
+	updated2, err := s.Update(ctx, c2.ID, read2)
+	if err != nil || updated2.ExcludeFromAll {
+		t.Fatalf("updated2 ExcludeFromAll=%v err=%v", updated2.ExcludeFromAll, err)
+	}
+}
