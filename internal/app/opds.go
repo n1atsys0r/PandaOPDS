@@ -444,7 +444,7 @@ func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 	if activeGID <= 0 || activeToken == "" {
 		activeGID, activeToken = gid, token
 	}
-	item := eh.GalleryListItem{GID: gid, Token: token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: d.Category, PublishTime: d.PublishTime, PageCount: &d.ImageCount}
+	item := eh.GalleryListItem{GID: gid, Token: token, ActiveGID: activeGID, ActiveToken: activeToken, Title: title, Category: d.Category, PublishTime: d.PublishTime, PageCount: &d.ImageCount, Tags: d.Tags}
 	if s.Progression != nil {
 		observeProgressionVersions(s.Progression, gid, token, activeGID, activeToken, d.NewerVersions)
 		cnt := d.ImageCount
@@ -452,6 +452,7 @@ func (s *Server) chapter12(w http.ResponseWriter, r *http.Request) {
 			Title:       d.Title,
 			TitleJPN:    d.TitleJPN,
 			Category:    d.Category,
+			Tags:        d.Tags,
 			CoverURL:    d.CoverURL,
 			PageCount:   &cnt,
 			Rating:      d.Rating,
@@ -1399,9 +1400,7 @@ func (s *Server) subscriptionPreview(ctx context.Context, id string, limit int) 
 	}
 	info := eh.GalleryPageInfo{Galleries: make([]eh.GalleryListItem, 0, len(items))}
 	for _, item := range items {
-		raw, _ := json.Marshal(item)
-		var pub eh.GalleryListItem
-		if json.Unmarshal(raw, &pub) == nil {
+		if pub, ok := subscriptionGalleryListItem(item); ok {
 			info.Galleries = append(info.Galleries, pub)
 		}
 	}
@@ -1433,9 +1432,7 @@ func (s *Server) subscriptionFeed20(w http.ResponseWriter, r *http.Request) {
 	}
 	pubs := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		raw, _ := json.Marshal(item)
-		var pub eh.GalleryListItem
-		if json.Unmarshal(raw, &pub) == nil {
+		if pub, ok := subscriptionGalleryListItem(item); ok {
 			pubs = append(pubs, subscriptionPublication(s.builder(), pub))
 		}
 	}
@@ -1556,6 +1553,7 @@ func (s *Server) detailPublication(r *http.Request, gid int, token string) (map[
 			Title:       d.Title,
 			TitleJPN:    d.TitleJPN,
 			Category:    d.Category,
+			Tags:        d.Tags,
 			CoverURL:    d.CoverURL,
 			PageCount:   &cnt,
 			Rating:      d.Rating,
@@ -1717,6 +1715,7 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 				Token:       it.Token,
 				Title:       title,
 				Category:    it.Snapshot.Category,
+				Tags:        it.Snapshot.Tags,
 				CoverURL:    it.Snapshot.CoverURL,
 				PageCount:   it.Snapshot.PageCount,
 				Rating:      it.Snapshot.Rating,
@@ -1747,6 +1746,7 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 						Title:       toString(snap["title"]),
 						TitleJPN:    toString(snap["title_jpn"]),
 						Category:    cat,
+						Tags:        galleryTagsFromValue(snap["tags"]),
 						CoverURL:    cov,
 						PageCount:   &count,
 						Rating:      rating,
@@ -1761,6 +1761,7 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 						Token:       it.Token,
 						Title:       title,
 						Category:    cat,
+						Tags:        snapshot.Tags,
 						CoverURL:    cov,
 						PageCount:   &count,
 						Rating:      rating,
@@ -1799,6 +1800,7 @@ func (s *Server) HistoryGalleriesFiltered(ctx context.Context, page, pageSize in
 						Title:       g.Title,
 						TitleJPN:    g.TitleJPN,
 						Category:    g.Category,
+						Tags:        galleryTagsFromValue(g.Tags),
 						CoverURL:    g.Thumb,
 						PageCount:   &count,
 						Rating:      g.Rating,

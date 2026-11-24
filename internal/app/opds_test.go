@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pandaopds/internal/archive"
 	"pandaopds/internal/config"
 	"pandaopds/internal/eh"
+	"pandaopds/internal/progression"
 )
 
 type favoriteListFixtureTransport string
@@ -87,6 +89,7 @@ func (newerVersionFixtureTransport) RoundTrip(r *http.Request) (*http.Response, 
 		<div id="gdf">CurrentFolder<div style="background:url(https://ehgt.org/fav.png);background-position:0px -59px"></div></div>
 		<p class="gpc">Showing 1 - 1 of 1 images</p>
 		<div id="gdt"><div class="gdtm"><a href="/s/img/123-1"><div style="background:url(https://ehgt.org/t/thumb.jpg);width:100px;height:100px"></div></a></div></div>
+		<div id="taglist"><div id="td_artist:alice"><a title="artist:alice">Alice</a></div></div>
 		<div id="gnd"><a href="/g/10/aaaa/">Older</a> Added on 2024-01-02 12:00
 		<a href="/g/20/bbbb/">New &amp; Best</a> Added on 2025-02-03 09:30</div>
 		</body></html>`
@@ -104,7 +107,15 @@ func TestDetailPublicationEmitsLocalNewerVersionNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.AttachArchive(store)
-	s := &Server{Settings: settings, Service: service, Store: store}
+	progressions, err := progression.Open(filepath.Join(temp, "progression"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progressions.Close()
+	if _, _, err := progressions.Put(123, "abc", progression.Document{Modified: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Device: progression.Device{ID: "reader", Name: "Reader"}, Progression: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Settings: settings, Service: service, Store: store, Progression: progressions}
 	pub, detail, err := s.detailPublication(httptest.NewRequest(http.MethodGet, "/opds/v2.0/gallery/123/abc/publication", nil), 123, "abc")
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +128,10 @@ func TestDetailPublicationEmitsLocalNewerVersionNote(t *testing.T) {
 	assertNoFavoriteCollection(t, metadata)
 	if detail.Favcat == nil || *detail.Favcat != 3 || detail.FavcatName != "CurrentFolder" {
 		t.Fatalf("detail favorite category=%v/%q, want 3/CurrentFolder", detail.Favcat, detail.FavcatName)
+	}
+	history, _, err := progressions.ListHistoryQuery(progression.HistoryQuery{Offset: 0, Limit: 10})
+	if err != nil || len(history) != 1 || history[0].Snapshot == nil || len(history[0].Snapshot.Tags) != 1 || history[0].Snapshot.Tags[0].String() != "artist:alice" {
+		t.Fatalf("detail request did not persist tags in snapshot: history=%#v err=%v", history, err)
 	}
 
 	requestWithPath := func(path string) *http.Request {

@@ -3,10 +3,12 @@ package progression
 import (
 	"encoding/json"
 	"errors"
-	bolt "go.etcd.io/bbolt"
 	"sync"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
+	"pandaopds/internal/eh"
 )
 
 func TestProgressionPersistsMergesAliasAndRejectsStaleWrite(t *testing.T) {
@@ -326,6 +328,7 @@ func TestListHistoryAndSnapshot(t *testing.T) {
 	snap := Snapshot{
 		Title:    "Gallery Two",
 		Category: "Manga",
+		Tags:     []eh.GalleryTag{{Namespace: "artist", Key: "alice", Status: "confidence"}},
 		CoverURL: "https://example.com/cover2.jpg",
 		Rating:   4.5,
 	}
@@ -347,8 +350,15 @@ func TestListHistoryAndSnapshot(t *testing.T) {
 	if items[0].GID != 103 || items[1].GID != 102 || items[2].GID != 101 {
 		t.Fatalf("items out of order: %d, %d, %d", items[0].GID, items[1].GID, items[2].GID)
 	}
-	if items[1].Snapshot == nil || items[1].Snapshot.Title != "Gallery Two" {
+	if items[1].Snapshot == nil || items[1].Snapshot.Title != "Gallery Two" || len(items[1].Snapshot.Tags) != 1 || items[1].Snapshot.Tags[0].String() != "artist:alice" {
 		t.Fatalf("snapshot not attached or incorrect: %#v", items[1].Snapshot)
+	}
+	if err := s.SetSnapshot(101, "tok1", Snapshot{Title: "Old snapshot"}); err != nil {
+		t.Fatal(err)
+	}
+	legacy, _, err := s.ListHistory(2, 1)
+	if err != nil || len(legacy) != 1 || legacy[0].Snapshot == nil || len(legacy[0].Snapshot.Tags) != 0 {
+		t.Fatalf("legacy snapshot without tags should remain readable: %#v err=%v", legacy, err)
 	}
 
 	// Pagination test

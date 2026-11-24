@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"pandaopds/internal/eh"
 	"pandaopds/internal/home"
 	"pandaopds/internal/progression"
 )
@@ -99,6 +100,7 @@ func TestHistoryEndpoints(t *testing.T) {
 	_ = s.Progression.SetSnapshot(101, "deadbeef01", progression.Snapshot{
 		Title:    "Gallery 101",
 		Category: "Manga",
+		Tags:     []eh.GalleryTag{{Namespace: "artist", Key: "alice", Status: "confidence"}},
 		CoverURL: "https://ehgt.org/t/cover101.webp",
 	})
 
@@ -140,6 +142,11 @@ func TestHistoryEndpoints(t *testing.T) {
 	p1 := pubs[1].(map[string]any)["metadata"].(map[string]any)["title"].(string)
 	if p0 != "Gallery 202" || p1 != "Gallery 101" {
 		t.Fatalf("expected [Gallery 202, Gallery 101], got [%s, %s]", p0, p1)
+	}
+	metadata101 := pubs[1].(map[string]any)["metadata"].(map[string]any)
+	subjects101 := metadata101["subject"].([]any)
+	if len(subjects101) != 2 || subjects101[0].(map[string]any)["name"] != "category:Manga" || subjects101[1].(map[string]any)["name"] != "artist:alice" {
+		t.Fatalf("history subject=%#v", subjects101)
 	}
 
 	// OPDS 2.0 history has no facets

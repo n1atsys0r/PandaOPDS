@@ -200,6 +200,7 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 		d = latest
 	}
 	pub := BuildDocumentPublication(d, settings)
+	addLocalDocumentSubjects(ctx, pub, d, store, settings)
 	reading := pub["readingOrder"].([]map[string]any)
 	for i := range reading {
 		if err == nil && i < len(mimes) {
@@ -238,6 +239,7 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 
 func LocalDocumentSummary(ctx context.Context, d document.Document, store *document.Store, settings config.Settings) map[string]any {
 	pub := BuildDocumentPublication(d, settings)
+	addLocalDocumentSubjects(ctx, pub, d, store, settings)
 	delete(pub, "readingOrder")
 	if d.PageCount > 0 {
 		if mime, err := store.PageMIMEProfile(ctx, d.ID); err == nil {
@@ -263,6 +265,33 @@ func LocalDocumentSummary(ctx context.Context, d document.Document, store *docum
 		pub["images"] = []map[string]string{}
 	}
 	return pub
+}
+
+func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d document.Document, store *document.Store, settings config.Settings) {
+	if store == nil || d.ID == "" {
+		return
+	}
+	var raw, category, tagsJSON string
+	err := store.DB().QueryRowContext(ctx, `SELECT p.metadata_json,p.category,p.tags_json FROM documents d JOIN publications p ON p.id=d.publication_id WHERE d.id=?`, d.ID).Scan(&raw, &category, &tagsJSON)
+	if err != nil {
+		return
+	}
+	metadata := map[string]any{}
+	_ = json.Unmarshal([]byte(raw), &metadata)
+	if category == "" {
+		category, _ = metadata["category"].(string)
+	}
+	tags := galleryTagsFromValue(metadata["tags"])
+	if len(tags) == 0 && tagsJSON != "" {
+		var value any
+		if json.Unmarshal([]byte(tagsJSON), &value) == nil {
+			tags = galleryTagsFromValue(value)
+		}
+	}
+	subjects := (feed.Builder{Settings: settings}).Subjects(tags, category, false)
+	if len(subjects) > 0 {
+		pub["metadata"].(map[string]any)["subject"] = subjects
+	}
 }
 
 func cachedCoverMIME(ctx context.Context, d document.Document, store *document.Store) (string, bool) {

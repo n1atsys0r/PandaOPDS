@@ -13,6 +13,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	"pandaopds/internal/eh"
 	"pandaopds/internal/storage"
 )
 
@@ -33,15 +34,16 @@ type Document struct {
 	References  []string  `json:"references,omitempty"`
 }
 type Snapshot struct {
-	Title       string  `json:"title"`
-	TitleJPN    string  `json:"title_jpn,omitempty"`
-	Category    string  `json:"category,omitempty"`
-	CoverURL    string  `json:"cover_url,omitempty"`
-	PageCount   *int    `json:"page_count,omitempty"`
-	Rating      float64 `json:"rating,omitempty"`
-	PublishTime string  `json:"publish_time,omitempty"`
-	Language    string  `json:"language,omitempty"`
-	Expunged    bool    `json:"expunged,omitempty"`
+	Title       string          `json:"title"`
+	TitleJPN    string          `json:"title_jpn,omitempty"`
+	Category    string          `json:"category,omitempty"`
+	Tags        []eh.GalleryTag `json:"tags,omitempty"`
+	CoverURL    string          `json:"cover_url,omitempty"`
+	PageCount   *int            `json:"page_count,omitempty"`
+	Rating      float64         `json:"rating,omitempty"`
+	PublishTime string          `json:"publish_time,omitempty"`
+	Language    string          `json:"language,omitempty"`
+	Expunged    bool            `json:"expunged,omitempty"`
 }
 type stored struct {
 	GID       int             `json:"gid"`

@@ -151,6 +151,11 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if err = docs.Associate(context.Background(), id, 999, "abcdef1234"); err != nil {
 		t.Fatal(err)
 	}
+	archiveMetadata := `{"title":"Linked gallery","category":"Manga","tags":{"artist":[{"key":"alice","status":"confidence"}]}}`
+	archiveTags := `{"artist":[{"key":"alice","status":"confidence"}]}`
+	if _, err = docs.DB().Exec(`UPDATE publications SET metadata_json=?,category='Manga',tags_json=? WHERE provider='eh' AND gid=999 AND token='abcdef1234'`, archiveMetadata, archiveTags); err != nil {
+		t.Fatal(err)
+	}
 	settings := config.Settings{PSEPageBase: 1, EHSite: "e-hentai", CacheDir: filepath.Join(t.TempDir(), "eh-cache"), ImageSourceRetries: 0, Retries: 0}
 	service := eh.NewService(settings, unavailableGalleryTransport{})
 	defer service.Close()
@@ -202,6 +207,11 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if len(linkedEntries) != 1 || linkedEntries[0]["metadata"].(map[string]any)["identifier"] != "urn:ehentai:gallery:999:abcdef1234" || !strings.Contains(linkedEntries[0]["links"].([]map[string]any)[0]["href"].(string), "/gallery/999/abcdef1234/manifest") {
 		t.Fatalf("linked archive feed=%v", linkedEntries)
 	}
+	linkedMetadata := linkedEntries[0]["metadata"].(map[string]any)
+	linkedSubjects := linkedMetadata["subject"].([]map[string]any)
+	if len(linkedSubjects) != 2 || linkedSubjects[0]["name"] != "category:Manga" || linkedSubjects[1]["name"] != "artist:alice" {
+		t.Fatalf("linked archive subjects=%#v", linkedSubjects)
+	}
 	linkedAtom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
 	if err != nil || !strings.Contains(string(linkedAtom), "urn:ehentai:gallery:999:abcdef1234") || !strings.Contains(string(linkedAtom), "/stream/999/abcdef1234/page/{pageNumber}") {
 		t.Fatalf("linked Atom feed err=%v body=%s", err, linkedAtom)
@@ -234,6 +244,9 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	unlinkedEntries := unlinkedFeed["publications"].([]map[string]any)
 	if unlinkedEntries[0]["metadata"].(map[string]any)["identifier"] != "urn:pandaopds:document:"+id {
 		t.Fatalf("unlinked feed identity=%v", unlinkedEntries[0]["metadata"].(map[string]any)["identifier"])
+	}
+	if _, ok := unlinkedEntries[0]["metadata"].(map[string]any)["subject"]; ok {
+		t.Fatal("unlinked archive retained gallery subjects")
 	}
 	if err = docs.Associate(context.Background(), id, 999, "abcdef1234"); err != nil {
 		t.Fatal(err)

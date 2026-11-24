@@ -138,3 +138,48 @@ func TestSubscriptionOPDSReadsOnlyLocalCacheAndPaginates(t *testing.T) {
 		t.Fatalf("subscription OPDS triggered %d upstream list requests", requests)
 	}
 }
+
+func TestSubscriptionOPDSNormalizesGroupedTags(t *testing.T) {
+	server := newHomePreviewServer(t, "", homePreviewTransport(func(r *http.Request) (*http.Response, error) {
+		return homePreviewResponse(r, `<html></html>`), nil
+	}))
+	db, err := storage.Open(filepath.Join(t.TempDir(), "subscriptions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := subscription.New(db.DB)
+	cfg, err := store.Create(context.Background(), subscription.Config{Name: "Grouped tags", Source: "preset", Query: map[string]any{"preset": "popular"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	metadata := `{"title":"Grouped tags","category":"Manga","tags":{"artist":[{"key":"alice","status":"confidence"}]}}`
+	if _, err = db.Exec(`INSERT INTO publications(provider,gid,token,metadata_json,title,category,created_at,updated_at) VALUES('eh',9001,'abcdef12',?,'Grouped tags','Manga',?,?)`, metadata, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO subscription_items(subscription_id,publication_id,first_seen_at,last_seen_at) SELECT ?,id,?,? FROM publications WHERE provider='eh' AND gid=9001 AND token='abcdef12'`, cfg.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	server.Subscriptions = subscription.NewWorker(db.DB, server.Service, nil, nil, server.Settings)
+	r := httptest.NewRequest(http.MethodGet, "/opds/v2.0/subscription/"+cfg.ID, nil)
+	r.SetPathValue("id", cfg.ID)
+	w := httptest.NewRecorder()
+	server.subscriptionFeed20(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("subscription feed status=%d body=%s", w.Code, w.Body)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	publications := doc["publications"].([]any)
+	if len(publications) != 1 {
+		t.Fatalf("grouped tags dropped publication: %#v", publications)
+	}
+	metadataOut := publications[0].(map[string]any)["metadata"].(map[string]any)
+	subjects := metadataOut["subject"].([]any)
+	if len(subjects) != 2 || subjects[0].(map[string]any)["name"] != "category:Manga" || subjects[1].(map[string]any)["name"] != "artist:alice" {
+		t.Fatalf("subscription subjects=%#v", subjects)
+	}
+}
