@@ -37,6 +37,7 @@ ENV SETTINGS_CONFIG=/config/settings.toml \
     MAX_CONCURRENCY=2 \
     IMAGE_MAX_CONCURRENCY=5 \
     THUMB_MAX_CONCURRENCY=25 \
+    THUMB_INTERVAL_SECONDS=0.2 \
     CACHE_DIR=/data/cache \
     ARCHIVE_DIR=/data/archives \
     ARCHIVE_STATE_DIR=/config/archive \

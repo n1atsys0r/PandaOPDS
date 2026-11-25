@@ -4295,7 +4295,8 @@
                     "max_concurrency": 5,
                     "image_max_concurrency": 5,
                     "thumb_max_concurrency": 25,
-                    "html_interval_seconds": 0.3
+                    "html_interval_seconds": 0.3,
+                    "thumb_interval_seconds": 0.2
                   },
                   "circuit": {
                     "state": "closed",

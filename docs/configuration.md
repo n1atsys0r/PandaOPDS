@@ -34,6 +34,7 @@ Compose 用命名卷保存图片缓存和归档，并将宿主机的 `./config` 
 | `AUTH_EXEMPT_PATHS`, `AUTH_EXEMPT_PREFIXES` | 空 | 认证豁免的精确路径列表与路径前缀列表；`/health` 恒豁免。 |
 | `TIMEOUT_SECONDS`, `RETRIES` | `6`, `3` | 上游请求超时与重试次数。 |
 | `HTML_INTERVAL_SECONDS` | `0.3` | HTML 请求最小间隔秒数。 |
+| `THUMB_INTERVAL_SECONDS` | `0.2` | 缩略图上游请求最小间隔；所有客户端共用，设为 `0` 可关闭。 |
 | `MAX_CONCURRENCY` | `5` | HTML/API 请求并发上限。 |
 | `IMAGE_MAX_CONCURRENCY` | `5` | 原图请求并发上限。 |
 | `THUMB_MAX_CONCURRENCY` | `25` | 缩略图请求并发上限。 |

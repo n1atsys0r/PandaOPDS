@@ -62,7 +62,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	if s.Settings.PublicBaseURL == "" {
 		site["public_base_url"] = "（相对路径）"
 	}
-	th := map[string]any{"html_requests": counts["html"], "api_requests": counts["api"], "image_requests": counts["image"], "thumb_requests": counts["thumb"], "max_concurrency": s.Settings.MaxConcurrency, "image_max_concurrency": s.Settings.ImageMaxConcurrency, "thumb_max_concurrency": s.Settings.ThumbMaxConcurrency, "html_interval_seconds": s.Settings.HTMLIntervalSeconds}
+	th := map[string]any{"html_requests": counts["html"], "api_requests": counts["api"], "image_requests": counts["image"], "thumb_requests": counts["thumb"], "max_concurrency": s.Settings.MaxConcurrency, "image_max_concurrency": s.Settings.ImageMaxConcurrency, "thumb_max_concurrency": s.Settings.ThumbMaxConcurrency, "html_interval_seconds": s.Settings.HTMLIntervalSeconds, "thumb_interval_seconds": s.Settings.ThumbIntervalSeconds}
 	groupCount := 0
 	for _, section := range homeCfg.Sections {
 		if section.Group {
@@ -202,6 +202,7 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request) {
 			field("timeout_seconds", "出站超时（秒）", cfg.TimeoutSeconds, false, true, nil),
 			field("retries", "网络错误重试次数", cfg.Retries, false, true, nil),
 			field("html_interval_seconds", "HTML 请求最小间隔（秒）", cfg.HTMLIntervalSeconds, false, true, "防封关键参数"),
+			field("thumb_interval_seconds", "缩略图请求最小间隔（秒）", cfg.ThumbIntervalSeconds, false, true, "所有客户端共用的全局回源间隔；默认 0.2 秒"),
 			field("max_concurrency", "HTML/API 并发上限", cfg.MaxConcurrency, false, true, nil),
 			field("image_max_concurrency", "全图并发上限", cfg.ImageMaxConcurrency, false, true, nil),
 			field("thumb_max_concurrency", "封面图并发上限", cfg.ThumbMaxConcurrency, false, true, "对齐浏览器在源站 25 缩略图并发"),

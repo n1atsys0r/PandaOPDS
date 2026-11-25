@@ -19,6 +19,7 @@ type Settings struct {
 	IPBMemberID, IPBPassHash, Igneous                                                 string
 	EHSite, NW, DataTags                                                              string
 	TimeoutSeconds, HTMLIntervalSeconds, BannedCooldownSeconds, ExceedCooldownSeconds float64
+	ThumbIntervalSeconds                                                              float64
 	Retries, MaxConcurrency, ImageMaxConcurrency, ThumbMaxConcurrency                 int
 	PublicBaseURL                                                                     string
 	PSEPageBase                                                                       int
@@ -108,7 +109,7 @@ func loadWithEditableValues(fileValues map[string]any) Settings {
 		AuthExemptPaths: csv(base("AUTH_EXEMPT_PATHS", "")), AuthExemptPrefixes: csv(base("AUTH_EXEMPT_PREFIXES", "")),
 		IPBMemberID: base("IPB_MEMBER_ID", ""), IPBPassHash: base("IPB_PASS_HASH", ""), Igneous: base("IGNEOUS", ""),
 		EHSite: strings.ToLower(base("EH_SITE", "e-hentai")), NW: defaultString(base("NW", "1"), "1"), DataTags: defaultString(base("DATATAGS", "1"), "1"),
-		TimeoutSeconds: floatEnv("TIMEOUT_SECONDS", 6), Retries: intEnv("RETRIES", 3), HTMLIntervalSeconds: floatEnv("HTML_INTERVAL_SECONDS", .3),
+		TimeoutSeconds: floatEnv("TIMEOUT_SECONDS", 6), Retries: intEnv("RETRIES", 3), HTMLIntervalSeconds: floatEnv("HTML_INTERVAL_SECONDS", .3), ThumbIntervalSeconds: floatEnv("THUMB_INTERVAL_SECONDS", .2),
 		MaxConcurrency: intEnv("MAX_CONCURRENCY", 5), ImageMaxConcurrency: intEnv("IMAGE_MAX_CONCURRENCY", 5), ThumbMaxConcurrency: intEnv("THUMB_MAX_CONCURRENCY", 25),
 		PublicBaseURL: strings.TrimRight(base("PUBLIC_BASE_URL", ""), "/"), PSEPageBase: intEnv("PSE_PAGE_BASE", 1),
 		CacheDir: base("CACHE_DIR", "./cache"), CacheMaxGB: floatEnv("CACHE_MAX_GB", 4), ImageCacheEnabled: boolEnv("IMAGE_CACHE_ENABLED", true),
