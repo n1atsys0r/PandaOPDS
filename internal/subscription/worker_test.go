@@ -389,6 +389,114 @@ func TestRunOneCancellationNeverCompletesBaseline(t *testing.T) {
 	}
 }
 
+func TestRunOneSerializesSubscriptionFetchesAndCancelsQueuedRun(t *testing.T) {
+	db := workerTestDB(t)
+	c1 := testSubscriptionConfig(t, db, "queue-first")
+	c2 := testSubscriptionConfig(t, db, "queue-second")
+	c3 := testSubscriptionConfig(t, db, "queue-after")
+	c1.Query["keywords"] = "queue-first"
+	c2.Query["keywords"] = "queue-second"
+	c3.Query["keywords"] = "queue-after"
+
+	started := make(chan string, 3)
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBlockedFetch := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	defer releaseBlockedFetch()
+	var mu sync.Mutex
+	active, maximum := 0, 0
+	service := newFixtureService(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/" && r.URL.RawQuery == "" {
+			return responseHTML(`<html>session</html>`), nil
+		}
+		query := r.URL.Query().Get("f_search")
+		mu.Lock()
+		active++
+		if active > maximum {
+			maximum = active
+		}
+		mu.Unlock()
+		started <- query
+		if query == "queue-first" {
+			<-releaseFirst
+		}
+		mu.Lock()
+		active--
+		mu.Unlock()
+		gid := 701
+		if query == "queue-second" {
+			gid = 702
+		}
+		return responseHTML(listFixture(gid, "abc", "")), nil
+	}))
+	w := NewWorker(db.DB, service, nil, nil, config.Settings{})
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, run := range []struct{ id, sub string }{{"queue-run-1", c1.ID}, {"queue-run-2", c2.ID}, {"queue-run-3", c3.ID}} {
+		if _, err := db.Exec(`INSERT INTO subscription_runs(id,subscription_id,started_at,status,revision) VALUES(?,?,?,'running',1)`, run.id, run.sub, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- w.runOne(context.Background(), c1.ID, "queue-run-1", c1) }()
+	select {
+	case query := <-started:
+		if query != "queue-first" {
+			t.Fatalf("first upstream query=%q, want queue-first", query)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("first subscription fetch did not start")
+	}
+
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- w.runOne(secondCtx, c2.ID, "queue-run-2", c2) }()
+	select {
+	case query := <-started:
+		t.Fatalf("second upstream query %q started while first request was blocked", query)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancelSecond()
+	if err := <-secondDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("queued second run error=%v, want context canceled", err)
+	}
+	var secondStatus string
+	if err := db.QueryRow(`SELECT status FROM subscription_runs WHERE id='queue-run-2'`).Scan(&secondStatus); err != nil {
+		t.Fatal(err)
+	}
+	if secondStatus != "interrupted" {
+		t.Fatalf("queued second run status=%q, want interrupted", secondStatus)
+	}
+
+	thirdDone := make(chan error, 1)
+	go func() { thirdDone <- w.runOne(context.Background(), c3.ID, "queue-run-3", c3) }()
+	select {
+	case query := <-started:
+		t.Fatalf("queued query %q started while first request was blocked", query)
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseBlockedFetch()
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case query := <-started:
+		if query != "queue-after" {
+			t.Fatalf("queued upstream query=%q, want queue-after", query)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("queued subscription fetch did not start after the first request released")
+	}
+	if err := <-thirdDone; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if maximum != 1 {
+		t.Fatalf("maximum concurrent subscription fetches=%d, want 1", maximum)
+	}
+}
+
 func TestTerminalJobDrainsQueuedManualJobsAtConcurrencyLimit(t *testing.T) {
 	db := workerTestDB(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)

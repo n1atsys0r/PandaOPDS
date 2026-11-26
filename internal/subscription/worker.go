@@ -23,21 +23,22 @@ var ErrAlreadyRunning = errors.New("subscription is already running")
 var ErrFavoritesAuthUnavailable = errors.New("favorites subscription requires IPB cookies")
 
 type Worker struct {
-	Store           *Store
-	Service         *eh.Service
-	Archives        *archive.Manager
-	Documents       *document.Store
-	Settings        config.Settings
-	db              *sql.DB
-	mu              sync.Mutex
-	active          map[string]context.CancelFunc
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	dispatchEnabled bool
-	started         bool
-	stopping        bool
-	maxConcurrent   int
+	Store                  *Store
+	Service                *eh.Service
+	Archives               *archive.Manager
+	Documents              *document.Store
+	Settings               config.Settings
+	db                     *sql.DB
+	mu                     sync.Mutex
+	active                 map[string]context.CancelFunc
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	wg                     sync.WaitGroup
+	dispatchEnabled        bool
+	started                bool
+	stopping               bool
+	maxConcurrent          int
+	subscriptionFetchQueue chan struct{}
 }
 type downloadJob struct {
 	id             string
@@ -53,7 +54,7 @@ func NewWorker(db *sql.DB, service *eh.Service, archives *archive.Manager, docs 
 	if limit < 1 {
 		limit = 1
 	}
-	return &Worker{Store: New(db), Service: service, Archives: archives, Documents: docs, Settings: cfg, db: db, active: map[string]context.CancelFunc{}, ctx: ctx, cancel: cancel, maxConcurrent: limit}
+	return &Worker{Store: New(db), Service: service, Archives: archives, Documents: docs, Settings: cfg, db: db, active: map[string]context.CancelFunc{}, ctx: ctx, cancel: cancel, maxConcurrent: limit, subscriptionFetchQueue: make(chan struct{}, 1)}
 }
 func (w *Worker) Start() error {
 	w.mu.Lock()
@@ -252,7 +253,7 @@ func (w *Worker) runOne(ctx context.Context, id, runID string, c Config) error {
 			break
 		}
 		var page eh.GalleryPageInfo
-		page, e = w.fetchSubscriptionPage(ctx, c, cursor, pages+1)
+		page, e = w.fetchSubscriptionPageQueued(ctx, c, cursor, pages+1)
 		if e != nil {
 			break
 		}
@@ -1556,6 +1557,19 @@ func (w *Worker) fetchSubscriptionPage(ctx context.Context, c Config, cursor str
 		}
 	}
 	return w.Service.Search(ctx, stringVal(c.Query["keywords"]), cursor, extra)
+}
+
+func (w *Worker) fetchSubscriptionPageQueued(ctx context.Context, c Config, cursor string, pageNumber int) (eh.GalleryPageInfo, error) {
+	select {
+	case w.subscriptionFetchQueue <- struct{}{}:
+	case <-ctx.Done():
+		return eh.GalleryPageInfo{}, ctx.Err()
+	}
+	defer func() { <-w.subscriptionFetchQueue }()
+	if err := ctx.Err(); err != nil {
+		return eh.GalleryPageInfo{}, err
+	}
+	return w.fetchSubscriptionPage(ctx, c, cursor, pageNumber)
 }
 
 func (w *Worker) runSourcePage(ctx context.Context, c Config, cursor string) (eh.GalleryPageInfo, error) {
