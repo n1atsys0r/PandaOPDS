@@ -317,7 +317,7 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/archive", s.archiveList)
 	m.HandleFunc("GET /api/archive/import/scan", s.archiveScanStatus)
 	m.HandleFunc("POST /api/archive/import/scan", s.startArchiveScan)
-	RegisterDocumentRoutes(m, s.Documents, s.Settings)
+	RegisterDocumentRoutes(m, s.Documents, s.builder())
 	RegisterSubscriptionRoutes(m, s.Subscriptions)
 	m.HandleFunc("GET /api/archive/{gid}/{token}/quote", s.archiveQuote)
 	m.HandleFunc("POST /api/archive/{gid}/{token}/start", s.archiveStart)

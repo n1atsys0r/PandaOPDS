@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"pandaopds/internal/document"
 	"pandaopds/internal/eh"
 	"pandaopds/internal/feed"
 	"pandaopds/internal/home"
@@ -400,7 +401,7 @@ func (s *Server) archives12(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	body, _, err := DocumentArchiveAtomFeed(r.Context(), s.Documents, s.Settings, page, 100)
+	body, _, err := DocumentArchiveAtomFeed(r.Context(), s.Documents, s.builder(), page, 100)
 	if err != nil {
 		s.writeError(w, r, err)
 		return
@@ -707,7 +708,7 @@ func (s *Server) archiveOPDSFeed(ctx context.Context, page, perPage int, categor
 		perPage = 100
 	}
 	if category == "" {
-		return DocumentArchiveOPDSFeed(ctx, s.Documents, s.Settings, page, perPage)
+		return DocumentArchiveOPDSFeed(ctx, s.Documents, s.builder(), page, perPage)
 	}
 	where := `d.status='available' AND lower(p.category)=lower(?)`
 	args := []any{category}
@@ -742,7 +743,7 @@ func (s *Server) archiveOPDSFeed(ctx context.Context, page, perPage int, categor
 			}
 			continue
 		}
-		publications = append(publications, LocalDocumentPublication(ctx, d, s.Documents, s.Settings))
+		publications = append(publications, LocalDocumentPublication(ctx, d, s.Documents, s.builder()))
 	}
 	self := "/opds/v2.0/archives"
 	next := ""
@@ -1476,37 +1477,92 @@ func (s *Server) publication20(w http.ResponseWriter, r *http.Request) {
 	writeBytes(w, 200, feed.MIMEPublication, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
 }
 
+// associatedLocalArchive resolves the local ZIP master that currently serves
+// this gallery's pages. A document whose page index cannot be built is not a
+// usable reading payload, so callers treat it as absent.
+func (s *Server) associatedLocalArchive(ctx context.Context, gid int, token string) *document.Document {
+	if s.Documents == nil {
+		return nil
+	}
+	d, lookup := s.Documents.AssociatedDocument(ctx, gid, token)
+	if lookup != nil {
+		return nil
+	}
+	indexed, _, indexErr := s.Documents.EnsurePageIndex(ctx, d.ID)
+	if indexErr != nil || indexed.PageCount <= 0 {
+		return nil
+	}
+	return &indexed
+}
+
+// applyLocalReading replaces the manifest reading identity with the associated
+// local archive: pages stream from the ZIP master through the gallery route and
+// the page count and page MIME types follow the file, not upstream metadata.
+func (s *Server) applyLocalReading(ctx context.Context, pub map[string]any, d document.Document, gid int, token string) {
+	count := d.PageCount
+	if metadata, ok := pub["metadata"].(map[string]any); ok {
+		metadata["numberOfPages"] = count
+	}
+	mimes, mimeErr := s.Documents.PageMIMEs(ctx, d.ID)
+	profile := feed.MIMEImage
+	if mimeErr != nil || len(mimes) == 0 {
+		mimes = nil
+		if mime, e := s.Documents.PageMIMEProfile(ctx, d.ID); e == nil && mime != "" {
+			profile = mime
+		}
+	}
+	reading := make([]map[string]any, 0, count)
+	for p := 0; p < count; p++ {
+		pageType := profile
+		if p < len(mimes) && mimes[p] != "" {
+			pageType = mimes[p]
+		}
+		reading = append(reading, map[string]any{
+			"href": s.builder().Href(fmt.Sprintf("/stream/%d/%s/page/%d", gid, url.PathEscape(token), p+s.Settings.PSEPageBase)),
+			"type": pageType,
+		})
+	}
+	pub["readingOrder"] = reading
+	thumb := s.builder().Href(fmt.Sprintf("/image/%d/%s/thumb", gid, url.PathEscape(token)))
+	for _, link := range pub["links"].([]map[string]any) {
+		if link["rel"] == feed.RelThumb {
+			link["href"] = thumb
+		}
+	}
+	for _, image := range pub["images"].([]map[string]string) {
+		image["href"] = thumb
+	}
+}
+
 func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
 	if e != nil {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	if s.Documents != nil {
-		if d, lookup := s.Documents.AssociatedDocument(r.Context(), gid, token); lookup == nil {
-			d, _, lookup = s.Documents.EnsurePageIndex(r.Context(), d.ID)
-			if lookup == nil {
-				pub := LocalDocumentPublication(r.Context(), d, s.Documents, s.Settings)
-				pub["@context"] = feed.RWPMContext
-				pub["metadata"].(map[string]any)["conformsTo"] = []string{feed.DivinaProfile}
-				for i := range pub["readingOrder"].([]map[string]any) {
-					pub["readingOrder"].([]map[string]any)[i]["href"] = s.builder().Href(fmt.Sprintf("/stream/%d/%s/page/%d", gid, url.PathEscape(token), i+s.Settings.PSEPageBase))
-				}
-				for _, link := range pub["links"].([]map[string]any) {
-					if link["rel"] == feed.RelThumb {
-						link["href"] = s.builder().Href(fmt.Sprintf("/image/%d/%s/thumb", gid, url.PathEscape(token)))
-					}
-				}
-				pub["images"].([]map[string]string)[0]["href"] = s.builder().Href(fmt.Sprintf("/image/%d/%s/thumb", gid, url.PathEscape(token)))
-				writeBytes(w, http.StatusOK, feed.MIMEDivina, map[string]string{"Cache-Control": "no-cache"}, s.builder().JSON(pub))
-				return
-			}
-		}
+	// Pages always come from a readable local ZIP master when one is
+	// associated. Metadata still prefers upstream; the local snapshot is only a
+	// readability fallback, so an archived gallery keeps comments, favorites and
+	// other detail-only fields while upstream is reachable.
+	localDoc := s.associatedLocalArchive(r.Context(), gid, token)
+	var pub map[string]any
+	var detail eh.DetailPageInfo
+	var upstreamErr error
+	if s.Service == nil {
+		upstreamErr = fmt.Errorf("upstream service unavailable")
+	} else {
+		pub, detail, upstreamErr = s.detailPublication(r, gid, token)
 	}
-	pub, detail, e := s.detailPublication(r, gid, token)
-	if e != nil {
-		s.writeError(w, r, e)
-		return
+	if upstreamErr != nil {
+		if localDoc == nil {
+			s.writeError(w, r, upstreamErr)
+			return
+		}
+		pub = LocalDocumentPublication(r.Context(), *localDoc, s.Documents, s.builder())
+		detail = eh.DetailPageInfo{}
+	}
+	if localDoc != nil {
+		s.applyLocalReading(r.Context(), pub, *localDoc, gid, token)
 	}
 	reading, _ := pub["readingOrder"].([]map[string]any)
 	if len(reading) == 0 {

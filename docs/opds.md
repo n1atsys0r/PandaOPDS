@@ -8,6 +8,7 @@
 - OPDS 2.0 使用 JSON，入口为 `/opds/v2.0`，含导航/采集文档、Toplist、归档 shelf、图库详情与 publication 文档。
 - OPDS 2.0 作品条目通过 `self` 提供 Divina 清单（`application/divina+json`），客户端可按需读取完整元数据和 `readingOrder`。作品的其他两个链接是原图库 `alternate` 和阅读进度。客户端迁移见 [Breaking Changes](breaking-changes.md)。
 - 作品条目和 publication 提供 OPDS Progression 1.0 链接（`rel=http://opds-spec.org/progression`，`application/opds-progression+json`），服务路径为 `/opds/progression/{gid}/{token}`。GET 返回当前进度或空响应；PUT 提交带 `modified`、`device`、`progression` 的 JSON，可选 `title` 和 URI `references`。新记录返回 201，更新或相同重试返回 200，过期或同时间冲突返回 409 Problem Details。进度保存在统一 SQLite 数据库中；旧 Bolt 文件仅在迁移时读取。可信旧归档/下载关联沿用 EH 进度身份，未证明身份的本地文件使用 document ID 进度路径。
+- 已关联本地归档的画廊 manifest 仍以**上游元数据为主、本地 ZIP 页面为准**：评论、标签和收藏归属等详情字段照常输出，`readingOrder`/`numberOfPages` 取自归档文件；仅当上游不可用时 metadata 回退到本地快照，使归档仍可离线阅读。
 - `/stream/{gid}/{token}/page/{page}` 是两种目录共用的逐页图像代理。缩略图代理提供封面、内页预览及评论图片转发。
 - WebUI 与管理 API 另属 `/` 和 `/api/*` 命名空间；完整接口列表见 OpenAPI。
 
@@ -25,7 +26,7 @@ Favorites 列表在 OPDS 1.2 与 2.0 中提供 Favorite category facets：All �
 
 v2.0 自定义搜索 facets 的每个链接代表一个完整筛选状态；切换选项会替换上一个 facet 条件并保留其余搜索词。当前选项使用 `rel="self"` 标记，WebUI 再次点击该选项会清除 facet 条件。
 
-启用 `TAG_TRANSLATION_ENABLED` 后，v2.0 subject 可输出中文标签，搜索可将词典命中的中文标签还原为 EH 标签语法；关闭时保留原始行为。`reclass:` 不作为分类别名。精确字段、链接结构、评论扩展和 Atom/JSON 示例见[客户端元数据格式](client-metadata.md)。
+启用 `TAG_TRANSLATION_ENABLED` 后，v2.0 subject 可输出中文标签，搜索可将词典命中的中文标签还原为 EH 标签语法；关闭时保留原始行为。该开关对全部 subject 出口一致生效，包括归档书架、归档画廊 manifest 及其本地快照回退、本地文档 manifest；本地归档不会退化为原始 `ns:key`。`reclass:` 不作为分类别名。精确字段、链接结构、评论扩展和 Atom/JSON 示例见[客户端元数据格式](client-metadata.md)。
 
 ## 逆向兼容与实现依据
 

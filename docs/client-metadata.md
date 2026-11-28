@@ -72,7 +72,7 @@ Facet 栏目的 `type` 和 `query` 必须与顶层出版物栏目一致。每个
 | `language` | [string] | 语言（**BCP 47 / RFC 5646 码**，如 `zh`/`ja`/`zh-Hans`；由 EH `language:` 标签映射，未知与标记伪标签不输出） | 非空时 |
 | `published` | string | = `modified`（上传时间） | 恒有 |
 | `description` | string | **当前不输出**（预留字段；客户端如需描述，可自行拼接 `language`/`numberOfPages`/`authors`/`x:rating`/`x:sizeBytes`） | — |
-| `subject` | [ {`name`, `x:style`?} ] | RWPM collection：标签为 `ns:key`，图库分类默认为 `category:<分类名>`；启用翻译时分类使用固定 namespace `分类`，仅分类名通过 EhTagTranslation `reclass` 查译（无译名则保留原分类名）。详情文档分类排第一；列表文档分类位于所有带 `x:style` 的条目之后、未着色标签之前；标签原有顺序不变 | 有标签或分类时 |
+| `subject` | [ {`name`, `x:style`?} ] | RWPM collection：标签为 `ns:key`，图库分类默认为 `category:<分类名>`；启用翻译时分类使用固定 namespace `分类`，仅分类名通过 EhTagTranslation `reclass` 查译（无译名则保留原分类名）。详情文档分类排第一；列表文档分类位于所有带 `x:style` 的条目之后、未着色标签之前；标签原有顺序不变。归档书架、归档画廊 manifest（含本地快照回退）和本地文档 manifest 与上游 feed 使用同一翻译开关 | 有标签或分类时 |
 | `belongsTo.collection` | {`name`, `links`} | Divina manifest 中已确认收藏时指向其 E-Hentai 收藏夹分区；`name` 为详情页分区名（缺失时为 `Favorites N`），`links[]` 指向 `/opds/v2.0/gallery?favcat=N&query=favorites`，类型为 `application/opds+json`。链接遵循 `PUBLIC_BASE_URL` 的相对/绝对 URL 规则 | 仅 Divina manifest；详情页能确认分区时 |
 | `numberOfPages` | int | 页数（= `filecount`） | >0 时 |
 
@@ -174,6 +174,8 @@ publication 保留 `/image/{activeGid}/{activeToken}/thumb` 的 `images[]` 封�
 ### 4.3 Divina manifest（`/opds/v2.0/gallery/{gid}/{token}/manifest`）
 
 新目录条目的 `rel="self"` 指向此 endpoint。成功响应的 `Content-Type` 为 `application/divina+json`，包含 `@context`、`metadata.conformsTo`、封面 `images` 和逐页 `readingOrder`。每页 href 使用当前图片流路由；页码仍遵循 `PSE_PAGE_BASE`。Ready archive/catalog 路径同样输出 manifest，图库标识保持稳定，图片资源使用归档的 active version。
+
+归档画廊的 manifest 分两路取数：**元数据优先上游**详情页，因此评论（`x:reviews`）、`subject`、`belongsTo` 等详情字段与未归档画廊一致；**页数、`readingOrder` 与封面走本地 ZIP 归档**，以实际选中文件的页索引为准。只有上游不可用时，metadata 才回退为该画廊的本地快照，保证归档仍可离线阅读（此时不含评论）。上游与本地都不可用时按上游错误响应；未关联本地归档的画廊不受影响。
 
 如果页数未知或为零，服务端返回 503，因为 Divina manifest 需要非空的 `readingOrder`。不会为此触发归档或图片下载。
 

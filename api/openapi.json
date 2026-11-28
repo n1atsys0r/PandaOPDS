@@ -1897,7 +1897,7 @@
           "opds2"
         ],
         "summary": "Divina Gallery Manifest",
-        "description": "Returns a Readium Divina manifest with a nonempty per-page readingOrder. Ready archives use stored metadata and pages. If the page count is unknown or zero, returns 503 because a valid Divina manifest cannot be produced.",
+        "description": "Returns a Readium Divina manifest with a nonempty per-page readingOrder. Metadata prefers the upstream detail page, so archived galleries keep comments, subjects and favorites; subjects follow TAG_TRANSLATION_ENABLED exactly like gallery feeds. When an associated local ZIP master is readable, readingOrder pages and numberOfPages come from that file; the local publication snapshot is used only when upstream is unavailable. If the page count is unknown or zero, returns 503 because a valid Divina manifest cannot be produced.",
         "operationId": "gallery_manifest_opds_v2_0_gallery__gid___token__manifest_get",
         "parameters": [
           {

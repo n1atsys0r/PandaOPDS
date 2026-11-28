@@ -23,16 +23,17 @@ import (
 
 // RegisterDocumentRoutes installs the local-document API and offline reading
 // routes on the server mux.
-func RegisterDocumentRoutes(mux *http.ServeMux, store *document.Store, settings config.Settings) {
+func RegisterDocumentRoutes(mux *http.ServeMux, store *document.Store, builder feed.Builder) {
 	if mux == nil || store == nil {
 		return
 	}
+	settings := builder.Settings
 	mux.HandleFunc("GET /api/documents", func(w http.ResponseWriter, r *http.Request) { documentList(w, r, store) })
 	mux.HandleFunc("GET /api/documents/{id}", func(w http.ResponseWriter, r *http.Request) { documentGet(w, r, store, settings) })
 	mux.HandleFunc("POST /api/documents/{id}/associate", func(w http.ResponseWriter, r *http.Request) { documentAssociate(w, r, store) })
 	mux.HandleFunc("DELETE /api/documents/{id}", func(w http.ResponseWriter, r *http.Request) { documentDelete(w, r, store) })
 	mux.HandleFunc("DELETE /api/documents/{id}/record", func(w http.ResponseWriter, r *http.Request) { documentPurgeMissing(w, r, store) })
-	mux.HandleFunc("GET /opds/v2.0/documents/{id}/manifest", func(w http.ResponseWriter, r *http.Request) { documentManifest(w, r, store, settings) })
+	mux.HandleFunc("GET /opds/v2.0/documents/{id}/manifest", func(w http.ResponseWriter, r *http.Request) { documentManifest(w, r, store, builder) })
 	mux.HandleFunc("GET /stream/documents/{id}/page/{page}", func(w http.ResponseWriter, r *http.Request) { documentPage(w, r, store, settings) })
 	mux.HandleFunc("GET /image/documents/{id}/thumb", func(w http.ResponseWriter, r *http.Request) { documentCover(w, r, store) })
 	mux.HandleFunc("/opds/progression/documents/{id}", func(w http.ResponseWriter, r *http.Request) { documentProgression(w, r, store) })
@@ -135,7 +136,7 @@ func documentProgressionURL(d document.Document) string {
 	}
 	return "/opds/progression/documents/" + url.PathEscape(d.ID)
 }
-func documentManifest(w http.ResponseWriter, r *http.Request, store *document.Store, settings config.Settings) {
+func documentManifest(w http.ResponseWriter, r *http.Request, store *document.Store, builder feed.Builder) {
 	d, err := store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeDocumentError(w, r.PathValue("id"), err)
@@ -146,19 +147,19 @@ func documentManifest(w http.ResponseWriter, r *http.Request, store *document.St
 		writeDocumentError(w, d.ID, err)
 		return
 	}
-	pub := LocalDocumentPublication(r.Context(), d, store, settings)
+	pub := LocalDocumentPublication(r.Context(), d, store, builder)
 	// Saved document-ID manifests remain a direct local reading entry even
 	// while the publication identity follows the gallery association.
 	for _, link := range pub["links"].([]map[string]any) {
 		if link["rel"] == "self" {
-			link["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/opds/v2.0/documents/%s/manifest", url.PathEscape(d.ID)))
+			link["href"] = builder.Href(fmt.Sprintf("/opds/v2.0/documents/%s/manifest", url.PathEscape(d.ID)))
 		}
 		if link["rel"] == feed.RelStream {
-			link["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/stream/documents/%s/page/{pageNumber}", url.PathEscape(d.ID)))
+			link["href"] = builder.Href(fmt.Sprintf("/stream/documents/%s/page/{pageNumber}", url.PathEscape(d.ID)))
 		}
 	}
 	for i := range pub["readingOrder"].([]map[string]any) {
-		pub["readingOrder"].([]map[string]any)[i]["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/stream/documents/%s/page/%d", url.PathEscape(d.ID), i+settings.PSEPageBase))
+		pub["readingOrder"].([]map[string]any)[i]["href"] = builder.Href(fmt.Sprintf("/stream/documents/%s/page/%d", url.PathEscape(d.ID), i+builder.Settings.PSEPageBase))
 	}
 	pub["@context"] = feed.RWPMContext
 	meta := pub["metadata"].(map[string]any)
@@ -194,13 +195,13 @@ func BuildDocumentPublication(d document.Document, settings config.Settings) map
 	return map[string]any{"metadata": map[string]any{"title": d.Title, "identifier": identifier, "numberOfPages": d.PageCount, "modified": d.UpdatedAt.UTC().Format(time.RFC3339)}, "links": links, "images": []map[string]string{{"href": href(thumb), "type": "application/octet-stream"}}, "readingOrder": reading}
 }
 
-func LocalDocumentPublication(ctx context.Context, d document.Document, store *document.Store, settings config.Settings) map[string]any {
+func LocalDocumentPublication(ctx context.Context, d document.Document, store *document.Store, builder feed.Builder) map[string]any {
 	mimes, err := store.PageMIMEs(ctx, d.ID)
 	if latest, e := store.Get(ctx, d.ID); e == nil {
 		d = latest
 	}
-	pub := BuildDocumentPublication(d, settings)
-	addLocalDocumentSubjects(ctx, pub, d, store, settings)
+	pub := BuildDocumentPublication(d, builder.Settings)
+	addLocalDocumentSubjects(ctx, pub, d, store, builder)
 	reading := pub["readingOrder"].([]map[string]any)
 	for i := range reading {
 		if err == nil && i < len(mimes) {
@@ -215,7 +216,7 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 		}
 	}
 	for i := range pub["images"].([]map[string]string) {
-		pub["images"].([]map[string]string)[i]["href"] = (feed.Builder{Settings: settings}).Href(fmt.Sprintf("/image/documents/%s/thumb", url.PathEscape(d.ID)))
+		pub["images"].([]map[string]string)[i]["href"] = builder.Href(fmt.Sprintf("/image/documents/%s/thumb", url.PathEscape(d.ID)))
 	}
 	if mime, ok, err := store.CoverMIME(ctx, d.ID); err == nil && ok {
 		for _, link := range pub["links"].([]map[string]any) {
@@ -237,9 +238,9 @@ func LocalDocumentPublication(ctx context.Context, d document.Document, store *d
 	return pub
 }
 
-func LocalDocumentSummary(ctx context.Context, d document.Document, store *document.Store, settings config.Settings) map[string]any {
-	pub := BuildDocumentPublication(d, settings)
-	addLocalDocumentSubjects(ctx, pub, d, store, settings)
+func LocalDocumentSummary(ctx context.Context, d document.Document, store *document.Store, builder feed.Builder) map[string]any {
+	pub := BuildDocumentPublication(d, builder.Settings)
+	addLocalDocumentSubjects(ctx, pub, d, store, builder)
 	delete(pub, "readingOrder")
 	if d.PageCount > 0 {
 		if mime, err := store.PageMIMEProfile(ctx, d.ID); err == nil {
@@ -267,7 +268,7 @@ func LocalDocumentSummary(ctx context.Context, d document.Document, store *docum
 	return pub
 }
 
-func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d document.Document, store *document.Store, settings config.Settings) {
+func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d document.Document, store *document.Store, builder feed.Builder) {
 	if store == nil || d.ID == "" {
 		return
 	}
@@ -288,7 +289,7 @@ func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d documen
 			tags = galleryTagsFromValue(value)
 		}
 	}
-	subjects := (feed.Builder{Settings: settings}).Subjects(tags, category, false)
+	subjects := builder.Subjects(tags, category, false)
 	if len(subjects) > 0 {
 		pub["metadata"].(map[string]any)["subject"] = subjects
 	}
@@ -315,7 +316,7 @@ func removeRelation(pub *map[string]any, rel string) {
 	(*pub)["links"] = out
 }
 
-func DocumentArchiveOPDSFeed(ctx context.Context, store *document.Store, settings config.Settings, page, perPage int) (map[string]any, int, error) {
+func DocumentArchiveOPDSFeed(ctx context.Context, store *document.Store, builder feed.Builder, page, perPage int) (map[string]any, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -328,18 +329,18 @@ func DocumentArchiveOPDSFeed(ctx context.Context, store *document.Store, setting
 	}
 	pubs := make([]map[string]any, 0, len(items))
 	for _, d := range items {
-		pubs = append(pubs, LocalDocumentSummary(ctx, d, store, settings))
+		pubs = append(pubs, LocalDocumentSummary(ctx, d, store, builder))
 	}
 	self := "/opds/v2.0/archives"
 	next := ""
 	if page*perPage < total {
-		next = (&feed.Builder{Settings: settings}).Href(fmt.Sprintf("%s?page=%d", self, page+1))
+		next = builder.Href(fmt.Sprintf("%s?page=%d", self, page+1))
 	}
-	doc := (&feed.Builder{Settings: settings}).Acquisition("PandaOPDS: Archives", "urn:pandaopds:archives", self, pubs, next, nil)
+	doc := builder.Acquisition("PandaOPDS: Archives", "urn:pandaopds:archives", self, pubs, next, nil)
 	return doc, total, nil
 }
 
-func DocumentArchiveAtomFeed(ctx context.Context, store *document.Store, settings config.Settings, page, perPage int) ([]byte, int, error) {
+func DocumentArchiveAtomFeed(ctx context.Context, store *document.Store, builder feed.Builder, page, perPage int) ([]byte, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -350,7 +351,7 @@ func DocumentArchiveAtomFeed(ctx context.Context, store *document.Store, setting
 	if err != nil {
 		return nil, 0, err
 	}
-	b := feed.Builder{Settings: settings}
+	b := builder
 	entries := make([]feed.AtomEntry, 0, len(items))
 	for _, d := range items {
 		coverMime, hasCover := cachedCoverMIME(ctx, d, store)

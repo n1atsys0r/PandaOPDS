@@ -88,7 +88,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	}
 	id := items[0].ID
 	mux := http.NewServeMux()
-	RegisterDocumentRoutes(mux, docs, config.Settings{PSEPageBase: 1, PublicBaseURL: "https://reader.example/prefix"})
+	RegisterDocumentRoutes(mux, docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1, PublicBaseURL: "https://reader.example/prefix"}})
 	list := httptest.NewRecorder()
 	mux.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/documents?page=1&per_page=10&linked=unlinked", nil))
 	if list.Code != 200 {
@@ -105,7 +105,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if manifest.Code != 200 || !strings.Contains(manifest.Body.String(), "/prefix/stream/documents/") || !strings.Contains(manifest.Body.String(), "image/png") || !strings.Contains(manifest.Body.String(), "/opds/progression/documents/") {
 		t.Fatalf("manifest status=%d body=%s", manifest.Code, manifest.Body)
 	}
-	opdsFeed, opdsTotal, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{PSEPageBase: 1, PublicBaseURL: "https://reader.example/prefix"}, 1, 100)
+	opdsFeed, opdsTotal, err := DocumentArchiveOPDSFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1, PublicBaseURL: "https://reader.example/prefix"}}, 1, 100)
 	if err != nil || opdsTotal != 1 {
 		t.Fatalf("OPDS archive feed total=%d err=%v", opdsTotal, err)
 	}
@@ -113,7 +113,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if len(pubs) != 1 || !strings.Contains(pubs[0]["metadata"].(map[string]any)["identifier"].(string), id) {
 		t.Fatalf("OPDS feed publications=%v", pubs)
 	}
-	atomFeed, atomTotal, err := DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	atomFeed, atomTotal, err := DocumentArchiveAtomFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1}}, 1, 100)
 	if err != nil || atomTotal != 1 || !strings.Contains(string(atomFeed), "urn:pandaopds:document:"+id) || !strings.Contains(string(atomFeed), "/stream/documents/"+id+"/page/{pageNumber}") {
 		t.Fatalf("Atom archive feed total=%d err=%v body=%s", atomTotal, err, atomFeed)
 	}
@@ -199,7 +199,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 			t.Fatalf("PSE base %d reading href=%v want=%s", base, reading[0]["href"], want)
 		}
 	}
-	linkedFeed, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	linkedFeed, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1}}, 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if len(linkedSubjects) != 2 || linkedSubjects[0]["name"] != "category:Manga" || linkedSubjects[1]["name"] != "artist:alice" {
 		t.Fatalf("linked archive subjects=%#v", linkedSubjects)
 	}
-	linkedAtom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	linkedAtom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1}}, 1, 100)
 	if err != nil || !strings.Contains(string(linkedAtom), "urn:ehentai:gallery:999:abcdef1234") || !strings.Contains(string(linkedAtom), "/stream/999/abcdef1234/page/{pageNumber}") {
 		t.Fatalf("linked Atom feed err=%v body=%s", err, linkedAtom)
 	}
@@ -237,7 +237,7 @@ func TestLocalDocumentHTTPAndProgressionRoutes(t *testing.T) {
 	if unlinkedPub["metadata"].(map[string]any)["identifier"] != "urn:pandaopds:document:"+id {
 		t.Fatalf("unlinked identifier=%v", unlinkedPub["metadata"].(map[string]any)["identifier"])
 	}
-	unlinkedFeed, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{PSEPageBase: 1}, 1, 100)
+	unlinkedFeed, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1}}, 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestManifestReadsChangedPathAndAllowsExplicitInvalidRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	RegisterDocumentRoutes(mux, docs, config.Settings{PSEPageBase: 1})
+	RegisterDocumentRoutes(mux, docs, feed.Builder{Settings: config.Settings{PSEPageBase: 1}})
 	var stale string
 	if err = db.QueryRow(`SELECT id FROM documents WHERE archive_path='stale.cbz'`).Scan(&stale); err != nil {
 		t.Fatal(err)
@@ -470,7 +470,7 @@ func TestLegacyArchiveLinkKeepsEHProgressAndSQLiteCoverOnDocumentHTTP(t *testing
 	defer progressStore.Close()
 	server := &Server{Progression: progressStore}
 	mux := http.NewServeMux()
-	RegisterDocumentRoutes(mux, docs, config.Settings{})
+	RegisterDocumentRoutes(mux, docs, feed.Builder{Settings: config.Settings{}})
 	mux.HandleFunc("/opds/progression/{gid}/{token}", server.progressionHandler)
 	get := httptest.NewRecorder()
 	mux.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/documents/"+id, nil))
@@ -561,7 +561,7 @@ func TestArchiveFeedSummariesOmitReadingOrderAndAdvertiseImageStreams(t *testing
 	if _, err = docs.ScanDeep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	feedDoc, total, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{}, 1, 10)
+	feedDoc, total, err := DocumentArchiveOPDSFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{}}, 1, 10)
 	if err != nil || total != 2 {
 		t.Fatalf("feed total=%d err=%v", total, err)
 	}
@@ -587,7 +587,7 @@ func TestArchiveFeedSummariesOmitReadingOrderAndAdvertiseImageStreams(t *testing
 		if full.Title == "mixed" && summaryType != "image/*" {
 			t.Fatalf("mixed stream MIME=%q", summaryType)
 		}
-		manifest := LocalDocumentPublication(context.Background(), full, docs, config.Settings{})
+		manifest := LocalDocumentPublication(context.Background(), full, docs, feed.Builder{Settings: config.Settings{}})
 		reading := manifest["readingOrder"].([]map[string]any)
 		types := map[string]bool{}
 		for _, page := range reading {
@@ -598,7 +598,7 @@ func TestArchiveFeedSummariesOmitReadingOrderAndAdvertiseImageStreams(t *testing
 			t.Fatalf("manifest readingOrder=%v", reading)
 		}
 	}
-	atom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{}, 1, 10)
+	atom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{}}, 1, 10)
 	if err != nil || !strings.Contains(string(atom), `type="image/png"`) || !strings.Contains(string(atom), `type="image/*"`) {
 		t.Fatalf("Atom stream MIME types missing: err=%v body=%s", err, atom)
 	}
@@ -627,7 +627,7 @@ func TestManifestRejectsCorruptCandidateAndRecordsInvalid(t *testing.T) {
 	}
 	id := mustFirstDocumentID(t, docs)
 	mux := http.NewServeMux()
-	RegisterDocumentRoutes(mux, docs, config.Settings{})
+	RegisterDocumentRoutes(mux, docs, feed.Builder{Settings: config.Settings{}})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/opds/v2.0/documents/"+id+"/manifest", nil))
 	if response.Code != http.StatusUnprocessableEntity {
@@ -655,7 +655,7 @@ func TestArchiveSummariesDoNotIndexUnopenedCandidates(t *testing.T) {
 	if _, err = docs.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	feedDoc, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, config.Settings{}, 1, 20)
+	feedDoc, _, err := DocumentArchiveOPDSFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{}}, 1, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +669,7 @@ func TestArchiveSummariesDoNotIndexUnopenedCandidates(t *testing.T) {
 	if err = db.QueryRow(`SELECT COUNT(*) FROM document_pages`).Scan(&pages); err != nil || pages != 0 {
 		t.Fatalf("summary built page index=%d err=%v", pages, err)
 	}
-	if _, _, err = DocumentArchiveAtomFeed(context.Background(), docs, config.Settings{}, 1, 20); err != nil {
+	if _, _, err = DocumentArchiveAtomFeed(context.Background(), docs, feed.Builder{Settings: config.Settings{}}, 1, 20); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.QueryRow(`SELECT COUNT(*) FROM document_pages`).Scan(&pages); err != nil || pages != 0 {
