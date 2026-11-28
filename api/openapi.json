@@ -505,7 +505,7 @@
           "opds"
         ],
         "summary": "Archives Feed",
-        "description": "Local Archives shelf (ready zip masters), newest first — zero upstream.\n\nThe OPDS 1.2 entry point for purchased archives: entries keep their\nstream/thumb/detail URLs working even after the upstream gallery is\ndeleted. Pagination mirrors toplist (`page` 1-based).",
+        "description": "Local Archives shelf (ready zip masters), newest first — zero upstream.\n\nThe OPDS 1.2 entry point for purchased archives: entries keep their\nstream/thumb/detail URLs working even after the upstream gallery is\ndeleted. Associated entries carry the gallery category as an Atom `category`\n(term = EH category, label translated when TAG_TRANSLATION_ENABLED). Pagination\nmirrors toplist (`page` 1-based).",
         "operationId": "archives_feed_opds_v1_2_archives_get",
         "parameters": [
           {
@@ -1961,7 +1961,7 @@
           "opds2"
         ],
         "summary": "Legacy Gallery Publication",
-        "description": "Legacy URL retained for clients that saved it. New catalog entries link to `/manifest`. Returns a top-level publication object. Ready archives prefer online detail-page HTML and use the local snapshot when upstream is unavailable.",
+        "description": "Legacy URL retained for clients that saved it. New catalog entries link to `/manifest`. Returns a top-level publication object. Resolves like the Divina manifest: metadata prefers the upstream detail page, numberOfPages and readingOrder come from a readable associated local ZIP master, and the local snapshot is used only when upstream is unavailable. A gallery with neither source returns the upstream error.",
         "operationId": "gallery_publication_opds_v2_0_gallery__gid___token__publication_get",
         "parameters": [
           {

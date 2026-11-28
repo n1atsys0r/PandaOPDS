@@ -476,6 +476,25 @@ func ParseDetailTitle(title, jpn string) (string, []string) {
 	}
 	return parseTitle(title)
 }
+
+// DisplayCategory returns the category label a feed should show for an EH
+// category name. Without a translator it stays verbatim; with translation
+// enabled it returns the translated name alone (no namespace prefix), matching
+// what Subjects emits inside "分类:<name>". The Atom profile keeps the EH
+// category as the term and uses this only as the human-readable label.
+func (b Builder) DisplayCategory(category string) string {
+	if category == "" {
+		return ""
+	}
+	if b.Translator == nil {
+		return category
+	}
+	display := b.Translator.DisplayCategory(category)
+	if trimmed := strings.TrimPrefix(display, "分类:"); trimmed != display {
+		return trimmed
+	}
+	return category
+}
 func FormatDate(raw string) string { return iso(raw) }
 func BuildSubjects(tags []eh.GalleryTag, category string, categoryFirst bool) []map[string]any {
 	return (Builder{}).Subjects(tags, category, categoryFirst)

@@ -176,3 +176,67 @@ func TestManifestWithoutLocalArchiveKeepsUpstreamErrors(t *testing.T) {
 		t.Fatalf("manifest unexpectedly succeeded without upstream or local archive: %s", recorder.Body.String())
 	}
 }
+
+// The legacy publication route resolves like the manifest, so an archived
+// gallery stays inspectable while upstream is down.
+func TestPublicationFallsBackToLocalSnapshotWhenUpstreamFails(t *testing.T) {
+	server, _ := associatedArchiveServer(t, unavailableGalleryTransport{})
+	recorder := httptest.NewRecorder()
+	server.publication20(recorder, manifestRequest(fixtureGalleryGID, fixtureGalleryToken))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("publication status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var pub map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &pub); err != nil {
+		t.Fatalf("publication body: %v (%s)", err, recorder.Body.String())
+	}
+	metadata := pub["metadata"].(map[string]any)
+	if got, want := metadata["identifier"], "urn:ehentai:gallery:4115099:8ece1a7eb7"; got != want {
+		t.Fatalf("fallback identifier=%v, want %q", got, want)
+	}
+	if got, want := metadata["numberOfPages"], float64(1); got != want {
+		t.Fatalf("publication numberOfPages=%v, want the local file's %v", got, want)
+	}
+	reading := pub["readingOrder"].([]any)
+	if len(reading) != 1 || reading[0].(map[string]any)["href"] != "/stream/4115099/8ece1a7eb7/page/1" {
+		t.Fatalf("publication readingOrder=%v", reading)
+	}
+}
+
+// Upstream stays authoritative for the publication route while it is reachable.
+func TestPublicationPrefersUpstreamMetadataWithLocalPages(t *testing.T) {
+	server, _ := associatedArchiveServer(t, nil)
+	recorder := httptest.NewRecorder()
+	server.publication20(recorder, manifestRequest(fixtureGalleryGID, fixtureGalleryToken))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("publication status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var pub map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &pub); err != nil {
+		t.Fatalf("publication body: %v (%s)", err, recorder.Body.String())
+	}
+	metadata := pub["metadata"].(map[string]any)
+	if reviews, ok := metadata["x:reviews"].([]any); !ok || len(reviews) == 0 {
+		t.Fatalf("publication dropped upstream reviews: %v", metadata)
+	}
+	if _, ok := metadata["subject"]; !ok {
+		t.Fatalf("publication dropped upstream subjects: %v", metadata)
+	}
+	if got, want := metadata["numberOfPages"], float64(1); got != want {
+		t.Fatalf("publication numberOfPages=%v, want the local file's %v", got, want)
+	}
+}
+
+// A gallery without a local archive keeps the plain upstream error.
+func TestPublicationWithoutLocalArchiveKeepsUpstreamErrors(t *testing.T) {
+	base := t.TempDir()
+	settings := config.Settings{EHSite: "e-hentai", PSEPageBase: 1, TimeoutSeconds: 2, HTMLIntervalSeconds: 0, Retries: 0, CacheDir: filepath.Join(base, "cache")}
+	service := eh.NewService(settings, unavailableGalleryTransport{})
+	defer service.Close()
+	server := &Server{Settings: settings, Service: service}
+	recorder := httptest.NewRecorder()
+	server.publication20(recorder, manifestRequest(123, "abc"))
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("publication unexpectedly succeeded: %s", recorder.Body.String())
+	}
+}

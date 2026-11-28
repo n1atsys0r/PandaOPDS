@@ -181,3 +181,78 @@ func TestArchiveManifestFallbackTranslatesSubjects(t *testing.T) {
 		}
 	}
 }
+
+// The v1.2 archive shelf advertises the EH category as term with a display
+// label, translating the label only when translation is enabled.
+func TestArchiveAtomFeedCarriesTranslatedCategoryLabel(t *testing.T) {
+	base := t.TempDir()
+	settings := writeTranslationState(t, base)
+	settings.PSEPageBase = 1
+	docs, _ := linkedArchiveWithTags(t, base, settings)
+	builder := translatedBuilder(t, settings)
+
+	atom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, builder, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(atom)
+	if !strings.Contains(body, `term="Manga"`) {
+		t.Fatalf("archive Atom entry lost the EH category term: %s", body)
+	}
+	if !strings.Contains(body, `label="漫画"`) {
+		t.Fatalf("archive Atom entry missing translated category label: %s", body)
+	}
+	if !strings.Contains(body, `scheme="http://e-hentai.org"`) {
+		t.Fatalf("archive Atom category scheme missing: %s", body)
+	}
+}
+
+// With translation disabled the label stays the native category name.
+func TestArchiveAtomFeedKeepsNativeCategoryLabelWhenDisabled(t *testing.T) {
+	base := t.TempDir()
+	settings := writeTranslationState(t, base)
+	settings.TagTranslationEnabled = false
+	settings.PSEPageBase = 1
+	docs, _ := linkedArchiveWithTags(t, base, settings)
+	builder := translatedBuilder(t, settings)
+
+	atom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, builder, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(atom)
+	if !strings.Contains(body, `term="Manga"`) || !strings.Contains(body, `label="Manga"`) {
+		t.Fatalf("disabled translation changed archive Atom category: %s", body)
+	}
+	if strings.Contains(body, "漫画") {
+		t.Fatalf("disabled translation still translated the category label: %s", body)
+	}
+}
+
+// A local document without a gallery association has no category element.
+func TestArchiveAtomFeedOmitsCategoryForUnlinkedDocuments(t *testing.T) {
+	base := t.TempDir()
+	settings := writeTranslationState(t, base)
+	archiveRoot := filepath.Join(base, "archive")
+	writeTestArchive(t, filepath.Join(archiveRoot, "plain.cbz"), "page")
+	db, err := storage.Open(filepath.Join(base, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	docs, err := document.New(db, archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = docs.ScanDeep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	builder := translatedBuilder(t, settings)
+	atom, _, err := DocumentArchiveAtomFeed(context.Background(), docs, builder, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(atom), "<category") {
+		t.Fatalf("unlinked archive gained a category element: %s", atom)
+	}
+}

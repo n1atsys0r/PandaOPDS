@@ -41,3 +41,12 @@ func TestPublicationIncludesExtraMetadata(t *testing.T) {
 		t.Fatalf("expected x:uploader testuser, got %v", md["x:uploader"])
 	}
 }
+
+func TestDisplayCategoryKeepsNativeNameWithoutTranslator(t *testing.T) {
+	if got := (Builder{}).DisplayCategory("Manga"); got != "Manga" {
+		t.Fatalf("DisplayCategory without translator=%q, want Manga", got)
+	}
+	if got := (Builder{}).DisplayCategory(""); got != "" {
+		t.Fatalf("DisplayCategory of empty category=%q, want empty", got)
+	}
+}

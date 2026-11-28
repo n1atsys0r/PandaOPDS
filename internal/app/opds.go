@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -23,6 +24,11 @@ import (
 )
 
 var cursorRE = regexp.MustCompile(`^\d+(?:-\d+)*$`)
+
+// errUpstreamUnavailable marks a gallery route that cannot reach upstream, so
+// archived galleries can serve their local snapshot instead.
+var errUpstreamUnavailable = errors.New("upstream service unavailable")
+
 var periods = map[string]string{"yesterday": "Yesterday", "month": "Past Month", "year": "Past Year", "alltime": "All Time"}
 
 const homepagePreviewDeadline = 12 * time.Second
@@ -1469,12 +1475,15 @@ func (s *Server) publication20(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	pub, _, e := s.detailPublication(r, gid, token)
-	if e != nil {
-		s.writeError(w, r, e)
+	// Same resolution as the Divina manifest, minus the conformsTo/belongsTo
+	// additions that only a manifest carries. An archived gallery therefore
+	// stays inspectable while upstream is unavailable.
+	pub, _, err := s.galleryPublication(r, gid, token)
+	if err != nil {
+		s.writeError(w, r, err)
 		return
 	}
-	writeBytes(w, 200, feed.MIMEPublication, map[string]string{"Cache-Control": "public, max-age=300"}, s.builder().JSON(pub))
+	writeBytes(w, 200, feed.MIMEPublication, map[string]string{"Cache-Control": "no-cache"}, s.builder().JSON(pub))
 }
 
 // associatedLocalArchive resolves the local ZIP master that currently serves
@@ -1534,35 +1543,46 @@ func (s *Server) applyLocalReading(ctx context.Context, pub map[string]any, d do
 	}
 }
 
+// galleryPublication resolves the publication for a gallery route. Metadata
+// prefers upstream so archived galleries keep comments, favorites and other
+// detail-only fields. Only when upstream is unavailable does it fall back to
+// the local ZIP master's snapshot, which keeps an archived gallery readable
+// offline. The error is nil whenever a publication could be resolved.
+func (s *Server) galleryPublication(r *http.Request, gid int, token string) (map[string]any, eh.DetailPageInfo, error) {
+	localDoc := s.associatedLocalArchive(r.Context(), gid, token)
+	var pub map[string]any
+	var detail eh.DetailPageInfo
+	var upstreamErr error
+	if s.Service == nil {
+		upstreamErr = errUpstreamUnavailable
+	} else {
+		pub, detail, upstreamErr = s.detailPublication(r, gid, token)
+	}
+	if upstreamErr == nil {
+		if localDoc != nil {
+			s.applyLocalReading(r.Context(), pub, *localDoc, gid, token)
+		}
+		return pub, detail, nil
+	}
+	if localDoc == nil {
+		return nil, eh.DetailPageInfo{}, upstreamErr
+	}
+	pub = LocalDocumentPublication(r.Context(), *localDoc, s.Documents, s.builder())
+	detail = eh.DetailPageInfo{}
+	s.applyLocalReading(r.Context(), pub, *localDoc, gid, token)
+	return pub, detail, nil
+}
+
 func (s *Server) manifest20(w http.ResponseWriter, r *http.Request) {
 	gid, token, e := pathID(r)
 	if e != nil {
 		writeJSON(w, 422, map[string]any{"detail": e.Error()})
 		return
 	}
-	// Pages always come from a readable local ZIP master when one is
-	// associated. Metadata still prefers upstream; the local snapshot is only a
-	// readability fallback, so an archived gallery keeps comments, favorites and
-	// other detail-only fields while upstream is reachable.
-	localDoc := s.associatedLocalArchive(r.Context(), gid, token)
-	var pub map[string]any
-	var detail eh.DetailPageInfo
-	var upstreamErr error
-	if s.Service == nil {
-		upstreamErr = fmt.Errorf("upstream service unavailable")
-	} else {
-		pub, detail, upstreamErr = s.detailPublication(r, gid, token)
-	}
-	if upstreamErr != nil {
-		if localDoc == nil {
-			s.writeError(w, r, upstreamErr)
-			return
-		}
-		pub = LocalDocumentPublication(r.Context(), *localDoc, s.Documents, s.builder())
-		detail = eh.DetailPageInfo{}
-	}
-	if localDoc != nil {
-		s.applyLocalReading(r.Context(), pub, *localDoc, gid, token)
+	pub, detail, err := s.galleryPublication(r, gid, token)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
 	}
 	reading, _ := pub["readingOrder"].([]map[string]any)
 	if len(reading) == 0 {

@@ -18,6 +18,7 @@ import (
 
 	"pandaopds/internal/config"
 	"pandaopds/internal/document"
+	"pandaopds/internal/eh"
 	"pandaopds/internal/feed"
 )
 
@@ -268,14 +269,16 @@ func LocalDocumentSummary(ctx context.Context, d document.Document, store *docum
 	return pub
 }
 
-func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d document.Document, store *document.Store, builder feed.Builder) {
+// localDocumentGalleryFields reads the gallery category and tags an archive was
+// associated with. Local documents without a publication row have neither.
+func localDocumentGalleryFields(ctx context.Context, store *document.Store, d document.Document) (string, []eh.GalleryTag) {
 	if store == nil || d.ID == "" {
-		return
+		return "", nil
 	}
 	var raw, category, tagsJSON string
 	err := store.DB().QueryRowContext(ctx, `SELECT p.metadata_json,p.category,p.tags_json FROM documents d JOIN publications p ON p.id=d.publication_id WHERE d.id=?`, d.ID).Scan(&raw, &category, &tagsJSON)
 	if err != nil {
-		return
+		return "", nil
 	}
 	metadata := map[string]any{}
 	_ = json.Unmarshal([]byte(raw), &metadata)
@@ -289,6 +292,14 @@ func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d documen
 			tags = galleryTagsFromValue(value)
 		}
 	}
+	return category, tags
+}
+
+func addLocalDocumentSubjects(ctx context.Context, pub map[string]any, d document.Document, store *document.Store, builder feed.Builder) {
+	if store == nil || d.ID == "" {
+		return
+	}
+	category, tags := localDocumentGalleryFields(ctx, store, d)
 	subjects := builder.Subjects(tags, category, false)
 	if len(subjects) > 0 {
 		pub["metadata"].(map[string]any)["subject"] = subjects
@@ -374,7 +385,14 @@ func DocumentArchiveAtomFeed(ctx context.Context, store *document.Store, builder
 		if hasCover {
 			links = append([]feed.AtomLink{{Rel: feed.RelThumb, Href: b.Href("/image/documents/" + url.PathEscape(d.ID) + "/thumb"), Type: coverMime, Title: d.Title}}, links...)
 		}
-		entries = append(entries, feed.AtomEntry{ID: id, Title: "Chapter 1: " + d.Title, Updated: d.UpdatedAt.UTC().Format(time.RFC3339), Links: links})
+		entry := feed.AtomEntry{ID: id, Title: "Chapter 1: " + d.Title, Updated: d.UpdatedAt.UTC().Format(time.RFC3339), Links: links}
+		// v1.2 gallery entries advertise the EH category as term with a display
+		// label; the archive shelf keeps the same shape, translated when the
+		// tag translator is enabled.
+		if category, _ := localDocumentGalleryFields(ctx, store, d); category != "" {
+			entry.Category = &feed.AtomCategory{Term: category, Label: b.DisplayCategory(category), Scheme: "http://e-hentai.org"}
+		}
+		entries = append(entries, entry)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	self := "/opds/v1.2/archives"

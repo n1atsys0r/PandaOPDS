@@ -179,7 +179,7 @@ publication 保留 `/image/{activeGid}/{activeToken}/thumb` 的 `images[]` 封�
 
 如果页数未知或为零，服务端返回 503，因为 Divina manifest 需要非空的 `readingOrder`。不会为此触发归档或图片下载。
 
-旧 `/publication` endpoint 保留以兼容已保存 URL，响应仍使用 `application/opds+json`；新目录不会再广告它。
+旧 `/publication` endpoint 保留以兼容已保存 URL，响应仍使用 `application/opds+json`；新目录不会再广告它。它与 manifest 采用同一套取数规则（上游元数据 + 本地页数/`readingOrder`，仅上游不可用时回退本地快照），因此归档画廊在离线上游时仍可被详情视图读取。
 
 ### 4.4 搜索
 
